@@ -127,8 +127,6 @@ void CRenderDevice::Clear()
 	m_pRender->Clear();
 }
 
-extern void CheckPrivilegySlowdown();
-
 
 void CRenderDevice::End(void)
 {
@@ -170,16 +168,6 @@ void CRenderDevice::End(void)
 #ifdef FIND_CHUNK_BENCHMARK_ENABLE
             g_find_chunk_counter.flush();
 #endif // FIND_CHUNK_BENCHMARK_ENABLE
-
-			CheckPrivilegySlowdown();
-
-			if (g_pGamePersistent->GameType() == 1) //haCk
-			{
-				WINDOWINFO wi;
-				GetWindowInfo(m_hWnd, &wi);
-				if (wi.dwWindowStatus != WS_ACTIVECAPTION)
-					Pause(TRUE, TRUE, TRUE, "application start");
-			}
 		}
 	}
 
