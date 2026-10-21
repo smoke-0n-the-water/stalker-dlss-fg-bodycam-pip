@@ -1,5 +1,8 @@
 #include "stdafx.h"
 #include "scope_vslr_renderer.h"
+#ifdef XR_DX12_BRIDGE
+#include "Dlss/FrameGeneration.h"
+#endif
 #include "../../xrEngine/igame_persistent.h"
 #include "../../xrEngine/environment.h"
 
@@ -81,9 +84,16 @@ void CRenderTarget::DoAsyncScreenshot()
 
 		//HW.pDevice->CopyResource( t_ss_async, pTex );
 		ID3DTexture2D* pBuffer;
+#ifdef XR_DX12_BRIDGE
+        R_CHK(HW.GetPresentationSurface(&pBuffer));
+#else
 		hr = HW.m_pSwapChain->GetBuffer(0, __uuidof( ID3D10Texture2D), (LPVOID*)&pBuffer);
+#endif
 		// TODO: this won't work in DX11 with HDR due to texture format incompat
 		HW.pContext->CopyResource(t_ss_async, pBuffer);
+#ifdef XR_DX12_BRIDGE
+        pBuffer->Release();
+#endif
 
 
 		RImplementation.m_bMakeAsyncSS = false;
@@ -1031,7 +1041,8 @@ void CRenderTarget::phase_combine()
 
 	//	if FP16-BLEND !not! supported - draw flares here, overwise they are already in the bloom target
 	/* if (!RImplementation.o.fp16_blend)*/
-	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && ps_r2_heatvision == 0) //--DSR-- HeatVision
+	// With an upscaler, flares are drawn after reconstruction (phase_dlss_postprocess)
+	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && ps_r2_heatvision == 0 && !dlss::Configured()) //--DSR-- HeatVision
 		g_pGamePersistent->Environment().RenderFlares(); // lens-flares
 
 	//	PP-if required
@@ -1044,6 +1055,10 @@ void CRenderTarget::phase_combine()
 		tm_end(svp_stats::SEC_C_COMBINE2);
 	}
 
+#ifdef XR_DX12_BRIDGE
+    // Display-sized postprocessed scene, before the ordinary 2D HUD is drawn.
+    fg::CaptureHudless();
+#endif
 	//	Re-adapt luminance
 	RCache.set_Stencil(FALSE);
 

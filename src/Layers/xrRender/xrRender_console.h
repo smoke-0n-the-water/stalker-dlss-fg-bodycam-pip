@@ -13,6 +13,7 @@ extern ECORE_API int ps_r_upscaler_jitter;
 // Camera-only motion-vector fallback for the temporal upscaler:
 // 1 (default) fills zero vectors, 2 forces camera-only, 0 keeps the pack buffer.
 extern ECORE_API int ps_r__upscaler_camera_mv;
+extern ECORE_API int ps_r_upscaler_debug;
 extern ECORE_API float ps_ssfx_fog_scattering;
 extern ECORE_API Fvector4 ps_ssfx_motionblur;
 extern ECORE_API Fvector4 ps_ssfx_taa;
