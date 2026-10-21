@@ -238,7 +238,10 @@ void CRenderTarget::phase_dlss_postprocess()
 	// Lens flares are additive, depth-free sprites that cover the HUD. In the scene
 	// they would be reprojected with the hands' motion vectors and reconstructed as
 	// blocks, so draw them here at display resolution without jitter.
-	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && ps_r2_heatvision == 0)
+	// Main view only. Upstream reaches this path solely for the main target; our
+	// base also runs the DLSS postprocess for the SVP/scope target, and drawing
+	// flares there replaces the bound geometry mid-pass and faults in phase_pp.
+	if (m_is_main_target && ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && ps_r2_heatvision == 0)
 		g_pGamePersistent->Environment().RenderFlares();
 
 	// Only defer direct UI draws when wearable surfaces were found in this view.
