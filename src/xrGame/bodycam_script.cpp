@@ -2,71 +2,70 @@
 #include "bodycam_camera.h"
 #include "bodycam_settings.h"
 #include "Actor.h"
-#include "level.h"
 #include "ai_space.h"
 #include "script_engine.h"
 
 using namespace luabind;
 
-static bool bodycam_set_float(LPCSTR name, float value)
+static bool bodycam_request_motion_mode(int mode)
 {
-	return Bodycam::SetFloat(name, value);
+	return Bodycam::RequestMotionMode(mode);
+}
+
+static int bodycam_get_motion_mode()
+{
+	return static_cast<int>(Bodycam::GetMotionSelection().Requested());
+}
+
+static int bodycam_get_active_motion_mode()
+{
+	return static_cast<int>(Bodycam::GetMotionSelection().Active());
+}
+
+static Fvector bodycam_get_reference_weapon_position(LPCSTR section, bool ads)
+{
+	const auto& value = Bodycam::GetReferenceWeaponPosition(section);
+	return ads ? value.ads : value.hip;
+}
+static Fvector bodycam_get_reference_weapon_position_baseline(LPCSTR section, bool ads)
+{
+	const auto& value = Bodycam::GetReferenceWeaponPositionBaseline(section);
+	return ads ? value.ads : value.hip;
+}
+static bool bodycam_set_reference_weapon_position(LPCSTR section, bool ads, float x, float y, float z)
+{
+	Fvector value;
+	value.set(x, y, z);
+	return Bodycam::SetReferenceWeaponPosition(section, ads, value);
+}
+
+// Logs each unknown setting name once.
+static void bodycam_report_unknown_setting(LPCSTR name)
+{
+	static xr_set<shared_str> reported;
+	if (reported.insert(name).second)
+		Msg("! bodycam: unknown setting '%s', using the script's fallback", name);
 }
 
 static float bodycam_get_float(LPCSTR name, float fallback)
 {
 	float value = fallback;
-	Bodycam::GetFloat(name, value);
+	if (!Bodycam::GetFloat(name, value))
+		bodycam_report_unknown_setting(name);
 	return value;
-}
-
-static bool bodycam_set_bool(LPCSTR name, bool value)
-{
-	return Bodycam::SetBool(name, value);
 }
 
 static bool bodycam_get_bool(LPCSTR name, bool fallback)
 {
 	bool value = fallback;
-	Bodycam::GetBool(name, value);
+	if (!Bodycam::GetBool(name, value))
+		bodycam_report_unknown_setting(name);
 	return value;
 }
 
-static void bodycam_set_layer_weight(LPCSTR layer, float weight)
+static void bodycam_set_viewmodel_profile(float pos_x, float pos_y, float pos_z, float pitch, float yaw, float roll, float blend_speed)
 {
-	Bodycam::SetLayerWeight(layer, weight);
-}
-
-static float bodycam_get_layer_weight(LPCSTR layer)
-{
-	return Bodycam::GetLayerWeight(layer);
-}
-
-static void bodycam_apply_preset(int preset)
-{
-	Bodycam::ApplyPreset(preset);
-}
-
-static void bodycam_dump()
-{
-	CActor* actor = smart_cast<CActor*>(Level().CurrentEntity());
-	if (actor)
-		actor->cam_BodycamDumpState();
-	else
-		Msg("! bodycam.dump: no active actor");
-}
-
-static void bodycam_add_impulse(LPCSTR kind, float power)
-{
-	CActor* actor = smart_cast<CActor*>(Level().CurrentEntity());
-	if (actor)
-		actor->cam_BodycamAddImpulse(kind, power);
-}
-
-static void bodycam_set_viewmodel_profile(float pos_x, float pos_y, float pos_z,
-	float pitch, float yaw, float roll, float blend_speed)
-{
-	CActor* actor = smart_cast<CActor*>(Level().CurrentEntity());
+	CActor* actor = Bodycam::CurrentActor();
 	if (!actor)
 		return;
 
@@ -79,8 +78,7 @@ static void bodycam_set_viewmodel_profile(float pos_x, float pos_y, float pos_z,
 
 static void bodycam_clear_viewmodel_profile(float blend_speed)
 {
-	CActor* actor = smart_cast<CActor*>(Level().CurrentEntity());
-	if (actor)
+	if (CActor* actor = Bodycam::CurrentActor())
 		actor->cam_BodycamClearViewmodelProfile(blend_speed);
 }
 
@@ -113,66 +111,26 @@ static object bodycam_get_bindings()
 		entry["name"] = binding.name;
 		entry["console_name"] = binding.console_name;
 		entry["type"] = "bool";
-		entry["default"] = !!binding.default_value;
+		entry["default"] = binding.default_value;
 		bindings[index++] = entry;
 	}
 
 	return bindings;
 }
 
-static object bodycam_get_state()
-{
-	lua_State* L = ai().script_engine().lua();
-	object table = newtable(L);
-
-	Bodycam::DebugSnapshot snapshot;
-	if (!Bodycam::GetDebugSnapshot(snapshot))
-	{
-		table["active"] = false;
-		return table;
-	}
-
-	table["active"] = snapshot.active;
-	table["camera_enabled"] = snapshot.camera_enabled;
-	table["vm_enabled"] = snapshot.vm_enabled;
-	table["lower_enabled"] = snapshot.lower_enabled;
-	table["ads"] = snapshot.ads;
-	table["mstate"] = snapshot.mstate;
-	table["camera_yaw"] = snapshot.camera_yaw;
-	table["camera_pitch"] = snapshot.camera_pitch;
-	table["camera_roll"] = snapshot.camera_roll;
-	table["camera_pos_x"] = snapshot.camera_pos.x;
-	table["camera_pos_y"] = snapshot.camera_pos.y;
-	table["camera_pos_z"] = snapshot.camera_pos.z;
-	table["vm_pos_x"] = snapshot.vm_pos.x;
-	table["vm_pos_y"] = snapshot.vm_pos.y;
-	table["vm_pos_z"] = snapshot.vm_pos.z;
-	table["vm_rot_x"] = snapshot.vm_rot.x;
-	table["vm_rot_y"] = snapshot.vm_rot.y;
-	table["vm_rot_z"] = snapshot.vm_rot.z;
-	table["lower_target"] = snapshot.lower_target;
-	table["lower_amount"] = snapshot.lower_amount;
-	table["lower_holster"] = snapshot.lower_holster;
-	return table;
-}
-
 #pragma optimize("s", on)
 void Bodycam::script_register(lua_State* L)
 {
-	module(L, "bodycam")
-	[
-		def("get_float", &bodycam_get_float),
-		def("set_float", &bodycam_set_float),
-		def("get_bool", &bodycam_get_bool),
-		def("set_bool", &bodycam_set_bool),
-		def("get_layer_weight", &bodycam_get_layer_weight),
-		def("set_layer_weight", &bodycam_set_layer_weight),
-		def("apply_preset", &bodycam_apply_preset),
-		def("add_impulse", &bodycam_add_impulse),
-		def("set_viewmodel_profile", &bodycam_set_viewmodel_profile),
-		def("clear_viewmodel_profile", &bodycam_clear_viewmodel_profile),
-		def("dump", &bodycam_dump),
-		def("get_state", &bodycam_get_state),
-		def("get_bindings", &bodycam_get_bindings)
-	];
+	module(L, "bodycam")[def("request_motion_mode", &bodycam_request_motion_mode), def("get_motion_mode", &bodycam_get_motion_mode),
+		def("get_active_motion_mode", &bodycam_get_active_motion_mode),
+		def("get_reference_weapon_position", &bodycam_get_reference_weapon_position),
+		def("get_reference_weapon_position_baseline", &bodycam_get_reference_weapon_position_baseline),
+		def("has_reference_weapon_position_baseline", &Bodycam::HasReferenceWeaponPositionBaseline),
+		def("restore_reference_weapon_position", &Bodycam::RestoreReferenceWeaponPosition),
+		def("set_reference_weapon_position", &bodycam_set_reference_weapon_position),
+		def("save_reference_weapon_position", &Bodycam::SaveReferenceWeaponPosition), def("get_float", &bodycam_get_float),
+		def("set_float", &Bodycam::SetFloat), def("get_bool", &bodycam_get_bool), def("set_bool", &Bodycam::SetBool),
+		def("apply_preset", &Bodycam::ApplyPreset), def("set_viewmodel_profile", &bodycam_set_viewmodel_profile),
+		def("clear_viewmodel_profile", &bodycam_clear_viewmodel_profile), def("dump", &Bodycam::DumpState),
+		def("get_bindings", &bodycam_get_bindings)];
 }

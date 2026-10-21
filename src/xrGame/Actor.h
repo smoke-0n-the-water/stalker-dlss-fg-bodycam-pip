@@ -22,6 +22,8 @@
 #include "player_hud_legs.h"
 #include "bodycam_camera.h"
 #include "bodycam_movement_response.h"
+#include "bodycam_sprint_start.h"
+#include "bodycam_reference/speed_curve.h"
 
 #ifdef STATIONARYMGUN_NEW
 #include "WeaponStatMgun.h"
@@ -30,6 +32,7 @@
 using namespace ACTOR_DEFS;
 
 class CInfoPortion;
+namespace BodycamReference { class EngineFrameAdapter; }
 struct GAME_NEWS_DATA;
 class CActorCondition;
 class CCustomOutfit;
@@ -88,6 +91,9 @@ class CActor :
 private:
 	typedef CEntityAlive inherited;
 public:
+	// Observe native foot contacts without rescheduling locomotion.
+	void event_on_step() override { ++m_bodycam_step_serial; }
+	u32 BodycamStepSerial() const { return m_bodycam_step_serial; }
 	CActor();
 	virtual ~CActor();
 
@@ -357,21 +363,33 @@ public:
 
 	IC CCameraBase* cam_Active() { return cameras[cam_active]; }
 	void cam_BodycamDumpState();
-	void cam_BodycamAddImpulse(LPCSTR kind, float power);
 	void cam_BodycamSetViewmodelProfile(const Fvector& pos, const Fvector& rot, float blend_speed);
 	void cam_BodycamClearViewmodelProfile(float blend_speed);
-	bool cam_BodycamGetHudOffset(Fvector& pos, Fvector& rot) const;
-	bool cam_BodycamGetArmPose(Bodycam::ArmPose& pose) const;
-	bool cam_BodycamSprintAnimReady() const;
-	bool cam_BodycamOwnsSprintTransition() const;
-	bool cam_BodycamSprintHudChangedThisFrame() const { return m_bodycam_sprint_hud_changed; }
+	// lowering_weight 0..1 is the share of the lowering offset that is kept.
+	bool cam_BodycamGetHudOffset(Fvector& pos, Fvector& rot, float lowering_weight) const;
+	// The pose for the HUD arm controller; inactive outside Classic.
+	Bodycam::ArmPose BodycamArmPose() const;
+	bool BodycamSprintAnimReady() const;
+	BodycamReference::SpeedCoefficients BodycamSpeedCoefficients() const;
+	// Live walk/run/sprint anchors for Reference-equivalent speed (modded speeds included).
+	BodycamReference::GaitSpeedAnchors BodycamGaitAnchors() const;
+	bool BodycamOwnsSprintTransition() const;
+	bool BodycamBraking() const { return m_bodycam_brake.active; }
+	// Sprint start: a script lowering request (GAMMA's sprint lowering) made
+	// before full sprint speed is held and committed once full speed is reached.
+	bool BodycamDeferSprintLowering();
+	void BodycamCancelSprintLowering() { m_bodycam_sprint.lower_queued = Bodycam::kNoWeapon; }
+	// True while this weapon's sprint lowering is held during the sprint
+	// start; progress is then 0..1 toward the lowered pose.
+	bool BodycamSprintLowerProgress(const CWeapon* weapon, float& progress) const;
+	bool BodycamSprintHudChangedThisFrame() const { return m_bodycam_sprint.hud_changed; }
 	enum EScriptCameraDeltaStatus : u8
 	{
 		eScriptCameraDeltaPending,
 		eScriptCameraDeltaApplied,
 		eScriptCameraDeltaCancelled,
 	};
-	u32 cam_QueueScriptCameraDelta(float yaw_delta, float pitch_delta);
+	u32 cam_QueueScriptCameraDelta(float yaw_delta, float pitch_delta, bool mouse_look = false);
 	bool cam_PollScriptCameraDelta(u32 request_id, EScriptCameraDeltaStatus& status, Fvector2& applied);
 	bool cam_CancelScriptCameraDelta(u32 request_id);
 	IC CCameraBase* cam_FirstEye() { return cameras[eacFirstEye]; }
@@ -387,11 +405,36 @@ public:
 
 protected:
 	//virtual	void			cam_Set					(EActorCameras style);
+    friend class BodycamReference::EngineFrameAdapter;
 	void cam_Update(float dt, float fFOV);
+	struct PreparedCamera
+	{
+		CCameraBase* camera = nullptr;
+		float delta = 0.f;
+		float viewport_near = 0.f;
+		bool freeze_world_pose = false;
+	};
+	bool cam_Prepare(float dt, float fFOV, PreparedCamera& frame, bool reference = false);
+	void cam_Finalize(const PreparedCamera& frame);
+    void cam_FinalizeReference(const PreparedCamera& frame,Fmatrix& cameraWorld);
+    Fvector m_reference_camera_base_release = {0.f,0.f,0.f};
+    Fvector m_reference_camera_effect_release = {0.f,0.f,0.f};
+    Fvector m_reference_camera_base_safe_eye = {0.f,0.f,0.f};
+    Fvector m_reference_camera_effect_safe_eye = {0.f,0.f,0.f};
+    Fvector m_reference_camera_base_carrier = {0.f,0.f,0.f};
+    Fvector m_reference_camera_effect_carrier = {0.f,0.f,0.f};
+    u32 m_reference_camera_release_frame = u32(-1);
+    void cam_UpdateAngularBookkeeping();
 	void cam_Lookout(const Fmatrix& xform, float camera_height);
 	void cam_BodycamVisualReset(const CCameraBase* camera);
 	bool cam_BodycamVisualUpdate(const CCameraBase* camera, float dt, float viewport_near, bool apply_camera);
-	void cam_BodycamAddFireImpulse(float power);
+	void cam_BodycamApplyRegrip();
+	// World head offset of the Classic footstep camera; the HUD rides with it.
+	bool cam_BodycamFootstepOffset(Fvector& offset, Fmatrix& roll) const;
+	u32 m_bodycam_regrip_frame = u32(-1);
+	float m_bodycam_regrip_near = 0.f;
+	// classic_recoil: Classic recoil took the shot and shares the kick.
+	void cam_BodycamNotifyShot(bool classic_recoil);
 	void cam_ApplyScriptCameraDeltas(CCameraBase* camera);
 	void cam_CancelScriptCameraDeltas();
 	bool cam_CanQueueScriptCameraDelta() const;
@@ -417,6 +460,7 @@ protected:
 	{
 		u32 id = 0;
 		Fvector2 delta = { 0.f, 0.f };
+		bool mouse_look = false;
 	};
 	struct SScriptCameraDeltaResult
 	{
@@ -524,6 +568,7 @@ protected:
 	BOOL m_bJumpKeyPressed;
 
 public:
+	BodycamReference::SpeedCoefficients m_reference_loaded_speed;
 	float m_fWalkAccel;
 	float m_fJumpSpeed;
 	float m_fRunFactor;
@@ -539,17 +584,27 @@ public:
 
 	// demonized: lookout modifier
 	float m_fLookoutFactor = 1;
-	Bodycam::MovementResponseState m_bodycam_movement_response;
-	bool m_bodycam_sprint_anim_ready = true;
-	bool m_bodycam_sprint_hud_active = false;
-	bool m_bodycam_sprint_hud_changed = false;
-	u8 m_bodycam_brake_steps_pending = 0;
-	float m_bodycam_brake_step_timer = 0.f;
-	void BodycamScheduleBrakeSteps();
-	void BodycamUpdateBrakeSteps(float dt);
 
     // verdatim: damage stagger time factor
     float DamageStaggerTimeFactor = 1;
+private:
+	u32 m_bodycam_step_serial = 0;
+	Bodycam::MovementInertiaState m_bodycam_movement_inertia;
+	// Classic movement presentation (bodycam_sprint_start.h holds the logic;
+	// bodycam_actor_movement.cpp adapts it to this actor).
+	Bodycam::SprintStart m_bodycam_sprint;
+	Bodycam::BrakingStride m_bodycam_brake;
+	// Once per frame from g_cl_CheckControls.
+	void BodycamUpdateMovement(Fvector& control_accel, float& camera_effector_factor, float dt);
+	// The Reference gait and speed rules g_cl_CheckControls applies.
+	bool BodycamReferenceMovement() const;
+	static void BodycamReferenceGait(u32& wished_state);
+	bool BodycamReferenceSprintDirection() const;
+	void BodycamReferenceFallbackGait();
+	float BodycamReferenceMoveScale(float scale, const Fvector& control_accel, bool accelerated) const;
+	void BodycamResetMovement();
+	bool BodycamCommitSprintLowering(bool owned);
+
 
 public:
 	Fvector GetMovementSpeed() { return NET_SavedAccel; };
@@ -825,7 +880,7 @@ public:
 
 	virtual void on_weapon_shot_start(CWeapon* weapon);
 	virtual void on_weapon_shot_update();
-	virtual void on_weapon_shot_stop();
+	virtual void on_weapon_shot_stop(CWeapon* weapon);
 	virtual void on_weapon_shot_remove(CWeapon* weapon);
 	virtual void on_weapon_hide(CWeapon* weapon);
 	Fvector weapon_recoil_delta_angle();

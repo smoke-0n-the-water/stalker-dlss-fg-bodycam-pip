@@ -68,6 +68,7 @@ bool CWeaponBinoculars::Action(u16 cmd, u32 flags)
 
 void CWeaponBinoculars::OnZoomIn()
 {
+    if(RejectReferenceActionAimStart())return;
 	if (H_Parent() && !IsZoomed())
 	{
 		m_sounds.StopSound("sndZoomOut");

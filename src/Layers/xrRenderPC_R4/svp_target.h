@@ -8,4 +8,7 @@ u32 svp_render_extent();
 // pip the SVP target extent, one policy for the allocation and the camera projection
 void svp_target_wh(u32& svp_w, u32& svp_h);
 
+// Learn the settled lens diameter for next-frame adaptive target sizing.
+void svp_track_disc(u32 width, u32 height);
+
 #endif

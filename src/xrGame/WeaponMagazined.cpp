@@ -1820,6 +1820,7 @@ void CWeaponMagazined::OnMotionMark(u32 state, const motion_marks& M)
 
 void CWeaponMagazined::OnZoomIn()
 {
+    if(RejectReferenceActionAimStart())return;
 	inherited::OnZoomIn();
 
 	if (GetState() == eIdle)
@@ -1854,7 +1855,9 @@ void CWeaponMagazined::OnZoomOut()
 
 	inherited::OnZoomOut();
 
-	if (GetState() == eIdle)
+	// Scripted check/reload can play while the weapon state remains idle.
+	// Dropping ADS must not replace that live action with an idle clip.
+	if (GetState() == eIdle && !(g_player_hud && g_player_hud->ReferenceSemanticActionPlaying()))
 		PlayAnimIdle();
 
 	//Alundaio

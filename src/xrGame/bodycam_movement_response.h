@@ -1,19 +1,18 @@
 #pragma once
+// Movement inertia: the actor's control acceleration eases toward what the
+// movement keys ask for, which gives starts, stops and turns a duration.
 
 namespace Bodycam
 {
-struct MovementResponseSettings;
+struct MovementInertiaSettings;
 
-struct MovementResponseState
+struct MovementInertiaState
 {
 	bool initialized = false;
 	Fvector accel = { 0.f, 0.f, 0.f };
-	float target_speed = 0.f;
-	float actual_speed = 0.f;
-	float speed_fraction = 0.f;
 };
 
-struct MovementResponseInput
+struct MovementInertiaInput
 {
 	float dt = 0.f;
 	u32 move_flags = 0;
@@ -21,38 +20,14 @@ struct MovementResponseInput
 	Fvector target_accel = { 0.f, 0.f, 0.f };
 };
 
-struct MovementResponseOutput
+struct MovementInertiaOutput
 {
 	Fvector accel = { 0.f, 0.f, 0.f };
-	float target_speed = 0.f;
-	float actual_speed = 0.f;
-	float speed_fraction = 0.f;
-	bool active = false;
+	float target_speed = 0.f; // m/s
+	float actual_speed = 0.f; // m/s
+	float speed_fraction = 0.f; // Actual over target, 0..1.
 };
 
-struct SprintHudState
-{
-	bool active = false;
-	bool ready = true;
-	bool changed = false;
-	bool notify = false;
-};
-
-inline SprintHudState ResolveSprintHudState(bool current_active, bool raw_sprint,
-	bool transition_owned, bool ads, bool moving, float speed_fraction, float handoff_speed)
-{
-	SprintHudState state;
-	state.ready = !transition_owned || !raw_sprint ||
-		(!ads && speed_fraction >= handoff_speed);
-	state.active = raw_sprint && state.ready;
-	state.changed = state.active != current_active;
-
-	// A full stop already sends the generic movement callback. Let that callback
-	// restart the HUD mixer instead of replaying the same animation twice.
-	state.notify = state.changed && (state.active || moving);
-	return state;
-}
-
-void ResetMovementResponse(MovementResponseState& state);
-MovementResponseOutput UpdateMovementResponse(const MovementResponseSettings& settings, MovementResponseState& state, const MovementResponseInput& input);
+MovementInertiaOutput UpdateMovementInertia(
+	const MovementInertiaSettings& settings, MovementInertiaState& state, const MovementInertiaInput& input);
 } // namespace Bodycam

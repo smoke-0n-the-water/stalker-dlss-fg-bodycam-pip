@@ -165,6 +165,30 @@ ref_rt& CRenderTarget::phase_upscaler_camera_mv()
 void CRenderTarget::phase_dlss_postprocess()
 {
 	const auto sceneJitter = dlss::RasterJitter();
+	// The stock TAA path excludes the already-composited PiP lens. Keep that
+	// contract with temporal upscalers too, without overwriting glass tags in
+	// the motion buffer (NVG and physical-glass consumers still need those).
+	// (shared "Bodycam DLSS Scope Fix"; main-target guard added because this tree's
+	// dlss::Configured() does not check the target itself)
+	const bool resolveScope = dlss::Configured() && this == RImplementation.TargetMain && rt_dlss_scope_mask &&
+		s_dlss_scope_resolve && Device.true_pip_on && Device.m_SecondViewport.IsSVPActive() &&
+		!RImplementation.GMBase.RGraph.mapScopeHUDSorted.empty();
+	if (resolveScope)
+	{
+		EnsureScopeShaders();
+		const float clear[4] = {0, 0, 0, 0};
+		HW.pContext->ClearRenderTargetView(rt_dlss_scope_mask->pRT, clear);
+		u_setrt(rt_dlss_scope_mask, nullptr, nullptr, nullptr);
+		RCache.set_CullMode(CULL_NONE);
+		RCache.set_Stencil(FALSE);
+		draw_scope(s_svp_taa_stamp, []()
+		{
+			RCache.set_c("scope_phase", 0);
+			RCache.set_ColorWriteEnable();
+		});
+		// Unbind the mask before sampling it after reconstruction.
+		u_setrt(rt_Color, nullptr, nullptr, nullptr);
+	}
 	const bool dlssOutput = dlss::Evaluate(rt_Color->pSurface, phase_upscaler_camera_mv()->pSurface);
 	dlss::EndScene();
 	if (!dlss::Configured()) return;
@@ -191,6 +215,14 @@ void CRenderTarget::phase_dlss_postprocess()
 	if (sharpen) RCache.set_c("dlss_sharpening", ps_r_dlss_sharpness, 0.f, 0.f, 0.f);
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+
+	if (resolveScope && dlssOutput)
+	{
+		RCache.set_Element(s_dlss_scope_resolve->E[0]);
+		RCache.set_c("dlss_scope_jitter", sceneJitter.x / dlss::RenderWidth(),
+			sceneJitter.y / dlss::RenderHeight(), 0.f, 0.f);
+		RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+	}
 
 	// Only defer direct UI draws when wearable surfaces were found in this view.
 	// A normal weapon/device must not trigger an additional native depth pass.

@@ -13,6 +13,7 @@
 #include "first_bullet_controller.h"
 
 #include "CameraRecoil.h"
+#include "bodycam_reference/action_aim_gate.h"
 
 #include "NewZoomFlag.h"
 #include "../Layers/xrRender/xrRender_console.h" // pip scope_svp_enabled for the SVP zoom accessors
@@ -412,6 +413,7 @@ protected:
 		u32 m_uSvpMagnificationGeneration = 0;
 		u32 m_uSvpMagnificationRouteEpoch = 0;
 		u32 m_uSvpMagnificationSession = 0;
+		bool m_bSvpMagnificationRing = false;
 		float m_fZoomRotateTime;
 		float m_fBaseZoomFactor;
 		float m_fScopeZoomFactor;
@@ -522,6 +524,8 @@ public:
 	}
 
 	virtual u8 GetCurrentHudOffsetIdx();
+    // Shared authored endpoint resolution, also used by Reference calibration.
+    void ResolveHudOffsetTarget(u8 idx,Fvector& position,Fvector& rotation,Fvector& aimRotation,bool adjustments);
 
 	// Tronex script exports
 	void AmmoTypeForEach(const ::luabind::functor<bool>& funct);
@@ -625,6 +629,8 @@ public:
 	bool GetAimpos() { return m_aimpos; }
 	float GetTargetNearWallOffset();
 	float GetTargetHudFov();
+	float GetTargetHudFovWithoutNearWall() override;
+	float ApplyHudAimFovFactor(float base);
 
 public:
 	Fmatrix RayTransform();
@@ -732,6 +738,16 @@ protected:
 	virtual void ClearShotEffector();
 	virtual void StopShotEffector();
 
+public:
+	// Stop firing for Reference action admission without magazine auto-reload.
+	void CancelReferenceActionFire();
+    void CancelReferenceActionAim();
+    bool RejectReferenceActionAimStart();
+private:
+    // Reference action aim (bodycam_reference_weapon.cpp), from Action and UpdateCL.
+    bool BodycamReferenceZoom(u32 flags);
+    void BodycamResumeReferenceAim();
+    BodycamReference::ActionAimGate m_referenceActionAimGate;
 public:
 	float GetBaseDispersion(float cartridge_k);
 	float GetFireDispersion(bool with_cartridge, bool for_crosshair = false);

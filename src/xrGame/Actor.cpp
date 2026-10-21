@@ -33,6 +33,7 @@
 #include "../xrEngine/svp_gameplay_cvars.h" // pip the 75 base for the through-scope sens fov
 //
 #include "Actor.h"
+#include "bodycam_reference_frame.h"
 #include "ActorAnimation.h"
 #include "actor_anim_defs.h"
 #include "HudItem.h"
@@ -439,6 +440,7 @@ void CActor::Load(LPCSTR section)
 	m_fRun_StrafeFactor = READ_IF_EXISTS(pSettings, r_float, section, "run_strafe_coef", 1.0f);
 	m_fSprint_StrafeFactor = READ_IF_EXISTS(pSettings, r_float, section, "sprint_strafe_coef", 1.0f);
 
+	m_reference_loaded_speed = BodycamSpeedCoefficients();
 	m_fCamHeightFactor = pSettings->r_float(section, "camera_height_factor");
 	character_physics_support()->movement()->SetJumpUpVelocity(m_fJumpSpeed);
 	float AirControlParam = pSettings->r_float(section, "air_control_param");
@@ -1188,7 +1190,9 @@ void CActor::UpdateCL()
 	SetZoomAimingMode(false);
 	CWeapon* pWeapon = smart_cast<CWeapon*>(inventory().ActiveItem());
 
-	cam_Update(float(Device.dwTimeDelta) / 1000.0f, currentFOV());
+    const bool reference_frame = BodycamReference::EngineFrameAdapter::Update(*this,pWeapon);
+    if (!reference_frame)
+	    cam_Update(float(Device.dwTimeDelta) / 1000.0f, currentFOV());
     m_legs_controller.update(this);
 
 #ifdef STATIONARYMGUN_NEW
@@ -1323,9 +1327,21 @@ void CActor::UpdateCL()
 	}
 	Fmatrix trans;
 	Cameras().hud_camera_Matrix(trans);
+	// The HUD camera is the effector camera; carry the footstep head motion
+	// so the weapon rides with the eye instead of staying behind.
+	Fvector footstep_offset;
+	Fmatrix footstep_roll;
+	if (cam_BodycamFootstepOffset(footstep_offset, footstep_roll))
+	{
+		trans.mulB_43(footstep_roll);
+		trans.c.add(footstep_offset);
+	}
 
-	if (IsFocused())
+	if (IsFocused() && !reference_frame)
+	{
 		g_player_hud->update(trans);
+		cam_BodycamApplyRegrip();
+	}
 
 	if (psActorFlags.test(AF_MULTI_ITEM_PICKUP))
 		m_bPickupMode = false;
@@ -2290,7 +2306,7 @@ void CActor::renderable_Render(IDSGraphManager* DM)
 		{
 			if (canRenderLegs(this, m_holder))
 			{
-				m_legs_controller.render(false, DM);
+				m_legs_controller.render(DM);
 			}
 
             if (showActorBody == 1 || showActorBody == 2)
@@ -2328,7 +2344,7 @@ void CActor::renderable_Render(IDSGraphManager* DM)
                     // Render full body from legs controller without hiding bones for shadow correctness
                     // Solves potential issues with manipulating actor's XFORM
                         m_legs_controller.update(this, true);
-                        m_legs_controller.render(true, DM);
+                        m_legs_controller.render(DM, true);
 
                         // Ideally the active item also should be duplicated but leave this for now
                         // Move active item

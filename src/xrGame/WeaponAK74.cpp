@@ -72,6 +72,8 @@ void CWeaponAK74::script_register	(lua_State *L)
 			.def("CurrentZoomFactor", &CWeapon::CurrentZoomFactor)
 			.def("OnZoomIn", &CWeapon::OnZoomIn)
 			.def("OnZoomOut", &CWeapon::OnZoomOut)
+			.def("StopZoom", &CWeapon::StopZoom)
+			.def("IsTextureZoomActive", &CWeapon::IsTextureZoomActive)
 			
 			.def("IsSingleHanded", &CWeapon::IsSingleHanded)
 			

@@ -192,6 +192,7 @@ void ShutdownDevice() { ReleaseTargets(); backend.Shutdown(); }
 unsigned RenderWidth() { return renderSize.Valid() ? renderSize.width : Device.dwWidth; }
 unsigned RenderHeight() { return renderSize.Valid() ? renderSize.height : Device.dwHeight; }
 bool Configured() { return configured; }
+void InvalidateHistory() { ResetHistory(); }
 bool Active() { return configured && inScene && mainView && (useFsr ? fsrBackend.Ready() : backend.Ready()); }
 Offset RasterJitter() { return rasterJitter; }
 Offset PreviousRasterJitter() { return previousJitter; }

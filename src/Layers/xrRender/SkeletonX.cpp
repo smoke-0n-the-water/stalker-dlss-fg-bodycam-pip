@@ -17,6 +17,7 @@
 
 #include "SkeletonX.h"
 #include "SkeletonCustom.h"
+#include "../../xrServerEntities/smart_cast.h"
 #include "../../xrEngine/fmesh.h"
 #include "../../xrCPU_Pipe/xrCPU_Pipe.h"
 
@@ -173,6 +174,8 @@ void CSkeletonX::_Copy(CSkeletonX* B)
 {
 	Parent = NULL;
 	ChildIDX = B->ChildIDX;
+	scope_surface_cached = B->scope_surface_cached;
+	scope_surface_frames = B->scope_surface_frames;
 	Vertices1W = B->Vertices1W;
 	Vertices2W = B->Vertices2W;
 	Vertices3W = B->Vertices3W;
@@ -195,6 +198,10 @@ void CSkeletonX::_Copy(CSkeletonX* B)
 //////////////////////////////////////////////////////////////////////
 void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 {
+    // Preserve upstream hiding of opaque parts sharing a kept glass bone.
+    // The bone itself stays animated, so the glass does not collapse or freeze.
+    if (Parent && Parent->PhysicalScopeGlassMask
+        && (ScopeGlassBoneMask() & Parent->PhysicalScopeGlassMask) && !IsPhysicalScopeGlass()) return;
 	xrCriticalSectionGuard guard(&Parent->UCalc_Mutex);
 	PROF_EVENT("CSkeletonX::_Render");
 	Fmatrix p_WV, p_WVP;
@@ -209,6 +216,7 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 		if (snapshot && snapshot->bones.size() == Parent->LL_BoneCount())
 			render_bones = snapshot->bones.data();
 	}
+	BindScopeSurfaceFrames(render_bones);
 #else
 	const bool suppress_history = false;
 #endif
@@ -578,6 +586,87 @@ void CSkeletonX::_Load(const char* N, IReader* data, u32& dwVertCount)
 		crc = crc32(&*bids.begin(), bids.size() * sizeof(u16));
 		BonesUsed.create(crc, bids.size(), &*bids.begin());
 	}
+}
+
+void CSkeletonX::BindScopeSurfaceFrames(CBoneInstance* render_bones)
+{
+#if RENDER == R_R4
+    if (!RCache.get_c("scope_glass_surface_control")) return;
+    // Always reset on the actual draw. No ADS packet or previous gun can supply
+    // a stale hip-fire frame, and unsupported assets retain native normals.
+    RCache.set_c("scope_glass_surface_control", 0.f, 0.f, 0.f, 0.f);
+    if (!Parent || !render_bones || !IsPhysicalScopeGlass()) return;
+    if (!scope_surface_cached)
+    {
+        scope_surface_cached = true;
+        std::vector<scope_surface_vertex> vertices;
+        auto add = [&](const Fvector& p,const Fvector& n,const Fvector& t,unsigned bone) {
+            vertices.push_back({{p.x,p.y,p.z},{n.x,n.y,n.z},{t.x,t.y,t.z},bone});
+        };
+        if (*Vertices1W)
+            for (u32 i=0;i<Vertices1W.size();++i) { const auto& v=Vertices1W[i]; add(v.P,v.N,v.T,v.matrix); }
+        else if (*Vertices2W)
+            for (u32 i=0;i<Vertices2W.size();++i) { const auto& v=Vertices2W[i]; if(v.matrix0!=v.matrix1)return; add(v.P,v.N,v.T,v.matrix0); }
+        else if (*Vertices3W)
+            for (u32 i=0;i<Vertices3W.size();++i) { const auto& v=Vertices3W[i]; if(v.m[0]!=v.m[1]||v.m[0]!=v.m[2])return; add(v.P,v.N,v.T,v.m[0]); }
+        else if (*Vertices4W)
+            for (u32 i=0;i<Vertices4W.size();++i) { const auto& v=Vertices4W[i]; if(v.m[0]!=v.m[1]||v.m[0]!=v.m[2]||v.m[0]!=v.m[3])return; add(v.P,v.N,v.T,v.m[0]); }
+        std::vector<unsigned> indices;
+        if (*m_Indices) for(u32 i=0;i<m_Indices.size();++i)indices.push_back(m_Indices[i]);
+        scope_surface_frames = scope_surface_fit(vertices,indices);
+        extern int ps_r__svp_cop_diag;
+        if(ps_r__svp_cop_diag)
+            Msg("[Physical glass surface] frames=%u vertices=%u triangles=%u singleBone=%u",
+                unsigned(scope_surface_frames.size()),unsigned(vertices.size()),unsigned(indices.size()/3),
+                scope_surface_frames.empty()?unsigned(-1):scope_surface_frames[0].bone);
+    }
+    static LPCSTR centers[4]={"scope_glass_surface_center0","scope_glass_surface_center1","scope_glass_surface_center2","scope_glass_surface_center3"};
+    static LPCSTR axes[4]={"scope_glass_surface_axis0","scope_glass_surface_axis1","scope_glass_surface_axis2","scope_glass_surface_axis3"};
+    static LPCSTR rights[4]={"scope_glass_surface_right0","scope_glass_surface_right1","scope_glass_surface_right2","scope_glass_surface_right3"};
+    static LPCSTR ups[4]={"scope_glass_surface_up0","scope_glass_surface_up1","scope_glass_surface_up2","scope_glass_surface_up3"};
+    unsigned count=0;
+    for(const auto& frame:scope_surface_frames)
+    {
+        if(frame.bone>=Parent->LL_BoneCount())return;
+        Fmatrix world; world.mul_43(RCache.xforms.m_w,render_bones[frame.bone].mRenderTransform);
+        auto direction=[&](const svp_v3& value){Fvector p,r;p.set(value.x,value.y,value.z);world.transform_dir(r,p);return r;};
+        Fvector c,local;local.set(frame.center.x,frame.center.y,frame.center.z);world.transform_tiny(c,local);
+        Fvector n=direction(frame.axis),t=direction(frame.right),b=direction(frame.up);
+        const float ns=n.magnitude(),ts=t.magnitude(),bs=b.magnitude();
+        // Existing HUD skinning assumes rigid/uniform transforms. Do not
+        // invent inverse-transpose/radius behavior for deformed model scales.
+        if(ns<EPS||ts<EPS||bs<EPS||_abs(ts/bs-1.f)>.01f||_abs(ns/ts-1.f)>.01f)return;
+        n.div(ns);t.div(ts);b.div(bs);
+        RCache.set_c(centers[count],c.x,c.y,c.z,frame.radius*ts);
+        RCache.set_c(axes[count],n.x,n.y,n.z,frame.halfDepth*ns);
+        RCache.set_c(rights[count],t.x,t.y,t.z,0.f);
+        RCache.set_c(ups[count],b.x,b.y,b.z,0.f);
+        ++count;
+    }
+    RCache.set_c("scope_glass_surface_control",float(count),0.f,0.f,0.f);
+#endif
+}
+
+u64 CSkeletonX::ScopeGlassBoneMask()
+{
+    if (RM_SINGLE == RenderMode) return u64(1) << RMS_boneid;
+    u64 mask = 0;
+    for (u32 i = 0; i < BonesUsed.size(); ++i) mask |= u64(1) << BonesUsed[i];
+    return mask;
+}
+
+bool CSkeletonX::IsPhysicalScopeGlass()
+{
+#if RENDER == R_R4
+    auto* visual = smart_cast<dxRender_Visual*>(this);
+    if (visual && visual->shader._get())
+        for (const auto& element : visual->shader->E)
+            if (element._get())
+                for (const auto& pass : element->passes)
+                    if (pass->constants._get() && pass->constants->get("scope_reference_physical_glass"))
+                        return true;
+#endif
+    return false;
 }
 
 BOOL CSkeletonX::has_visible_bones()

@@ -15,7 +15,6 @@ enum dx10_marker_color : u32
 // GPU debug-event markers over ID3DUserDefinedAnnotation (HW.pAnnotation), no-op when no debugger attached
 //   PIX_EVENT(Name)      always-on phase marker, Name is a bare identifier
 //   PIX_EVENT_F(fmt,...) per-batch marker with a printf label, uniqued by __LINE__, gated on r__gpu_markers
-
 #define PIX_EVENT(Name) dxPixEventWrapper pixEvent##Name(L#Name)
 #define PIX_EVENT_C(Name, Color) dxPixEventWrapper pixEvent##Name(L#Name, Color)
 

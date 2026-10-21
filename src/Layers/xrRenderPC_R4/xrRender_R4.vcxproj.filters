@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+ÃƒÂ¯Ã‚Â»Ã‚Â¿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Kernel">
@@ -210,6 +210,9 @@
     <ClInclude Include="..\xrRender\svp_lens_detect.h">
       <Filter>Kernel</Filter>
     </ClInclude>
+    <ClInclude Include="svp_lens_lighting.h">
+      <Filter>Kernel</Filter>
+    </ClInclude>
     <ClInclude Include="..\xrRender\svp_constants.h">
       <Filter>Refactored\Execution &amp; 3D\Shaders\Blender</Filter>
     </ClInclude>
@@ -390,13 +393,46 @@
     <ClInclude Include="..\xrRender\HOM.h">
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClInclude>
+    <ClInclude Include="..\xrRender\occ_engine.h">
+      <Filter>Visibility\HOM Occlusion</Filter>
+    </ClInclude>
     <ClInclude Include="..\xrRender\occRasterizer.h">
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClInclude>
     <ClInclude Include="r4_rendertarget.h">
       <Filter>Core_Target</Filter>
     </ClInclude>
+    <ClInclude Include="r4_3dss_reticle.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="scope_vslr_capture.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="scope_vslr_renderer.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="scope_vslr_timing.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="scope_vslr_mirror.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="scope_glass_head.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="svp_shader_probe.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="svp_frame_burst.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="r4_shader_warmup.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
     <ClInclude Include="svp_target.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
+    <ClInclude Include="svp_target_size.h">
       <Filter>Core_Target</Filter>
     </ClInclude>
     <ClInclude Include="svp_camera.h">
@@ -834,6 +870,9 @@
     <ClCompile Include="..\xrRender\svp_console.cpp">
       <Filter>Kernel</Filter>
     </ClCompile>
+    <ClCompile Include="svp_lens_lighting.cpp">
+      <Filter>Kernel</Filter>
+    </ClCompile>
     <ClCompile Include="xrRender_R4.cpp">
       <Filter>Kernel</Filter>
     </ClCompile>
@@ -852,13 +891,76 @@
     <ClCompile Include="svp_target.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="svp_render.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_objective_hud.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_reflex.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_report.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_upscaler.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_lens_constants.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
     <ClCompile Include="svp_optics.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_reticle_emission.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="r4_reticle_atlas.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="r4_3dss_reticle.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="scope_vslr_capture.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="scope_vslr_renderer.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="scope_vslr_mirror.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="scope_vslr_timing.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="scope_glass_head.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_shader_probe.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_frame_burst.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="r4_rendertarget_phase_3dss_reticle.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="r4_shader_warmup.cpp">
       <Filter>Core_Target</Filter>
     </ClCompile>
     <ClCompile Include="svp_nearblur.cpp">
       <Filter>Core_Target</Filter>
     </ClCompile>
     <ClCompile Include="svp_nvg.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_camera_debug.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_camera_tracking.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="svp_lens_geometry.cpp">
       <Filter>Core_Target</Filter>
     </ClCompile>
     <ClCompile Include="svp_camera.cpp">
@@ -889,6 +991,12 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\svp_lens_detect_math.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\3rd party\meshoptimizer\vcacheoptimizer.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\3rd party\meshoptimizer\overdrawoptimizer.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\svp_lens_detect.cpp">
@@ -1081,6 +1189,12 @@
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\occRasterizer.cpp">
+      <Filter>Visibility\HOM Occlusion</Filter>
+    </ClCompile>
+    <ClCompile Include="..\xrRender\occ_engine_legacy.cpp">
+      <Filter>Visibility\HOM Occlusion</Filter>
+    </ClCompile>
+    <ClCompile Include="..\xrRender\occ_engine_moc.cpp">
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\occRasterizer_core.cpp">

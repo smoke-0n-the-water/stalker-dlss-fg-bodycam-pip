@@ -252,6 +252,7 @@ void CResourceManager::_DeleteVS(const SVS* vs)
 				(*iDecl)->vs_to_layout.erase(iLayout);
 			}
 		}
+		RCache.invalidate_layout_memo(); // a released layout must not survive as a memo hit
 		return;
 	}
 	Msg("! ERROR: Failed to find compiled vertex-shader '%s'", *vs->cName);
@@ -621,7 +622,7 @@ void CResourceManager::DeleteGeom(const SGeometry* Geom)
 
 //--------------------------------------------------------------------------------------------------------------
 xr_task_group textures_load_tasks;
-CTexture* CResourceManager::_CreateTexture(LPCSTR _Name)
+ref_texture CResourceManager::_CreateTexture(LPCSTR _Name)
 {
 	PROF_EVENT("_CreateTexture");
 	// DBG_VerifyTextures	();
@@ -642,18 +643,65 @@ CTexture* CResourceManager::_CreateTexture(LPCSTR _Name)
 		T->dwFlags |= xr_resource_flagged::RF_REGISTERED;
 		m_textures.insert(mk_pair(T->set_name(Name), T));
 		T->Preload();
-		if (Device.b_is_Ready)
-		{
-			static DWORD this_thread_id = 0;
-			this_thread_id = GetCurrentThreadId();
-			textures_load_tasks.run([=]()
-			{
-				if (this_thread_id != GetCurrentThreadId()) { PROF_THREAD("X-Ray PPL Thread") }
-				T->Load();
-			});
-		}
-		return T;
+        const ref_texture result(T); // Own caller result before any worker can complete.
+        if (Device.b_is_Ready) QueueTextureLoad(result);
+        return result;
 	}
+}
+
+void CResourceManager::QueueTextureLoad(const ref_texture &texture) {
+  if (!texture)
+    return;
+  bool expected = false;
+  if (!texture->loadQueued.compare_exchange_strong(expected, true,
+                                                   std::memory_order_acq_rel))
+    return;
+  const DWORD caller = GetCurrentThreadId();
+  bool accepted = false;
+  try {
+    accepted = pendingTextureLoads.Submit(
+        texture, texture._get(),
+        [](auto work) { textures_load_tasks.run(work); },
+        [caller](const ref_texture &owner) {
+          if (caller != GetCurrentThreadId()) {
+            PROF_THREAD("X-Ray PPL Thread")
+          }
+          try {
+            owner->Load();
+          } catch (...) {
+            owner->flags.bLoading = false;
+            owner->loadQueued.store(false, std::memory_order_release);
+            throw;
+          }
+          owner->loadQueued.store(false, std::memory_order_release);
+        });
+  } catch (...) {
+    texture->loadQueued.store(false, std::memory_order_release);
+    throw;
+  }
+  if (!accepted)
+    texture->loadQueued.store(false, std::memory_order_release);
+}
+void CResourceManager::PrefetchTexture(LPCSTR name) {
+  const auto texture = _CreateTexture(name);
+  xrCriticalSectionGuard guard(creationGuard);
+  if (texture && std::find(prefetchedTextures.begin(), prefetchedTextures.end(),
+                           texture) == prefetchedTextures.end())
+    prefetchedTextures.push_back(texture);
+}
+void CResourceManager::ReleasePrefetchedTextures() {
+  xrCriticalSectionGuard guard(creationGuard);
+  prefetchedTextures.clear();
+}
+void CResourceManager::CollectTextureLoads() {
+  xrCriticalSectionGuard guard(creationGuard);
+  pendingTextureLoads.Collect();
+}
+void CResourceManager::DrainTextureLoads(bool close) {
+  if (close)
+    pendingTextureLoads.Close();
+  textures_load_tasks.wait();
+  CollectTextureLoads();
 }
 
 void CResourceManager::_DeleteTexture(const CTexture* T)

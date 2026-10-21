@@ -6,6 +6,7 @@
 #include "../../xrEngine/renderdoc_integration.h"
 
 #include <stdarg.h>
+#include "../../xrEngine/renderdoc_integration.h"
 
 namespace
 {

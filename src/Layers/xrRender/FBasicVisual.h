@@ -69,6 +69,18 @@ public:
 	s32 skinning;
     bool hud;
 
+	// Shaders already built by SetShaderTexture for this visual. Scripts that toggle a material
+	// (blinking device LEDs) otherwise rebuild the whole shader through the resource manager on
+	// every call; a few entries covers an on/off pair.
+	struct SShaderSwap
+	{
+		shared_str shader;
+		shared_str texture;
+		bool hud;
+		ref_shader built;
+	};
+	xr_vector<SShaderSwap> shader_swaps;
+
 	virtual void Render(float LOD)
 	{
 	}; // LOD - Level Of Detail  [0..1], Ignored

@@ -6,9 +6,7 @@
     <string id="ui_mm_modded_exes_gameplay_bodycam_bodycam"><text>Bodycam</text></string>
     <string id="ui_mcm_menu_bodycam"><text>Bodycam</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_camera_decoupling_enable"><text>Camera Decoupling (bodycam_camera_decoupling_enable)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_vm_spring_enable"><text>Viewmodel Spring (bodycam_vm_spring_enable)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_vm_lowering_enable"><text>Viewmodel Lowering (bodycam_vm_lowering_enable)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_bodycam_style_arm_ik_enable"><text>Bodycam Style Arm IK (bodycam_style_arm_ik_enable)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_stalker2_style_arm_ik_enable"><text>STALKER 2 Style Arm IK (bodycam_stalker2_style_arm_ik_enable)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_movement_inertia_enable"><text>Movement Inertia (bodycam_movement_inertia_enable)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_movement_inertia_disable_ads"><text>Disable Movement Inertia While ADS (bodycam_movement_inertia_disable_ads)</text></string>
@@ -18,10 +16,6 @@
     <string id="ui_mm_modded_exes_gameplay_bodycam_hip_camera_follow_speed"><text>Hip Camera Follow Speed (bodycam_hip_camera_follow_speed)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_hip_camera_max_yaw_offset"><text>Hip Camera Max Yaw Offset (bodycam_hip_camera_max_yaw_offset)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_hip_camera_max_pitch_offset"><text>Hip Camera Max Pitch Offset (bodycam_hip_camera_max_pitch_offset)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_hip_camera_roll_scale"><text>Hip Camera Roll Scale (bodycam_hip_camera_roll_scale)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_vm_mouse_position_scale"><text>Viewmodel Mouse Position Scale (bodycam_vm_mouse_position_scale)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_vm_mouse_rotation_scale"><text>Viewmodel Mouse Rotation Scale (bodycam_vm_mouse_rotation_scale)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_vm_spring_speed"><text>Viewmodel Spring Speed (bodycam_vm_spring_speed)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_movement_acceleration_time"><text>Movement Acceleration Time (bodycam_movement_acceleration_time)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_movement_deceleration_time"><text>Movement Deceleration Time (bodycam_movement_deceleration_time)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_movement_turn_response"><text>Movement Turn Response (bodycam_movement_turn_response)</text></string>
@@ -41,7 +35,6 @@
     <string id="ui_mm_modded_exes_gameplay_bodycam_fire_impulse_enable"><text>Bodycam Fire Impulses (bodycam_fire_impulse_enable)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_hip_fire_weapon_impulse"><text>Hip Fire Weapon Impulse (bodycam_hip_fire_weapon_impulse)</text></string>
     <string id="ui_mm_modded_exes_gameplay_bodycam_ads_fire_weapon_impulse"><text>ADS Fire Weapon Impulse (bodycam_ads_fire_weapon_impulse)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_sprint_transition_vm_blend_scale"><text>Sprint Transition Viewmodel Blend Scale (bodycam_sprint_transition_vm_blend_scale)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_sprint_transition_blend_smoothing"><text>Sprint Transition Blend Smoothing (bodycam_sprint_transition_blend_smoothing)</text></string>
-    <string id="ui_mm_modded_exes_gameplay_bodycam_sprint_transition_start_stop_impulse_scale"><text>Sprint Transition Start/Stop Impulse Scale (bodycam_sprint_transition_start_stop_impulse_scale)</text></string>
+    <string id="ui_mm_modded_exes_gameplay_bodycam_sprint_camera_sway_strength"><text>Sprint Camera Sway Strength (bodycam_sprint_camera_sway_strength)</text></string>
+    <string id="ui_mm_modded_exes_gameplay_bodycam_sprint_camera_sway_smoothing"><text>Sprint Camera Sway Smoothing (bodycam_sprint_camera_sway_smoothing)</text></string>
 </string_table>

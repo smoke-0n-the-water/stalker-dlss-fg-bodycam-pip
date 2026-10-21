@@ -10,6 +10,10 @@
 
 void CResourceManager::reset_begin()
 {
+#if defined(USE_DX10) || defined(USE_DX11)
+    DrainTextureLoads();
+    ReleasePrefetchedTextures();
+#endif
 	// destroy everything, renderer may use
 	::Render->reset_begin();
 
@@ -108,6 +112,10 @@ void mdump(C c)
 
 CResourceManager::~CResourceManager()
 {
+#if defined(USE_DX10) || defined(USE_DX11)
+    DrainTextureLoads(true);
+    ReleasePrefetchedTextures();
+#endif
 	DestroyNecessaryTextures();
 	Dump(false);
 }

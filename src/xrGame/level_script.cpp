@@ -1173,6 +1173,13 @@ u32 queue_actor_camera_delta(float yaw_delta, float pitch_delta)
 	return actor ? actor->cam_QueueScriptCameraDelta(yaw_delta, pitch_delta) : 0;
 }
 
+// Angular mouse look for script-only motion tests; shares queue/ack/cancellation.
+u32 queue_actor_mouse_look(float yaw_delta, float pitch_delta)
+{
+	CActor* actor = Actor();
+	return actor ? actor->cam_QueueScriptCameraDelta(yaw_delta, pitch_delta, true) : 0;
+}
+
 u32 poll_actor_camera_delta(u32 request_id, float& yaw, float& pitch)
 {
 	CActor* actor = Actor();
@@ -1897,6 +1904,11 @@ u32 PlayHudMotion(u8 hand, LPCSTR itm_name, LPCSTR anm_name, bool bMixIn = true,
 	return g_player_hud->script_anim_play(hand, itm_name, anm_name, bMixIn, speed);
 }
 
+u32 PlayHudMotionBodycam(u8 hand, LPCSTR itm_name, LPCSTR anm_name, bool bMixIn, float speed, float lowering_influence)
+{
+	return g_player_hud->script_anim_play(hand, itm_name, anm_name, bMixIn, speed, lowering_influence);
+}
+
 void StopHudMotion()
 {
 	g_player_hud->StopScriptAnim();
@@ -1927,6 +1939,12 @@ bool MotionExists(LPCSTR model_path, LPCSTR motion_name)
 void PlayBlendAnm(LPCSTR name, u8 part, float speed, float power, bool bLooped, bool no_restart, LPCSTR pivot_bone)
 {
 	g_player_hud->PlayBlendAnm(name, part, speed, power, bLooped, no_restart, pivot_bone);
+}
+
+void PlayBlendAnmBodycam(LPCSTR name, u8 part, float speed, float power, bool bLooped, bool no_restart,
+	LPCSTR pivot_bone, float lowering_influence)
+{
+	g_player_hud->PlayBlendAnm(name, part, speed, power, bLooped, no_restart, pivot_bone, lowering_influence);
 }
 
 void StopBlendAnm(LPCSTR name, bool bForce)
@@ -2393,6 +2411,12 @@ bool actor_safemode()
 
 void actor_set_safemode(bool status)
 {
+	// Classic sprint transition: lowering asked for during the sprint start
+	// waits for full sprint speed; a raise cancels a waiting lowering.
+	if (!status)
+		Actor()->BodycamCancelSprintLowering();
+	else if (Actor()->BodycamDeferSprintLowering())
+		return;
 	if (Actor()->is_safemode() != status)
 	{
 		CWeapon* wep = smart_cast<CWeapon*>(Actor()->inventory().ActiveItem());
@@ -2995,6 +3019,7 @@ void CLevel::script_register(lua_State* L)
 			def("set_cam_effector_fov", &set_cam_effector_fov),
 			def("get_cam_effector_fov", &get_cam_effector_fov),
 			def("queue_actor_camera_delta", &queue_actor_camera_delta),
+			def("queue_actor_mouse_look", &queue_actor_mouse_look),
 			def("poll_actor_camera_delta", &poll_actor_camera_delta,
 				pure_out_value<2>() + pure_out_value<3>()),
 			def("cancel_actor_camera_delta", &cancel_actor_camera_delta),
@@ -3194,11 +3219,13 @@ void CLevel::script_register(lua_State* L)
 		def("reload_language", &reload_language),
 		def("get_resolutions", &vid_modes_string),
 		def("play_hud_motion", PlayHudMotion),
+		def("play_hud_motion_bodycam", PlayHudMotionBodycam),
 		def("stop_hud_motion", StopHudMotion),
 		def("get_motion_length", MotionLength),
 		def("hud_motion_allowed", AllowHudMotion),
 		def("motion_exists", MotionExists),
 		def("play_hud_anm", PlayBlendAnm),
+		def("play_hud_anm_bodycam", PlayBlendAnmBodycam),
 		def("stop_hud_anm", StopBlendAnm),
 		def("stop_all_hud_anms", StopAllBlendAnms),
 		def("set_hud_anm_time", SetBlendAnmTime),

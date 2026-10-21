@@ -154,6 +154,12 @@ float ps_r__Detail_l_ambient = 0.9f;
 float ps_r__Detail_l_aniso = 0.25f;
 float ps_r__Detail_density = 0.3f;
 float ps_r__Detail_height = 1.0f;
+// radius-relative grass density falloff, full density inside 'knee' then a power curve to zero at
+// the radius edge, knee >= 1 disables it
+float ps_r__Detail_density_knee = 1.00f;
+float ps_r__Detail_density_curve = 2.00f;
+// dx11 hardware instancing for grass, read once at level load, 0 keeps the baked-copies path
+int ps_r__detail_instancing = 1;
 float ps_r__Detail_rainbow_hemi = 0.75f;
 
 float ps_r__Tree_w_rot = 10.0f;
@@ -161,6 +167,8 @@ float ps_r__Tree_w_speed = 1.00f;
 float ps_r__Tree_w_amp = 0.005f;
 Fvector ps_r__Tree_Wave = {.1f, .01f, .11f};
 float ps_r__Tree_SBC = 1.5f; // scale bias correct
+// vertex cache plus overdraw reorder of the tree index ranges, read once at level load
+int ps_r__tree_ib_reorder = 1;
 
 float ps_r__WallmarkTTL = 50.f;
 float ps_r__WallmarkSHIFT = 0.0001f;
@@ -338,7 +346,7 @@ float ps_r2_tnmp_exposure = 7.0f; // r2-only
 float ps_r2_tnmp_gamma = .25f; // r2-only
 float ps_r2_tnmp_onoff = .0f; // r2-only
 
-float ps_r4_full_detail_distance_scale = 0.5f; // r4-only
+float ps_r4_full_detail_distance_scale = 1.0f; // r4-only, 1 = off (keeps the stock image)
 
 // HDR10 parameters
 float ps_r4_hdr10_whitepoint_nits = 400.0f; // r4-only, default = 400 nits
@@ -531,6 +539,21 @@ int ps_r__tex_evict_age_frames = 1800;
 int ps_r__tex_evict_batch_size = 200;
 int ps_r__tex_evict_interval   = 600;
 
+int ps_r__swapchain_buffers = 2;
+int ps_r__max_frame_latency = 0;
+int ps_r__sun_minmax_lean = 1;
+int ps_r__dsgraph_sort_memo = 1;
+int ps_r__dx11_layout_memo = 1;
+int ps_r__light_scissor = 0;
+int ps_r__light_lean = 0;
+int ps_r__device_state_interval = 1;
+int ps_r__smap_null_ps = 1;
+int ps_r__sun_lod_skip = 1;
+int ps_r__sun_grass_runs = 1;
+int ps_r__sun_grass_cull = 1;
+int ps_r__grass_smap_element = 1;
+int ps_r__cb_dirty_list = 1;
+
 //AVO: detail draw radius
 Flags32 ps_common_flags = {0}; // r1-only
 u32 ps_steep_parallax = 0;
@@ -572,6 +595,7 @@ int opt_static = 2;
 int opt_dynamic = 2;
 
 int ps_pfx_volumetric_mode = 0;
+int ps_pfx_volumetric_debug = 0;
 int ps_r__portal_traverse_stats = 0;
 
 float r_rain_exp = 1.f;
@@ -1418,6 +1442,10 @@ void xrRender_initconsole()
 	CMD4(CCC_Float, "r__detail_density", &ps_current_detail_density/*&ps_r__Detail_density*/, 0.04f/*.2f*/, 1.f);
 	//AVO: extended from 0.2 to 0.04 and replaced variable
 	CMD4(CCC_Float, "r__detail_height", &ps_current_detail_height, 0.5f, 2.0f);
+	CMD4(CCC_Float, "r__detail_density_knee", &ps_r__Detail_density_knee, 0.0f, 1.0f);
+	CMD4(CCC_Float, "r__detail_density_curve", &ps_r__Detail_density_curve, 0.25f, 12.0f);
+	CMD4(CCC_Integer, "r__detail_instancing", &ps_r__detail_instancing, 0, 1);
+	CMD4(CCC_Integer, "r__tree_ib_reorder", &ps_r__tree_ib_reorder, 0, 1);
 
 #ifdef DEBUG
 	CMD4(CCC_Float,		"r__detail_l_ambient",	&ps_r__Detail_l_ambient,	.5f,	.95f	);
@@ -1624,6 +1652,10 @@ void xrRender_initconsole()
 
 	CMD4(CCC_Integer, "r__fakescope", &scope_fake_enabled, 0, 1); //crookr for fake scope
 	CMD4(CCC_Integer, "r__3Dfakescope", &scope_3D_fake_enabled, 0, 1); // Redotix99: for 3D Shader Based Scopes
+#if defined(USE_DX11)
+	extern void reticle_3dss_console_init();
+	reticle_3dss_console_init(); // 3DSS reticle cvars (xrRenderPC_R4/r4_3dss_reticle.cpp)
+#endif
 	svp_console_init(); // true PiP cvars register in svp_console.cpp, DX11-gated inside
 	CMD4(CCC_Integer, "r__gpu_markers", &r__gpu_markers, 0, 1); // per-batch events + resource names
 	CMD4(CCC_Integer, "r__shader_debug", &r__shader_debug, 0, 1); // HLSL debug build, clear shaders_cache + reload
@@ -1892,7 +1924,7 @@ void xrRender_initconsole()
 	CMD3(CCC_Token, "r3_msaa_alphatest", &ps_r3_msaa_atest, qmsaa__atest_token);
 	CMD3(CCC_Token, "r3_minmax_sm", &ps_r3_minmax_sm, qminmax_sm_token);
 
-	CMD3(CCC_Mask, "r__fast_details_update" ,&ps_r2_ls_flags, R2FLAG_FAST_DETAILS_UPDATE);
+	CMD3(CCC_Mask, "r__fast_details_update", &ps_r2_ls_flags_ext, R2FLAGEXT_FAST_DETAILS_UPDATE);
 
 #ifdef DETAIL_RADIUS
 	CMD4(CCC_detail_radius, "r__detail_radius", &ps_r__detail_radius, 0, 250);
@@ -1902,6 +1934,20 @@ void xrRender_initconsole()
 	CMD4(CCC_Integer, "r__tex_evict_age_frames", &ps_r__tex_evict_age_frames, 300, 36000);
 	CMD4(CCC_Integer, "r__tex_evict_batch_size", &ps_r__tex_evict_batch_size, 10,  1000 );
 	CMD4(CCC_Integer, "r__tex_evict_interval",   &ps_r__tex_evict_interval,   60,  3600 );
+	CMD4(CCC_Integer, "r__swapchain_buffers", &ps_r__swapchain_buffers, 2, 3);
+	CMD4(CCC_Integer, "r__max_frame_latency", &ps_r__max_frame_latency, 0, 4);
+	CMD4(CCC_Integer, "r__sun_minmax_lean", &ps_r__sun_minmax_lean, 0, 1);
+	CMD4(CCC_Integer, "r__dsgraph_sort_memo", &ps_r__dsgraph_sort_memo, 0, 1);
+	CMD4(CCC_Integer, "r__dx11_layout_memo", &ps_r__dx11_layout_memo, 0, 1);
+	CMD4(CCC_Integer, "r__light_scissor", &ps_r__light_scissor, 0, 1);
+	CMD4(CCC_Integer, "r__light_lean", &ps_r__light_lean, 0, 1);
+	CMD4(CCC_Integer, "r__device_state_interval", &ps_r__device_state_interval, 1, 30);
+	CMD4(CCC_Integer, "r__smap_null_ps", &ps_r__smap_null_ps, 0, 1);
+	CMD4(CCC_Integer, "r__sun_lod_skip", &ps_r__sun_lod_skip, 0, 1);
+	CMD4(CCC_Integer, "r__sun_grass_runs", &ps_r__sun_grass_runs, 0, 1);
+	CMD4(CCC_Integer, "r__sun_grass_cull", &ps_r__sun_grass_cull, 0, 1);
+	CMD4(CCC_Integer, "r__grass_smap_element", &ps_r__grass_smap_element, 0, 1);
+	CMD4(CCC_Integer, "r__cb_dirty_list", &ps_r__cb_dirty_list, 0, 2);
 	CMD3(CCC_Mask, "r__use_precompiled_shaders", &psDeviceFlags2, rsPrecompiledShaders); //Alundaio
 	CMD3(CCC_Mask, "r__enable_grass_shadow", &psDeviceFlags2, rsGrassShadow); //Alundaio
 	CMD3(CCC_Mask, "r__no_scale_on_fade", &psDeviceFlags2, rsNoScale); //Alundaio
@@ -1925,6 +1971,7 @@ void xrRender_initconsole()
 	CMD4(CCC_Vector4, "vignette_control", &ps_vignette_control, Fvector4().set(0.0f, 0.0f, 0.0f, 0.0f), Fvector4().set(1.0f, 1.0f, 1.0f, 1.0f));
 
 	CMD4(CCC_Integer, "pfx_volumetric_mode", &ps_pfx_volumetric_mode, 0, 1);
+	CMD4(CCC_Integer, "pfx_volumetric_debug", &ps_pfx_volumetric_debug, 0, 1);
 
     CMD4(CCC_Float, "r__ssa_discard", &ps_r__ssaDISCARD, 0.f, 50.0f);
     CMD4(CCC_Float, "r__ssa_discard_exp", &ps_r__ssaDISCARD_exp, 0.1f, 3.0f);

@@ -316,6 +316,233 @@ public:
 };
 
 //-----------------------------------------------------------------------
+// Optick capture control.
+//
+// prof_capture_start [1]  - begin a capture. Without an argument the capture is
+//                           instrumentation-only (PROF_MODE_LIGHT); pass 1 for
+//                           Optick's full mode, whose ETW parts (autosampling,
+//                           context switches, syscalls) only collect anything if
+//                           the game is running elevated.
+// prof_capture_stop       - stop and write $logs$\optick_<date>_<time>.opt
+// prof_capture            - toggle, so a single key bind brackets one stutter.
+//
+// When the profiler is compiled out (XRCORE_PROFILER == PROFILER_NONE, the
+// default) all three stay registered but do nothing except say so, so a key
+// bind in user.ltx is harmless on an uninstrumented exe.
+//-----------------------------------------------------------------------
+#if XRCORE_PROFILER == PROFILER_OPTICK
+
+// Optick keeps EVERY event of a capture in RAM until the capture is saved, and
+// the save is a synchronous serialize+compress of the whole thing. On 2026-10-20
+// a multi-minute capture on this engine produced a 1.7 GB .opt and drove the
+// 32 GB machine into the pagefile hard enough that it had to be power-cycled.
+// So a capture here is deliberately bounded: it stops itself on a time limit, and
+// again on a free-RAM floor, whichever comes first.
+static const u32 PROF_DEFAULT_SECONDS = 15;
+static const u32 PROF_MAX_SECONDS     = 120;
+static const u64 PROF_MIN_FREE_BYTES  = 4ull * 1024 * 1024 * 1024;  // 4 GB headroom
+static const u32 PROF_REPORT_MS       = 5000;
+static const u32 PROF_MEMCHECK_MS     = 250;
+
+static bool s_prof_running     = false;
+static u32  s_prof_started_ms  = 0;
+static u32  s_prof_limit_ms    = 0;
+static u32  s_prof_next_report = 0;
+static u32  s_prof_next_memchk = 0;
+static u64  s_prof_free_at_start = 0;
+
+static u64 prof_free_phys_bytes()
+{
+	MEMORYSTATUSEX ms;
+	ZeroMemory(&ms, sizeof(ms));
+	ms.dwLength = sizeof(ms);
+	if (!GlobalMemoryStatusEx(&ms))
+		return 0;
+	return ms.ullAvailPhys;
+}
+
+static void prof_capture_begin(u32 seconds, bool full)
+{
+	if (PROF_IS_ACTIVE())
+	{
+		Msg("~ prof: a capture is already running - use prof_capture_stop");
+		return;
+	}
+
+	if (seconds == 0) seconds = PROF_DEFAULT_SECONDS;
+	clamp(seconds, (u32)1, PROF_MAX_SECONDS);
+
+	s_prof_free_at_start = prof_free_phys_bytes();
+	if (s_prof_free_at_start && s_prof_free_at_start < PROF_MIN_FREE_BYTES)
+	{
+		Msg("! prof: only %.1f GB of physical RAM free, below the %.1f GB floor - not starting a capture",
+			s_prof_free_at_start / 1073741824.0, PROF_MIN_FREE_BYTES / 1073741824.0);
+		return;
+	}
+
+	// braces are not optional: OPTICK_START_CAPTURE already ends in a semicolon
+	if (full)
+	{
+		PROF_START_CAPTURE(PROF_MODE_FULL);
+	}
+	else
+	{
+		PROF_START_CAPTURE(PROF_MODE_LIGHT);
+	}
+
+	s_prof_running     = true;
+	s_prof_started_ms  = Device.dwTimeGlobal;
+	s_prof_limit_ms    = seconds * 1000;
+	s_prof_next_report = s_prof_started_ms + PROF_REPORT_MS;
+	s_prof_next_memchk = s_prof_started_ms + PROF_MEMCHECK_MS;
+
+	Msg("* prof: capture started (%s), auto-stop after %us or if free RAM drops under %.0f GB.",
+		full ? "full; the ETW parts need an elevated process" : "instrumentation only",
+		seconds, PROF_MIN_FREE_BYTES / 1073741824.0);
+	Msg("* prof: the game will freeze for a few seconds while the capture is written. That is normal.");
+}
+
+static void prof_capture_end(LPCSTR why)
+{
+	if (!PROF_IS_ACTIVE())
+	{
+		s_prof_running = false;
+		Msg("~ prof: no capture is running");
+		return;
+	}
+
+	const u32 elapsed_ms = Device.dwTimeGlobal - s_prof_started_ms;
+	s_prof_running = false;
+
+	PROF_STOP_CAPTURE();
+
+	string64 stamp;
+	string_path name, path;
+	xr_sprintf(name, sizeof(name), "optick_%s.opt", timestamp(stamp));
+	FS.update_path(path, "$logs$", name);
+
+	Msg("* prof: stopping after %.1fs (%s), writing [%s] - the game is frozen until this finishes",
+		elapsed_ms / 1000.0f, why, path);
+	xrLogger::FlushLog();   // so the path survives in the log if the write goes wrong
+
+	// Writes synchronously on the calling thread.
+	PROF_SAVE_CAPTURE(path);
+
+	WIN32_FILE_ATTRIBUTE_DATA fad;
+	if (GetFileAttributesExA(path, GetFileExInfoStandard, &fad))
+	{
+		const u64 sz = ((u64)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+		Msg("* prof: capture saved, %.1f MB", sz / 1048576.0);
+	}
+	else
+	{
+		Msg("! prof: capture save reported no file at [%s]", path);
+	}
+}
+
+// Called once per frame from CRenderDevice::on_idle. The whole point is that a
+// capture cannot outlive its budget just because nobody typed the stop command.
+void prof_capture_frame()
+{
+	if (!s_prof_running)
+		return;
+
+	const u32 now = Device.dwTimeGlobal;
+
+	if (now - s_prof_started_ms >= s_prof_limit_ms)
+	{
+		prof_capture_end("time limit");
+		return;
+	}
+
+	if (now >= s_prof_next_memchk)
+	{
+		s_prof_next_memchk = now + PROF_MEMCHECK_MS;
+		const u64 freeNow = prof_free_phys_bytes();
+		if (freeNow && freeNow < PROF_MIN_FREE_BYTES)
+		{
+			prof_capture_end("free RAM floor");
+			return;
+		}
+
+		if (now >= s_prof_next_report)
+		{
+			s_prof_next_report = now + PROF_REPORT_MS;
+			Msg("* prof: capturing %.0fs/%.0fs, free RAM %.1f GB (was %.1f GB at start)",
+				(now - s_prof_started_ms) / 1000.0f, s_prof_limit_ms / 1000.0f,
+				freeNow / 1073741824.0, s_prof_free_at_start / 1073741824.0);
+		}
+	}
+}
+#else
+void prof_capture_frame() {}
+#endif
+
+class CCC_ProfCaptureStart : public IConsole_Command
+{
+public:
+	CCC_ProfCaptureStart(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+
+	virtual void Execute(LPCSTR args)
+	{
+#if XRCORE_PROFILER == PROFILER_OPTICK
+		u32 seconds = 0; int full = 0;
+		if (args && args[0]) sscanf_s(args, "%u %d", &seconds, &full);
+		prof_capture_begin(seconds, full != 0);
+#else
+		(void)args;
+		Msg("! prof: no profiler compiled into this build (XRCORE_PROFILER == PROFILER_NONE)");
+#endif
+	}
+
+	virtual void Info(TInfo& I) { xr_strcpy(I, sizeof(I), "start an Optick capture: prof_capture_start [seconds=15] [full=0]"); }
+};
+
+class CCC_ProfCaptureStop : public IConsole_Command
+{
+public:
+	CCC_ProfCaptureStop(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+
+	virtual void Execute(LPCSTR /*args*/)
+	{
+#if XRCORE_PROFILER == PROFILER_OPTICK
+		prof_capture_end("manual stop");
+#else
+		Msg("! prof: no profiler compiled into this build (XRCORE_PROFILER == PROFILER_NONE)");
+#endif
+	}
+
+	virtual void Info(TInfo& I) { xr_strcpy(I, sizeof(I), "stop the Optick capture and save it to the logs folder"); }
+};
+
+class CCC_ProfCaptureToggle : public IConsole_Command
+{
+public:
+	CCC_ProfCaptureToggle(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+
+	virtual void Execute(LPCSTR args)
+	{
+#if XRCORE_PROFILER == PROFILER_OPTICK
+		if (PROF_IS_ACTIVE())
+		{
+			prof_capture_end("manual stop");
+		}
+		else
+		{
+			u32 seconds = 0; int full = 0;
+			if (args && args[0]) sscanf_s(args, "%u %d", &seconds, &full);
+			prof_capture_begin(seconds, full != 0);
+		}
+#else
+		(void)args;
+		Msg("! prof: no profiler compiled into this build (XRCORE_PROFILER == PROFILER_NONE)");
+#endif
+	}
+
+	virtual void Info(TInfo& I) { xr_strcpy(I, sizeof(I), "start the Optick capture, or stop and save it if one is running"); }
+};
+
+//-----------------------------------------------------------------------
 class CCC_SaveCFG : public IConsole_Command
 {
 public:
@@ -1296,6 +1523,11 @@ void CCC_Register()
 	//CMD4(CCC_Integer, "sv_dedicated_server_update_rate", &g_svDedicateServerUpdateReate, 1, 1000);
 
 	CMD1(CCC_HideConsole, "hide");
+
+	// deliberately NOT inside #ifdef DEBUG - this is a release build
+	CMD1(CCC_ProfCaptureStart, "prof_capture_start");
+	CMD1(CCC_ProfCaptureStop, "prof_capture_stop");
+	CMD1(CCC_ProfCaptureToggle, "prof_capture");
 
 	CMD4(CCC_Integer, "r__framelimit", &ps_framelimiter, 0, 500);
 	CMD3(CCC_Mask, "rs_refresh_60hz", &psDeviceFlags, rsRefresh60hz);

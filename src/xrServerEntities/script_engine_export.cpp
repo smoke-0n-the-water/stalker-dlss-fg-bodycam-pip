@@ -23,6 +23,7 @@
 #include "ui/UIMainIngameWnd.h"
 #include "ui/UIPdaWnd.h"
 #include "../xrGame/bodycam_camera.h"
+#include "../xrGame/first_person_transform.h"
 
 void export_classes	(lua_State *L)
 {
@@ -61,6 +62,8 @@ void export_classes	(lua_State *L)
 	console_registrator::script_register(L);
 	shader_bus_registrator::script_register(L);
 	Bodycam::script_register(L);
+	FirstPerson::script_register(L);
+	shader_bus_registrator::script_register(L);
 	CCoverPoint::script_register(L);
 	demo_player_info::script_register(L);
 	demo_info::script_register(L);

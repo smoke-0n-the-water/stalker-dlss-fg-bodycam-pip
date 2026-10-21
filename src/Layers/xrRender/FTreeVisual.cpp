@@ -152,8 +152,9 @@ void FTreeVisual::Render(float LOD)
 {
 	PROF_EVENT("FTreeVisual::Render");
 	const bool svp = Device.m_SecondViewport.IsSVPFrame(); // pip this viewport's prev-wind slot
-	static FTreeVisual_setup tvs, prev_tvs[2];
-	if (tvs.dwFrame != Device.dwViewport)
+	static FTreeVisual_setup current_tvs[2], prev_tvs[2];
+	FTreeVisual_setup& tvs = current_tvs[svp];
+	if (tvs.dwFrame != Device.dwFrame)
 	{
 		prev_tvs[svp] = tvs; // Save previous frame calculations
 		tvs.calculate();

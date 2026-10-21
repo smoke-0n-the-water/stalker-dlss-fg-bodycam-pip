@@ -375,6 +375,17 @@ exit_pupil_high_mm = 6
 fov_low_deg = 4.5
 fov_high_deg = 4.5
 
+; Fulton Armory M1D/M84 data, the objective clear aperture is unpublished so it stays absent
+[optic_m84_2_2x]
+data_grade = military_documented_partial
+optic_class = vintage_scope
+runtime_model = geometric
+magnification_min = 2.2
+magnification_max = 2.2
+eye_relief_mm = 127
+fov_low_ft_100yd = 27
+fov_high_ft_100yd = 27
+
 [optic_pgo7_2_7x]
 data_grade = manufacturer
 optic_class = launcher_scope
@@ -435,6 +446,18 @@ magnification_max = 4
 eye_relief_mm = 50
 fov_low_deg = 6
 fov_high_deg = 6
+
+; Holosun DRS-TH, the 3x and 5x are a sensor crop not glass so the optical power stays 1x
+; objective is the 25mm f/1.1 thermal lens clear aperture, eye relief is unlimited so no mm exists
+[optic_holosun_drsth_1x22]
+data_grade = manufacturer
+optic_class = display
+runtime_model = display
+magnification_min = 1
+magnification_max = 1
+objective_mm = 22.7
+fov_low_deg = 7.2
+fov_high_deg = 7.2
 
 [optic_digital_or_fictional]
 data_grade = digital_or_fictional

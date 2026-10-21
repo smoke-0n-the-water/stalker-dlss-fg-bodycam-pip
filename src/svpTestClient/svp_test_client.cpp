@@ -5,7 +5,7 @@
 #include "../xrEngine/svp_state.h"
 #include "../xrGame/svp_optic_config_script.h"
 #include "../xrGame/svp_mags.h"
-#include "../xrGame/bodycam_movement_response.h"
+#include "../xrGame/bodycam_sprint_start.h"
 #include "../xrGame/svp_projectile_math.h"
 #include "../Layers/xrRenderPC_R4/svp_physical_optics.h"
 #include "../Layers/xrRender/svp_lens_detect_math.h"
@@ -457,31 +457,30 @@ void AddBodycamTests(Harness& harness)
 {
 	harness.Run("bodycam", "sprint_hud_handoff", [&]
 	{
-		const float handoff_speed = 0.72f;
 		Bodycam::SprintHudState state = Bodycam::ResolveSprintHudState(
-			false, true, true, false, true, 0.4f, handoff_speed);
+			false, true, true, false, true, false);
 		CHECK(harness, !state.ready && !state.active);
-		CHECK(harness, !state.changed && !state.notify);
+		CHECK(harness, !state.notify);
 
 		state = Bodycam::ResolveSprintHudState(
-			false, true, true, false, true, 0.8f, handoff_speed);
+			false, true, true, false, true, true);
 		CHECK(harness, state.ready && state.active);
-		CHECK(harness, state.changed && state.notify);
+		CHECK(harness, state.notify);
 
 		state = Bodycam::ResolveSprintHudState(
-			true, false, true, false, true, 0.6f, handoff_speed);
+			true, false, true, false, true, false);
 		CHECK(harness, state.ready && !state.active);
-		CHECK(harness, state.changed && state.notify);
+		CHECK(harness, state.notify);
 
 		state = Bodycam::ResolveSprintHudState(
-			true, false, true, false, false, 0.f, handoff_speed);
+			true, false, true, false, false, false);
 		CHECK(harness, state.ready && !state.active);
-		CHECK(harness, state.changed && !state.notify);
+		CHECK(harness, !state.notify);
 
 		state = Bodycam::ResolveSprintHudState(
-			false, true, false, false, true, 0.f, handoff_speed);
+			false, true, false, false, true, false);
 		CHECK(harness, state.ready && state.active);
-		CHECK(harness, state.changed && state.notify);
+		CHECK(harness, state.notify);
 	});
 }
 

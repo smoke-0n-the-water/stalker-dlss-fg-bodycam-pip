@@ -1,11 +1,15 @@
 #include "stdafx.h"
 #include "RenderDimensions.h"
+#ifdef USE_DX11
+#include "../../xrEngine/peak_volumetric_debug.h"
+#endif
 #include "../../xrEngine/xr_object.h"
 #include "FBasicVisual.h"
 #include "SkeletonCustom.h"
 #include "../../Include/xrAPI/xrAPI.h"          // pip DRender, debug-line backend for r__scope_debug 3+
 #include "../../Include/xrRender/DebugRender.h" // pip IDebugRender::add_lines
 #include "xrRender_console.h"                   // pip scope_debug
+#include "light_smap_layout.h"
 
 extern int ps_r2_shadow_omnipart_vischeck;
 
@@ -78,7 +82,7 @@ void CRender::render_lights(light_Package& LP)
 	}
 	static xr_vector<light*> svp_mirror_subset;
 	// returns the batch subset inside the cone (cull off returns the whole batch), empty = skip the mirror
-	auto svp_cone_subset = [&](xr_vector<light*>& src) -> xr_vector<light*>&
+	auto svp_cone_subset = [&](xr_vector<light*>& src, bool volumetricCandidates=false) -> xr_vector<light*>&
 	{
 		if (!svp_cull_lights)
 			return src;
@@ -95,6 +99,12 @@ void CRender::render_lights(light_Package& LP)
 			else
 			{
 				if (ps_r__svp_stats) ++svp_stats_lights_skipped;
+#ifdef USE_DX11
+                if(volumetricCandidates && ps_pfx_volumetric_debug){
+                    auto& v=g_peak_volumetric_debug.For(Device.dwFrame,true);
+                    ++v.candidates;++v.skipped[unsigned(PeakVolumetricDebug::Skip::ScopeCone)];
+                }
+#endif
 				if (!svp_ledger_lights_skipped) svp_ledger_lights_skipped = 1;
 			}
 		}
@@ -158,26 +168,7 @@ void CRender::render_lights(light_Package& LP)
 			xr_vector<light*>& source = LP.v_shadowed;
 			static xr_vector<light*> refactored;
 			refactored.clear();
-			u32 total = (u32)source.size();
-
-			for (u16 smap_ID = 0; refactored.size() != total; smap_ID++)
-			{
-				LP_smap_pool.initialize(o.smapsize);
-				std::sort(source.begin(), source.end(), [](light* _1, light* _2) {return _1->X.S.size > _2->X.S.size; });
-				source.erase(std::remove_if(source.begin(), source.end(), [smap_ID](light* L)
-				{
-					SMAP_Rect R;
-					if (RImplementation.LP_smap_pool.push(R, L->X.S.size))
-					{
-						L->X.S.posX = R.min.x;
-						L->X.S.posY = R.min.y;
-						L->vis.smap_ID = smap_ID;
-						refactored.push_back(L);
-						return true;
-					}
-					return false;
-				}), source.end());
-			}
+			layout_shadow_atlases(source, refactored, LP_smap_pool, o.smapsize);
 
 			std::reverse(refactored.begin(), refactored.end());
 			LP.v_shadowed = refactored;
@@ -296,6 +287,17 @@ void CRender::render_lights(light_Package& LP)
 					{
 						Target->accum_spot(L);
 						render_indirect(L);
+#ifdef USE_DX11
+                        if(ps_pfx_volumetric_debug){
+                            auto& v=g_peak_volumetric_debug.For(Device.dwFrame,Device.m_SecondViewport.IsSVPFrame());
+                            ++v.candidates;
+                            using PeakVolumetricDebug::Skip;
+                            if(!L->flags.bVolumetric)++v.skipped[unsigned(Skip::NotVolumetric)];
+                            else if(!RImplementation.o.advancedpp)++v.skipped[unsigned(Skip::AdvancedPpOff)];
+                            else if(!ps_r2_ls_flags.is(R2FLAG_VOLUMETRIC_LIGHTS))++v.skipped[unsigned(Skip::VolumetricOff)];
+                            else if(ps_pfx_volumetric_mode!=1)++v.skipped[unsigned(Skip::OtherMode)];
+                        }
+#endif
 						if (L->flags.bVolumetric && RImplementation.o.advancedpp && ps_r2_ls_flags.is(R2FLAG_VOLUMETRIC_LIGHTS))
 						{
 #ifdef USE_DX11
@@ -322,7 +324,7 @@ void CRender::render_lights(light_Package& LP)
 				accum_group(L_spot_s);
 				if (Device.m_SecondViewport.dual_accum)
 				{
-					xr_vector<light*>& mlist = svp_cone_subset(L_spot_s);
+					xr_vector<light*>& mlist = svp_cone_subset(L_spot_s,true);
 					if (!mlist.empty())
 						Device.m_SecondViewport.dual_accum([&] { accum_group(mlist); });
 				}

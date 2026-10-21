@@ -145,11 +145,25 @@ void dxRender_Visual::SetShaderTexture(LPCSTR s_shader, LPCSTR s_texture)
 		dbg_texture = s_texture;
 	}
 
+	for (const SShaderSwap& swap : shader_swaps)
+	{
+		if (swap.hud == hud && swap.shader.equal(dbg_shader) && swap.texture.equal(dbg_texture) && swap.built)
+		{
+			shader = swap.built;
+			return;
+		}
+	}
+
 	Engine.External.SetSkinningMode(skinning);
     	bool prev_hud = ::Render->hud_loading;
     	::Render->hud_loading = hud;
     	shader.create(*dbg_shader, *dbg_texture);
     	::Render->hud_loading = prev_hud;
+
+	constexpr size_t max_shader_swaps = 4;
+	if (shader_swaps.size() >= max_shader_swaps)
+		shader_swaps.erase(shader_swaps.begin());
+	shader_swaps.push_back({ dbg_shader, dbg_texture, hud, shader });
 }
 
 void dxRender_Visual::ResetShaderTexture()

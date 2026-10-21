@@ -1,7 +1,8 @@
 #if !defined(BODYCAM_STANDALONE)
-#	include "stdafx.h"
+#include "stdafx.h"
 #endif
 #include "bodycam_mouse_input.h"
+#include "bodycam_simulation.h"
 
 #include <cmath>
 
@@ -9,22 +10,8 @@ namespace Bodycam
 {
 namespace
 {
-constexpr float kPi = 3.14159265358979323846f;
+// Radians. A larger difference from the camera's aim means something other than the mouse moved it.
 constexpr float kReconcileTolerance = 1.0e-5f;
-
-float NormalizeAngle(float value)
-{
-	while (value > kPi)
-		value -= 2.f * kPi;
-	while (value < -kPi)
-		value += 2.f * kPi;
-	return value;
-}
-
-float AngleDifference(float target, float current)
-{
-	return NormalizeAngle(target - current);
-}
 } // namespace
 
 void ResetMouseAim(MouseAimState& state, float yaw, float pitch)
@@ -50,27 +37,22 @@ void RebaseMouseAim(MouseAimState& state, float yaw_delta, float pitch_delta)
 	state.pitch = NormalizeAngle(state.pitch + pitch_delta);
 }
 
-MouseAimOutput ResolveMouseAim(MouseAimState& state, float target_yaw, float target_pitch)
+MouseAim ResolveMouseAim(MouseAimState& state, float target_yaw, float target_pitch)
 {
 	if (!state.initialized)
 		ResetMouseAim(state, target_yaw, target_pitch);
 
 	state.yaw = NormalizeAngle(state.yaw + state.pending_yaw);
 	state.pitch = NormalizeAngle(state.pitch + state.pending_pitch);
+	state.pending_yaw = 0.f;
+	state.pending_pitch = 0.f;
 
-	// Recoil, script cameras, pitch clamps and other engine-side changes remain authoritative.
+	// Recoil, script cameras and pitch limits move the camera without the mouse.
 	if (std::fabs(AngleDifference(target_yaw, state.yaw)) > kReconcileTolerance)
 		state.yaw = NormalizeAngle(target_yaw);
 	if (std::fabs(AngleDifference(target_pitch, state.pitch)) > kReconcileTolerance)
 		state.pitch = NormalizeAngle(target_pitch);
 
-	MouseAimOutput output;
-	output.yaw = state.yaw;
-	output.pitch = state.pitch;
-	output.available = true;
-
-	state.pending_yaw = 0.f;
-	state.pending_pitch = 0.f;
-	return output;
+	return { state.yaw, state.pitch };
 }
 } // namespace Bodycam

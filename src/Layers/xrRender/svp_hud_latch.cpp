@@ -193,7 +193,10 @@ void CDSGraphManager::svp_latch_hud_poses()
 		grab(n.pMatrix);
 	for (auto& n : RGraph.mapScopeHUDObjective)
 		grab(n.pMatrix);
+	for (auto& n : RGraph.mapPhysicalScopeGlass) grab(n.pMatrix);
 	for (auto& n : RGraph.mapReflexHUDSorted)
+		grab(n.pMatrix);
+	for (auto& n : RGraph.mapScopeHUDOverlay)
 		grab(n.pMatrix);
 
 	extern int scope_svp_enabled;
@@ -223,7 +226,10 @@ void CDSGraphManager::svp_latch_hud_poses()
 			capture(n.pVisual);
 		for (auto& n : RGraph.mapScopeHUDObjective)
 			capture(n.pVisual);
+		for (auto& n : RGraph.mapPhysicalScopeGlass) capture(n.pVisual);
 		for (auto& n : RGraph.mapReflexHUDSorted)
+			capture(n.pVisual);
+		for (auto& n : RGraph.mapScopeHUDOverlay)
 			capture(n.pVisual);
 	}
 
@@ -257,6 +263,8 @@ void CDSGraphManager::svp_latch_hud_poses()
 // the latched pose while this frame's latch is live, else the caller's pointer unchanged
 Fmatrix* CDSGraphManager::svp_pose_of(Fmatrix* p)
 {
+	if (!p || p == &Fidentity) // world statics all push identity, none of them can be a latch source
+		return p;
 	if (m_svp_pose_frame == Device.dwFrame)
 		for (auto& pose : m_svp_pose)
 			if (pose.source == p)

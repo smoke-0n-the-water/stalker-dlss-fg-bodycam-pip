@@ -39,6 +39,9 @@ ICF bool R4FullDetailRejectStatic(dxRender_Visual* pVisual, bool normalPhase)
 		pVisual->flags.test(IRenderVisualFlags::eIgnoreOptimization) || !g_pGamePersistent ||
 		!g_pGamePersistent->Environment().CurrentEnv)
 		return false;
+	// pip the scope renders from this main-view graph and magnifies past the full-detail range
+	if (Device.m_SecondViewport.IsSVPActive())
+		return false;
 
 	// Keep the engine's normal LOD selection alive beyond the full-detail range.
 	if (pVisual->Type == MT_LOD)
@@ -96,7 +99,7 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
     if (ps_r__common_flags.test(RFLAG_HOM_DYNAMIC))
     {
 #if RENDER!=R_R1
-        if (i_mask[CDSGraphManager::fl_normal])
+        if (main_occlusion())
 #endif
         {
             Fbox world_bb;
@@ -143,6 +146,19 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 	// Create common node
 	// NOTE: Invisible elements exist only in R1
 
+#if RENDER == R_R4
+    if (Device.true_pip_on && i_mask[CDSGraphManager::fl_hud] && !sh->passes.empty()
+        && sh->passes[0]->constants._get()
+        && sh->passes[0]->constants->get("scope_reference_physical_glass"))
+    {
+        auto& glass = RGraph.mapPhysicalScopeGlass;
+        bool present = false;
+        for (const auto& item : glass)
+            if (item.pVisual == pVisual && item.pMatrix == xform) present = true;
+        if (!present) glass.emplace_back(distSQ, SSA, val_pObject, pVisual, xform, sh,
+            true, val_hud_role);
+    }
+#endif
 #if defined(USE_DX11) //  Redotix99: for 3D Shader Based Scopes
 	// pip true-PiP scope capture, keep the eye-nearest eyepiece lens (==3) for the SVP composite, and
 	// once the SVP is active drop the back-glass (==1) / zwrite (==2) since the SVP draws the whole lens
@@ -238,6 +254,17 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 				i_mask[CDSGraphManager::fl_hud], val_hud_role);
 			return;
 		}
+		if (sh->flags.iScopeLense == 11)
+		{
+			// non-lens late-pass mesh (3DSS transparent housing / cutout / thermal overlay), kept out
+			// of the eyepiece capture and drawn after the lens composite, once per visual
+			for (const auto& n : RGraph.mapScopeHUDOverlay)
+				if (n.pVisual == pVisual && n.pMatrix == xform)
+					return;
+			RGraph.mapScopeHUDOverlay.emplace_back(distSQ, SSA, val_pObject, pVisual, xform, sh,
+				i_mask[CDSGraphManager::fl_hud], val_hud_role);
+			return;
+		}
 		if (Device.m_SecondViewport.IsSVPActive())
 			return; // the SVP composite draws the whole lens, skip the back-glass / zwrite
 		// a fake / not-yet-active optic, fall through to the legacy ==1/==2 handling below
@@ -269,8 +296,17 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 			return;
 		}
 
-		case 3: {
+		case 3:
+		case 11: { // pip ==11 is a 3DSS non-lens late-pass mesh, stock 3DSS sorts it with the lens
 			RGraph.mapScopeHUDSorted.emplace_back(distSQ, SSA, val_pObject, pVisual, xform, sh,
+				i_mask[CDSGraphManager::fl_hud], val_hud_role);
+			return;
+		}
+
+		case 10: { // 3DSS reflex reticle on the HUD: drawn in the reticle pass, with the reticle glow
+			if (!scope_3D_fake_enabled || !i_mask[CDSGraphManager::fl_hud])
+				break;
+			RGraph.mapScopeReflexHUD.emplace_back(distSQ, SSA, val_pObject, pVisual, xform, sh,
 				i_mask[CDSGraphManager::fl_hud], val_hud_role);
 			return;
 		}
@@ -540,6 +576,7 @@ void CDSGraphManager::AddToRenderQueue(R_dsgraph::RenderQueue& queue, const R_ds
 		}
 	}
 
+	queue.sorted = false; // the sole insertion path, an append drops the sort memo
 	queue.emplace_back(item, pass);
 }
 
@@ -600,7 +637,7 @@ void CDSGraphManager::add_Dynamic(IRenderVisual* piVisual, Fmatrix* xform)
 		else
 		{
 			//pV->CalculateBones(TRUE);
-			if (i_mask[CDSGraphManager::fl_normal])
+			if (main_occlusion())
 				pV->CalculateWallmarks();
 			add_leafs_Dynamic(pV->children, xform);
 		}
@@ -667,7 +704,7 @@ void CDSGraphManager::add_Dynamic(dxRender_Visual* pVisual, Fmatrix* xform)
 		else
 		{
 			//pV->CalculateBones(TRUE);
-			if (i_mask[CDSGraphManager::fl_normal])
+			if (main_occlusion())
 				pV->CalculateWallmarks();
 			add_leafs_Dynamic(pV->children, xform);
 		}
@@ -721,7 +758,7 @@ void CDSGraphManager::add_Static(IRenderVisual* piVisual, CFrustum& frustum, u32
 		return;
 
 #if RENDER!=R_R1
-	if (i_mask[CDSGraphManager::fl_normal])//phase normal
+	if (main_occlusion())//phase normal
 #endif
 		if (!RImplementation.HOM.visible(vis))
 			return;
@@ -753,7 +790,9 @@ void CDSGraphManager::add_Static(IRenderVisual* piVisual, CFrustum& frustum, u32
 			if (ssa < r_ssaDISCARD)
 				return;
 
-			RGraph.mapLOD.emplace_back(D, ssa, nullptr, pVisual, nullptr, nullptr, false);
+			// shadow graphs never draw lods so the entry would only grow the vector
+			if (!(ps_r__sun_lod_skip && i_mask[CDSGraphManager::fl_shmap]))
+				RGraph.mapLOD.emplace_back(D, ssa, nullptr, pVisual, nullptr, nullptr, false);
 		}
 
 #if RENDER!=R_R1
@@ -837,7 +876,7 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 		return;
 
 #if RENDER!=R_R1
-	if (i_mask[CDSGraphManager::fl_normal])//phase normal
+	if (main_occlusion())//phase normal
 #endif
 		if (!RImplementation.HOM.visible(vis))
 			return;
@@ -868,7 +907,9 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 			if (ssa < r_ssaDISCARD)
 				return;
 
-			RGraph.mapLOD.emplace_back(D, ssa, nullptr, pVisual, nullptr, nullptr, false);
+			// shadow graphs never draw lods so the entry would only grow the vector
+			if (!(ps_r__sun_lod_skip && i_mask[CDSGraphManager::fl_shmap]))
+				RGraph.mapLOD.emplace_back(D, ssa, nullptr, pVisual, nullptr, nullptr, false);
 		}
 
 #if RENDER!=R_R1
@@ -896,7 +937,7 @@ void CDSGraphManager::add_leaf_Static(dxRender_Visual* pVisual)
 		return;
 
 #if RENDER!=R_R1
-	if (i_mask[CDSGraphManager::fl_normal])//phase normal
+	if (main_occlusion())//phase normal
 #endif
 		if (!RImplementation.HOM.visible(pVisual->vis))
 			return;
@@ -921,7 +962,9 @@ void CDSGraphManager::add_leaf_Static(dxRender_Visual* pVisual)
 			if (ssa < r_ssaDISCARD)
 				break;
 
-			RGraph.mapLOD.emplace_back(D, ssa, nullptr, pVisual, nullptr, nullptr, false);
+			// shadow graphs never draw lods so the entry would only grow the vector
+			if (!(ps_r__sun_lod_skip && i_mask[CDSGraphManager::fl_shmap]))
+				RGraph.mapLOD.emplace_back(D, ssa, nullptr, pVisual, nullptr, nullptr, false);
 		}
 
 #if RENDER!=R_R1

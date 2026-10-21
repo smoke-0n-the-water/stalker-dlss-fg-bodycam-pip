@@ -9,6 +9,7 @@
 #include "object_broker.h"
 #include "actor.h"
 #include "EffectorBobbing.h"
+#include "player_hud.h"
 
 void AddEffector(CActor* A, int type, const shared_str& sect_name)
 {
@@ -466,6 +467,18 @@ bool similar_cam_info(const SCamEffectorInfo& c1, const SCamEffectorInfo& c2)
 		c1.r.similar(c2.r, EPS_L));
 }
 
+void CActorCameraManager::UpdateReference(const Fmatrix& cameraWorld, float fFOV, float fASPECT, float fFAR)
+{
+	struct RestoreFlag
+	{
+		bool& flag;
+		bool previous;
+		~RestoreFlag() { flag = previous; }
+	} restore{ m_reference_update, m_reference_update };
+	m_reference_update = true;
+	inherited::UpdateReference(cameraWorld, fFOV, fASPECT, fFAR);
+}
+
 void CActorCameraManager::UpdateCamEffectors()
 {
 	m_cam_info_hud = m_cam_info;
@@ -514,7 +527,17 @@ bool CActorCameraManager::ProcessCameraEffector(CEffectorCam* eff)
 {
 	SCamEffectorInfo prev = m_cam_info;
 
+	const auto type = eff->GetType();
 	bool res = inherited::ProcessCameraEffector(eff);
+	// Reference already supplies these continuous procedural effects. Tick their
+	// lifetime once, but retain native scripted actions, hits and landing effects.
+	const bool referenceWeapon = g_player_hud && g_player_hud->ReferenceOwnsMotion();
+	if (m_reference_update && (type == eCEBobbing || (referenceWeapon &&
+		(type == eCEShot || type == eCERecoil || type == eCEZoom))))
+	{
+		m_cam_info = prev;
+		return res;
+	}
 	if (res)
 	{
 		// pip while a true PiP scope is aimed the view and the weapon must rotate together, a

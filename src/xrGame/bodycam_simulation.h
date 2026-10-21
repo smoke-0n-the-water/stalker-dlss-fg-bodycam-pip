@@ -1,10 +1,25 @@
 #pragma once
+// Classic bodycam simulation: plain data in, plain data out, no engine types.
+//
+// Every feature is one unit: a settings struct that carries its own enable
+// flag, a state struct, and an update that reads only its own settings, its
+// own state and the shared frame signals. A feature therefore works with every
+// other feature off. The few places where features meet are explicit:
+//  - a shot notifies both lowering (recovery timers) and the fire impulse;
+//  - the sprint sway goes out to the camera rig, whose position spring carries it;
+//  - the footstep camera, when it owns sprint motion, silences the sprint sway.
+// Camera Decoupling lives in the camera rig (bodycam_camera_rig.h).
 
 #include <cstdint>
 
 namespace Bodycam
 {
+constexpr float kPi = 3.14159265358979323846f;
 constexpr float kDefaultStalker2MovementResponse = 5.f;
+// The arm springs run at response * kArmSpringHzPerResponse Hz, limited to 1..6 Hz.
+constexpr float kArmSpringHzPerResponse = 0.12f;
+// The arm follow response of the slowest spring, 1 Hz.
+constexpr float kArmFollowResponseMin = 1.f / kArmSpringHzPerResponse;
 
 struct SVec3
 {
@@ -15,13 +30,10 @@ struct SVec3
 	void Set(float nx, float ny, float nz);
 	void Add(const SVec3& value);
 	void Add(float nx, float ny, float nz);
-	void Sub(const SVec3& value);
 	void Mul(float value);
 	float Magnitude() const;
 	void NormalizeSafe();
 };
-
-float ClampSprintBridgeHandoffSpeed(float value);
 
 enum ESimMoveFlags : std::uint32_t
 {
@@ -33,121 +45,87 @@ enum ESimMoveFlags : std::uint32_t
 	smfSprint = 1u << 5,
 	smfFall = 1u << 6,
 	smfJump = 1u << 7,
-	smfLanding = 1u << 8,
 	smfAnyMove = smfForward | smfBack | smfLeft | smfRight,
 };
 
-struct SimulationFeatureSettings
+struct AdsState
 {
-	bool camera_enable = true;
-	bool vm_enable = false;
-	bool lower_enable = true;
-	bool bodycam_arm_enable = false;
-	bool stalker2_arm_enable = true;
-	bool sprint_transition_enable = true;
-	bool fire_impulse_enable = true;
-	bool impulse_debug = false;
-	bool lower_disable_in_combat = true;
-	float layer_vm_weight = 1.f;
-	float layer_lower_weight = 1.f;
-	float layer_arm_weight = 1.f;
+	bool active = false;
+	float blend = 0.f;
 };
 
-struct AuthoredMotionMetrics
+// Frame input.
+struct SimulationInput
 {
-	float lead_rotation = 0.f;
-	float lead_translation = 0.f;
-	float wrist_rotation = 0.f;
-	float forearm_rotation = 0.f;
-	float upperarm_rotation = 0.f;
+	float dt = 0.f;
+	std::uint32_t move_flags = 0;
+	bool ads = false;
+	float ads_blend = 0.f; // 0..1
+	bool weapon_lowered = false;
+	bool combat = false;
+	bool accelerated = false;
+	bool firearm_equipped = true;
+	// Speed over its target, 0..1. 1 while moving without movement inertia.
+	float actor_speed_fraction = 0.f;
+	// Another system (the footstep camera) plays the sprint camera motion.
+	bool sprint_camera_owned_elsewhere = false;
+	// The camera rig's gun-first follow owns the camera lag: the mouse is read
+	// unfiltered.
+	bool gun_first_follow = false;
+	// The aim as accumulated from mouse deltas; equals the camera's aim within rounding.
+	float mouse_aim_yaw = 0.f;
+	float mouse_aim_pitch = 0.f;
 };
 
-struct AuthoredMotionGains
+// Signals every feature may read: smoothed mouse speed and movement intent.
+struct InputSignalSettings
 {
-	float controller = 0.f;
-	float wrist = 0.f;
-	float arm = 0.f;
-};
-
-struct SimulationCameraModeSettings
-{
-	float inner_gain = 0.f;
-	float spring_freq = 8.f;
-	float spring_damping = 0.85f;
-	float deadzone_yaw = 1.5f;
-	float deadzone_pitch = 1.f;
-	float softzone_yaw = 4.f;
-	float softzone_pitch = 3.f;
-	float max_yaw = 19.f;
-	float max_pitch = 19.f;
-	float roll = 2.5f;
-	float pos = 0.025f;
-};
-
-struct SimulationCameraSettings
-{
-	SimulationCameraModeSettings hip;
-	SimulationCameraModeSettings ads = { 0.f, 14.f, 1.f, 0.8f, 0.55f, 1.8f, 1.2f, 3.f, 2.f, 0.6f, 0.006f };
-	float move_roll = 3.f;
-	float move_pos = 0.020f;
-};
-
-struct SimulationViewmodelSettings
-{
-	float follow_speed = 9.f;
-	float damping = 0.78f;
-	float mouse_pos = 0.030f;
-	float mouse_rot = 5.0f;
-	float max_pos = 0.035f;
-	float max_rot = 5.f;
-	float ads_mouse_mult = 0.18f;
-	float ads_impulse_mult = 0.18f;
 	float mouse_filter = 18.f;
 	float move_filter = 8.f;
-	float ads_anchor = 0.65f;
-	float ads_anchor_pos = 0.010f;
-	float ads_anchor_rot = 1.2f;
 };
 
-struct SimulationImpulseSettings
+struct InputSignals
 {
-	float decay = 8.f;
-	float sprint_impulse = 1.f;
-	float sprint_start_impulse = 5.f;
-	float sprint_stop_impulse = 5.f;
-	float sprint_ads_mult = 0.2f;
-	float sprint_camera_impulse = 5.f;
-	float sprint_fov_impulse = 5.f;
-	float sprint_fov_speed = 0.5f;
-	float sprint_impulse_speed = 0.2f;
-	float ads_impulse = 1.f;
-	float land_impulse = 1.f;
-	float flick_impulse = 0.f;
-	float fire_impulse = 5.f;
-	float ads_fire_impulse = 1.35f;
-	float impulse_pos_cap = 0.08f;
-	float impulse_rot_cap = 8.f;
+	SVec3 mouse_speed; // rad/s; x yaw, y pitch.
+	float mouse_aim_yaw = 0.f;
+	float mouse_aim_pitch = 0.f;
+	bool mouse_aim_initialized = false;
+	SVec3 move_intent; // x right, z forward; scaled by gait.
 };
 
-struct SimulationSprintSettings
+// Sprint camera sway.
+struct SprintSwaySettings
 {
+	bool enable = true;
 	float strength = 1.5f;
 	float smoothness = 1.f;
 	float enter_time = 0.32f;
 	float exit_time = 0.48f;
 	float camera_pitch = -0.25f;
-	float camera_roll = 0.25f;
 	float camera_pos = 0.004f;
-	float bridge_pitch = -8.f;
-	float bridge_yaw = -8.f;
-	float bridge_roll = -7.7f;
-	float bridge_pos = 0.050f;
-	float bridge_handoff_speed = 0.90f;
-	float accent = 2.f;
 };
 
-struct SimulationLoweringSettings
+struct SprintSwayState
 {
+	float amount = 0.f;
+	float settle = 0.f;
+	float phase = 0.f;
+};
+
+// What the sway adds to the camera this frame.
+struct SprintSway
+{
+	SVec3 offset; // Added to the camera position target.
+	float pitch = 0.f; // Added to the camera pitch.
+	float reach = 0.f; // Share of the camera position limit the sway may use.
+};
+
+// Viewmodel lowering.
+struct LoweringSettings
+{
+	bool enable = true;
+	bool disable_in_combat = true;
+	float weight = 1.f;
 	float pitch = 0.f;
 	float yaw = 0.f;
 	float roll = 0.f;
@@ -165,26 +143,55 @@ struct SimulationLoweringSettings
 	float combat_timeout = 2.f;
 };
 
-struct SimulationArmSettings
+struct LoweringState
 {
-	float strength = 3.f;
-	float response = 30.f;
-	float ads_scale = 1.f;
-	float mouse_pitch = 30.f;
-	float mouse_yaw = 30.f;
-	float mouse_roll = 45.f;
-	float secondary_roll = 20.f;
-	float hand_scale = 0.f;
-	float upperarm_scale = 0.05f;
-	float forearm_scale = 0.1f;
-	float twist_scale = 2.f;
+	float amount = 0.f;
+	float target = 0.f;
+	float holster = 0.f;
+	float fire_recovery = 0.f;
+	float ads_recovery = 0.f;
+	float combat_timer = 0.f;
+	bool prev_ads = false;
+	SVec3 pos;
+	SVec3 rot;
 };
 
-struct SimulationStalker2ArmSettings
+// Fire impulse.
+struct FireImpulseSettings
 {
+	bool enable = true;
+	float hip = 5.f;
+	float ads = 1.35f;
+	float ads_scale = 0.18f; // Extra scale on the kick at full ADS.
+	float follow_speed = 9.f;
+	float damping = 0.78f;
+	float decay = 8.f;
+	float pos_cap = 0.08f;
+	float rot_cap = 8.f;
+	// Per unit of power the weapon drops and comes back (metres), pitches up
+	// and rolls away from the direction the mouse is moving (degrees).
+	float kick_drop = 0.0015f;
+	float kick_back = 0.0040f;
+	float kick_pitch = 0.32f;
+	float kick_roll = 0.10f;
+};
+
+struct FireImpulseState
+{
+	SVec3 impulse_pos; // Decaying kick target.
+	SVec3 impulse_rot;
+	SVec3 pos; // Viewmodel offset that follows the target.
+	SVec3 rot;
+};
+
+// STALKER 2 style arm IK.
+struct Stalker2ArmSettings
+{
+	bool enable = true;
+	float weight = 1.f;
 	float strength = 1.5f;
 	float response = 20.f;
-	float arm_follow_response = 0.1f;
+	float arm_follow_response = kArmFollowResponseMin;
 	float arm_follow_scale = 0.f;
 	float ads_scale = 0.2f;
 	float mouse_strength = 1.f;
@@ -201,127 +208,7 @@ struct SimulationStalker2ArmSettings
 	float wrist_scale = 1.f;
 };
 
-struct SimulationSettings
-{
-	SimulationFeatureSettings features;
-	SimulationCameraSettings camera;
-	SimulationViewmodelSettings viewmodel;
-	SimulationImpulseSettings impulse;
-	SimulationSprintSettings sprint;
-	SimulationLoweringSettings lowering;
-	SimulationArmSettings bodycam_arm;
-	SimulationStalker2ArmSettings stalker2_arm;
-};
-
-struct SimulationInput
-{
-	float target_yaw = 0.f;
-	float target_pitch = 0.f;
-	float dt = 0.f;
-	std::uint32_t move_flags = 0;
-	bool ads = false;
-	float ads_blend = 0.f;
-	bool weapon_lowered = false;
-	bool combat = false;
-	bool accelerated = false;
-	bool firearm_equipped = true;
-	float actor_speed_fraction = 0.f;
-	bool visual_aim_available = false;
-	float visual_aim_yaw = 0.f;
-	float visual_aim_pitch = 0.f;
-};
-
-struct SimulationCameraState
-{
-	bool initialized = false;
-	float yaw = 0.f;
-	float pitch = 0.f;
-	float roll = 0.f;
-	SVec3 pos;
-	SVec3 impulse_pos;
-	float impulse_roll = 0.f;
-	float impulse_fov = 0.f;
-	float impulse_fov_target = 0.f;
-};
-
-struct SimulationViewmodelState
-{
-	SVec3 pos;
-	SVec3 rot;
-	SVec3 mouse_speed;
-	SVec3 prev_mouse_speed;
-	SVec3 mouse_accel;
-	float mouse_aim_yaw = 0.f;
-	float mouse_aim_pitch = 0.f;
-	bool mouse_aim_initialized = false;
-	SVec3 move_intent;
-	SVec3 impulse_pos;
-	SVec3 impulse_rot;
-	SVec3 fire_impulse_pos;
-	SVec3 fire_impulse_rot;
-	SVec3 fire_pos;
-	SVec3 fire_rot;
-	float airborne_time = 0.f;
-};
-
-struct SimulationLoweringState
-{
-	float amount = 0.f;
-	float target = 0.f;
-	float holster = 0.f;
-	float fire_recovery = 0.f;
-	float ads_recovery = 0.f;
-	float combat_timer = 0.f;
-	SVec3 pos;
-	SVec3 rot;
-};
-
-struct SimulationSprintImpulseState
-{
-	SVec3 camera_pos;
-	float camera_roll = 0.f;
-};
-
-struct SimulationSprintState
-{
-	float amount = 0.f;
-	float target = 0.f;
-	float viewmodel_amount = 0.f;
-	float settle = 0.f;
-	float phase = 0.f;
-	float prev_amount = 0.f;
-};
-
-struct SimulationArmState
-{
-	SVec3 clavicle;
-	SVec3 upperarm;
-	SVec3 forearm;
-	SVec3 twist;
-	SVec3 hand;
-	SVec3 left_clavicle;
-	SVec3 left_upperarm;
-	SVec3 left_forearm;
-	SVec3 left_twist;
-	SVec3 left_hand;
-	SVec3 controller;
-	SVec3 prev_controller;
-	SVec3 settle;
-	SVec3 clavicle_vel;
-	SVec3 upperarm_vel;
-	SVec3 forearm_vel;
-	SVec3 twist_vel;
-	SVec3 hand_vel;
-	SVec3 left_clavicle_vel;
-	SVec3 left_upperarm_vel;
-	SVec3 left_forearm_vel;
-	SVec3 left_twist_vel;
-	SVec3 left_hand_vel;
-	float weight = 0.f;
-	float motion_weight = 0.f;
-};
-
-struct SimulationStalker2ArmState
+struct Stalker2ArmState
 {
 	SVec3 wrist_rot;
 	SVec3 wrist_rot_vel;
@@ -331,76 +218,83 @@ struct SimulationStalker2ArmState
 	float movement_weight = 0.f;
 };
 
-struct AdsState
+// Whole simulation.
+struct SimulationSettings
 {
-	bool active = false;
-	float blend = 0.f;
+	InputSignalSettings input;
+	SprintSwaySettings sprint;
+	LoweringSettings lowering;
+	FireImpulseSettings fire;
+	Stalker2ArmSettings stalker2_arm;
 };
 
 struct SimulationState
 {
-	SimulationCameraState camera;
-	SimulationViewmodelState viewmodel;
-	SimulationLoweringState lowering;
-	SimulationSprintImpulseState sprint_impulse;
-	SimulationSprintState sprint;
-	SimulationArmState arm;
-	SimulationStalker2ArmState stalker2_arm;
-	float ads_blend = 0.f;
-	std::uint32_t prev_move_flags = 0;
-	bool prev_ads = false;
+	InputSignals signals;
+	SprintSwayState sprint;
+	LoweringState lowering;
+	FireImpulseState fire;
+	Stalker2ArmState stalker2_arm;
 };
 
 struct SimulationOutput
 {
-	float yaw = 0.f;
-	float pitch = 0.f;
-	float roll = 0.f;
-	SVec3 camera_pos;
-	float fov_offset = 0.f;
-	float lower_amount = 0.f;
+	SprintSway sprint_sway;
+	// Viewmodel offset: fire impulse plus lowering.
 	bool viewmodel_active = false;
 	SVec3 viewmodel_pos;
 	SVec3 viewmodel_rot;
-	bool arm_active = false;
-	SVec3 arm_clavicle;
-	SVec3 arm_upperarm;
-	SVec3 arm_forearm;
-	SVec3 arm_twist;
-	SVec3 arm_hand;
-	SVec3 arm_left_clavicle;
-	SVec3 arm_left_upperarm;
-	SVec3 arm_left_forearm;
-	SVec3 arm_left_twist;
-	SVec3 arm_left_hand;
+	SVec3 lowering_pos;
+	SVec3 lowering_rot;
+	float lower_amount = 0.f;
+	// STALKER 2 style arm controller, radians.
 	bool stalker2_arm_active = false;
 	SVec3 stalker2_wrist_rot;
 	SVec3 stalker2_arm_follow_rot;
 	float stalker2_movement_weight = 0.f;
 	float stalker2_movement_response = kDefaultStalker2MovementResponse;
-	bool impulse_pos_clamped = false;
-	bool impulse_rot_clamped = false;
 };
 
-void ResetSimulation(SimulationState& state, float yaw, float pitch, std::uint32_t move_flags, float ads_blend);
+void ResetSimulation(SimulationState& state, float yaw, float pitch, float ads_blend);
 void RebaseSimulationLook(SimulationState& state, float yaw_delta, float pitch_delta);
 AdsState ResolveAdsState(bool weapon_zoomed, float weapon_blend);
 
 void UpdateSimulation(const SimulationSettings& settings, SimulationState& state, const SimulationInput& input, SimulationOutput& output);
-void AddFireImpulse(const SimulationSettings& settings, SimulationState& state, float power, bool ads);
-bool AddNamedImpulse(const SimulationSettings& settings, SimulationState& state, const char* kind, float power, bool ads);
-float ArmCorrectionAngle(float dot, float cross_magnitude);
-SVec3 SolveArmMidpoint(const SVec3& start, const SVec3& end, const SVec3& current_mid, const SVec3& desired_mid);
+// A shot: lowering starts its recovery timers and the fire impulse kicks.
+void NotifyShot(const SimulationSettings& settings, SimulationState& state, float power, bool ads);
+
+// Authored walk motion that the STALKER 2 controller adds where a weapon's own
+// animation has little.
+struct AuthoredMotionMetrics
+{
+	float lead_rotation = 0.f;
+	float lead_translation = 0.f;
+	float wrist_rotation = 0.f;
+	float forearm_rotation = 0.f;
+	float upperarm_rotation = 0.f;
+};
+
+struct AuthoredMotionGains
+{
+	float controller = 0.f;
+	float wrist = 0.f;
+	float arm = 0.f;
+};
+
+struct AuthoredWalkMotion
+{
+	SVec3 rotation; // radians
+	SVec3 translation; // metres
+};
+
 AuthoredMotionGains CalculateAuthoredMotionGains(const AuthoredMotionMetrics& metrics);
-SVec3 CalculateAuthoredWalkRotation(float phase, float weight, const AuthoredMotionGains& gains);
-SVec3 CalculateAuthoredWalkTranslation(float phase, float weight, const AuthoredMotionGains& gains);
+AuthoredWalkMotion CalculateAuthoredWalkMotion(float phase, float weight, const AuthoredMotionGains& gains);
+// Share of the authored walk rotation that the arms follow.
 float CalculateAuthoredArmFollow(float arm_gain);
-SVec3 CalculateStalker2MouseControllerRotation(float yaw_throw, float yaw_scale, float roll_scale, float weight);
-SVec3 CalculateStalker2VerticalArmFollow(float pitch_throw, float pitch_scale, float weight);
-float CalculateMouseThrow(float angular_speed, float full_scale_speed, float sensitivity);
-float SoftLimitMouseResponse(float value, float limit);
-SVec3 ClampStalker2MouseRotation(const SVec3& rotation, float max_yaw, float max_pitch, float max_roll);
-float CalculateStalker2MovementAmount(float move_intent, float speed_fraction, bool accelerated, float slow_walk_scale);
+// Wraps to -pi..pi.
+float NormalizeAngle(float value);
+// Shortest signed turn from current to target.
+float AngleDifference(float target, float current);
 float DegToRad(float value);
 float RadToDeg(float value);
 } // namespace Bodycam

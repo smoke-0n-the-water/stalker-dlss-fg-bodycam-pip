@@ -8,6 +8,7 @@
 
 #include "SkeletonCustom.h"
 #include "SkeletonXVertRender.h"
+#include "scope_glass_surface_frames.h"
 
 // refs
 class CKinematics;
@@ -37,6 +38,9 @@ protected:
 
 	u16 RenderMode;
 	u16 ChildIDX;
+	bool scope_surface_cached = false;
+	std::vector<scope_surface_frame> scope_surface_frames;
+	void BindScopeSurfaceFrames(CBoneInstance* render_bones);
 
 	// render-mode specifics
 	union
@@ -103,6 +107,8 @@ protected:
 	                       u16 bone_id, u32 iBase, u32 iCount) =0;
 public:
 	BOOL has_visible_bones();
+	u64 ScopeGlassBoneMask();
+	bool IsPhysicalScopeGlass();
 	bool SVP_LensBoneXform(Fmatrix& out); // pip lens bone object-space skinning matrix for the SVP eyepiece
 	bool SVP_LensBoneVisible(); // pip lens bone visibility for the eyepiece pick
 	bool SVP_GetLensDetection(SLensDetection& out); // pip forward the owning kinematics measured lens fit for the render-side diag

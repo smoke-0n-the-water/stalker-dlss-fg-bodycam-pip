@@ -8,6 +8,7 @@
 #include "player_hud.h"
 #include "../xrEngine/svp_gameplay_cvars.h"
 #include "svp_projectile_math.h"
+#include "../xrEngine/svp_reference_optics.h"
 
 // pip weapon raise settled threshold, GetZRotatingFactor at or above this reads as fully aimed
 static const float SVP_SETTLED_ROT = 0.999f;
@@ -219,6 +220,7 @@ void CWeapon::UpdateSecondVP()
 		|| (m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye()
 			&& svp_present && zoomed);
 	// pip activation and optic route changes log every term
+	if (ps_r__svp_diag)
 	{
 		auto& vp = Device.m_SecondViewport;
 		CSecondVPParams::SightSnapshot sight;
@@ -261,6 +263,7 @@ void CWeapon::UpdateSecondVP()
 	Device.m_SecondViewport.svp_eye_tracking_suspended.store(
 		IsPending() && !aim_transition, std::memory_order_release);
 	Device.m_SecondViewport.SetSVPActive(svp_act);
+	if (!svp_act) svp_reference_optics_clear();
 	// the shadow swing envelope drains steadily, the charge site outruns it on real kicks
 	Device.m_SecondViewport.svp_shadow_gain += (0.f - Device.m_SecondViewport.svp_shadow_gain)
 		* (1.f - expf(-Device.fTimeDelta / 0.7f));

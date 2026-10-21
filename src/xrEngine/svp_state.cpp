@@ -8,6 +8,32 @@
 #include "stdafx.h"
 #endif
 
+#include "svp_reference_optics.h"
+namespace
+{
+xrCriticalSection referenceOpticsLock;
+SvpReferenceOpticsFrame referenceOptics;
+}
+bool svp_reference_optics_read(SvpReferenceOpticsFrame& output)
+{
+    xrCriticalSectionGuard lock(&referenceOpticsLock);
+    output=referenceOptics;
+    return output.enabled;
+}
+bool svp_reference_optics_publish(const SvpReferenceOpticsFrame& input)
+{
+    xrCriticalSectionGuard lock(&referenceOpticsLock);
+    if(referenceOptics.enabled&&referenceOptics.frame==input.frame&&
+        referenceOptics.session==input.session)return false;
+    referenceOptics=input;
+    return true;
+}
+void svp_reference_optics_clear()
+{
+    xrCriticalSectionGuard lock(&referenceOpticsLock);
+    referenceOptics={};
+}
+
 bool CSecondVPParams::MatchesOpticConfig(const WeaponPoseSnapshot& pose,
 	const OpticConfig& config)
 {
@@ -729,7 +755,11 @@ void CSecondVPParams::LatchOpticConfig(u32 frame, u32 session)
 	if (m_optic_active.frame == frame)
 		return;
 	const bool enabled = IsOpticApiEnabled();
-	m_optic_active = enabled ? m_optic_accepted : m_optic_neutral;
+	const OpticConfig& source = enabled ? m_optic_accepted : m_optic_neutral;
+	// Published configuration and provenance are immutable within a generation.
+	// Only the frame stamps change while the same optic remains active.
+	if (m_optic_active.generation != source.generation || m_optic_active.typed_route != enabled)
+		m_optic_active = source;
 	m_optic_active.typed_route = enabled;
 	m_optic_active.frame = frame;
 	m_optic_active.session = session;

@@ -16,6 +16,7 @@ struct PipView
 	float main_fov = 0.f;
 };
 
+// What the scope renderer reports this frame.
 struct PipRuntimeState
 {
 	bool true_pip_enabled = false;
@@ -25,16 +26,12 @@ struct PipRuntimeState
 	float main_fov = 0.f;
 };
 
-using PipRuntimeProvider = void (*)(PipRuntimeState& state);
-
-void SetPipRuntimeProvider(PipRuntimeProvider provider);
+PipRuntimeState ReadPipRuntime();
 
 class PipAdapter
 {
 public:
-	PipView Update(const PipInput& input);
 	PipView Update(const PipInput& input, const PipRuntimeState& runtime);
-	void Reset();
 
 private:
 	bool m_session_active = false;

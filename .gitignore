@@ -5,9 +5,6 @@
 
 # exclude binaries and temporary files
 _build/
-# Downloaded upscaler runtimes and machine-specific shader dependency files
-nvngx_dlss*.dll
-/sdk/FSR3/shaders/*.d
 /src/*.tss
 /**/x64/
 **/.vs/
@@ -46,3 +43,22 @@ compressor/mod.db0
 \#*\#
 *~
 
+# Local development tools, tests and validation artifacts are not published.
+/tools/
+/tests/
+
+# Local dependency downloads and Windows-path validation leftovers.
+/lupa-*.whl
+/D:/
+
+# Local reference-port build products (keep source, scripts and evidence manifests).
+/docs/*.exe
+/docs/*.obj
+/docs/*.log
+/docs/__pycache__/
+/tests/reference/*.log
+/tests/reference/__pycache__/
+
+# release packages (tools/package_core.py, tools/release.py)
+/dist/
+__pycache__/

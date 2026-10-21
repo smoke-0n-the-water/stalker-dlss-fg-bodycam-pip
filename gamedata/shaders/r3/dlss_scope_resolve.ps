@@ -1,0 +1,14 @@
+#include "common.h"
+
+Texture2D dlss_scope_mask;
+float4 dlss_scope_jitter;
+
+float4 main(p_screen I) : SV_Target
+{
+    // The composited PiP image is already resolved in its own camera. As in
+    // Bodycam's TAA lens exclusion, do not reproject it with main-camera motion.
+    // Read both current scene and coverage at the same de-jittered coordinate.
+    float2 uv = I.tc0 + dlss_scope_jitter.xy;
+    float coverage = dlss_scope_mask.SampleLevel(smp_rtlinear, uv, 0).a;
+    return float4(s_image.SampleLevel(smp_rtlinear, uv, 0).rgb, coverage);
+}

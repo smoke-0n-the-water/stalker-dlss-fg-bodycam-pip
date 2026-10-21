@@ -64,6 +64,9 @@ public:
 
 	// pip run-or-cached measured lens fit for this visual, false for non-skinned or no lens
 	virtual bool GetLensDetection(SLensDetection& out) { return false; }
+	// Admits converted glass and independently hideable opaque siblings only.
+	virtual bool IsPhysicalScopeGlassBone(u16 bone) { return false; }
+	virtual void SetPhysicalScopeGlassMask(u16 bone, bool enabled) {}
 
 	// Low level interface
 	virtual u16 _BCL LL_BoneID(LPCSTR B) = 0;

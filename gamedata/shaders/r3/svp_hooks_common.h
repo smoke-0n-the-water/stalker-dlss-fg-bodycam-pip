@@ -40,6 +40,20 @@ uniform float4 svp_lens_up;
 uniform float4 svp_barrel_alignment; // xy final projectile direction in lens UV, z valid
 uniform float4 svp_scope_alignment; // xy physical scope axis in lens UV, z valid
 #endif
+#ifndef SVP_LENS_LIGHTING_DECLARED
+#define SVP_LENS_LIGHTING_DECLARED
+uniform float4 svp_lens_light0_position; // xyz world position, w range
+uniform float4 svp_lens_light0_color; // rgb radiance at source, w enabled
+uniform float4 svp_lens_light1_position;
+uniform float4 svp_lens_light1_color;
+uniform float4 svp_lens_tuning; // environment, direct, ghosts, internal
+uniform float4 svp_lens_control; // opacity, debug channel, reserved, reserved
+uniform float4 svp_lens_environment; // rgb radiance scale, w weather blend
+#include "svp_lens_object_light.h"
+uniform float4 svp_lens_probe_positive; // raw object probe: +X, +Y, +Z
+uniform float4 svp_lens_probe_negative; // raw object probe: -X, -Y, -Z
+uniform float4 svp_lens_deadzone;
+#endif
 #ifndef SVP_OPTICS_DECLARED
 #define SVP_OPTICS_DECLARED
 uniform float4 svp_optics; // x lens geometry, y reticle parallax, z legacy depth, w optical ratio

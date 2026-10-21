@@ -62,6 +62,10 @@ public:
 
 	// Engine flow-control
 	u32 dwFrame;
+	// Current ordinary Reference pose uses scene-space geometry, not stock HUD FOV.
+	u32 reference_hud_projection_frame = u32(-1);
+	float reference_hud_nearwall_scale = 1.f;
+	float reference_hud_clip_scale = 1.f;
 
 	// cache-clear key, bumped per viewport in SVP mode
 	u32 dwViewport = 0;
@@ -69,6 +73,8 @@ public:
 	bool true_pip_on = false;
 
 	float fTimeDelta;
+	// Unsmoothed application seconds for reference motion; not native physics dt.
+	double ApplicationDelta() const { return application_delta; }
 	float fTimeGlobal;
 	u32 dwTimeDelta;
 	u32 dwTimeGlobal;
@@ -110,6 +116,12 @@ public:
 	Fmatrix mProject_saved;
 	Fmatrix mFullTransform_saved;
 
+	// Camera copy owned by the bones task. Written in on_idle before the task is
+	// dispatched and not touched again until secondary_tasks.wait() joins it, so a
+	// render-target switch (main/SVP SetMatrices) cannot change it mid-task.
+	Fvector vCameraPosition_bones;
+	Fmatrix mFullTransform_bones;
+
 	float fFOV;
 	float fASPECT;
 	float ViewportNear = 0.2f;
@@ -128,6 +140,8 @@ protected:
 	u32 Timer_MM_Delta;
 	CTimer_paused Timer;
 	CTimer_paused TimerGlobal;
+	CTimer_paused application_timer;
+	double application_delta = 0.0;
 
 	//AVO: 
 	CTimer frame_timer; //TODO: ïðîâåðèòü, íå äóáëèðóåòñÿ-ëè ñõîæèé òàéìåð (alpet)

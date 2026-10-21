@@ -5,11 +5,14 @@
 
 #include "stdafx.h"
 #include "Weapon.h"
+#include "../Layers/xrRender/svp_console.h"
 #include "entity_alive.h"
 #include "inventory_item_impl.h"
 #include "inventory.h"
 #include "xrserver_objects_alife_items.h"
 #include "actor.h"
+#include "UIGameCustom.h"
+#include "../xrEngine/xr_input.h"
 #include "../xrEngine/CameraBase.h"
 #include "actoreffector.h"
 #include "../xrEngine/CameraBase.h"
@@ -734,7 +737,16 @@ inline float easeOutQuart(float x)
 
 float CWeapon::GetTargetHudFov()
 {
-	float base = inherited::GetTargetHudFov();
+	return ApplyHudAimFovFactor(inherited::GetTargetHudFov());
+}
+
+float CWeapon::GetTargetHudFovWithoutNearWall()
+{
+	return ApplyHudAimFovFactor(GetBaseHudFov());
+}
+
+float CWeapon::ApplyHudAimFovFactor(float base)
+{
 
 	// check aim state to determine easing
 	float x = IsZoomed() ? easeOutQuart(m_zoom_params.m_fZoomRotationFactor) : easeInQuart(m_zoom_params.m_fZoomRotationFactor);
@@ -1439,6 +1451,7 @@ void CWeapon::shedule_Update(u32 dT)
 
 void CWeapon::OnH_B_Independent(bool just_before_destroy)
 {
+    m_referenceActionAimGate.Release();
 	RemoveShotEffector();
 
 	inherited::OnH_B_Independent(just_before_destroy);
@@ -1555,6 +1568,7 @@ bool CWeapon::AllowBore()
 void CWeapon::UpdateCL()
 {
 	inherited::UpdateCL();
+	BodycamResumeReferenceAim();
 
 	// pip ease the dynamic zoom toward its scroll target, g_zoom_smooth 0 = instant
 	if (g_zoom_smooth > 0.f && m_zoom_params.m_bUseDynamicZoom && IsZoomed())
@@ -1669,6 +1683,7 @@ void CWeapon::renderable_Render(IDSGraphManager* DM)
 
 void CWeapon::signal_HideComplete()
 {
+    m_referenceActionAimGate.Release();
 	m_fLR_ShootingFactor = 0.f;
 	m_fUD_ShootingFactor = 0.f;
 	m_fBACKW_ShootingFactor = 0.f;
@@ -1697,6 +1712,7 @@ void CWeapon::UpdatePosition(const Fmatrix& trans)
 BOOL interruptFireOnAimToggle = FALSE;
 bool CWeapon::Action(u16 cmd, u32 flags)
 {
+	if (cmd == kWPN_ZOOM && BodycamReferenceZoom(flags)) return true;
 	if (inherited::Action(cmd, flags)) return true;
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
@@ -2066,7 +2082,8 @@ void CWeapon::SetMisfireScript(bool b)
 
 void CWeapon::Reload()
 {
-	OnZoomOut();
+    // Reference keeps the native aimed reload pair when reload starts in ADS.
+    if(!(g_player_hud && g_player_hud->ReferenceOwnsMotion(this)))OnZoomOut();
 }
 
 void CWeapon::HUD_VisualBulletUpdate(bool force, int force_idx)
@@ -2343,6 +2360,18 @@ bool CWeapon::SyncSvpTypedMagnifications()
 		return false;
 	}
 
+	extern Fvector4 ps_s3ds_param_3;
+	const bool number_ring = (int)ps_s3ds_param_3.y == 5;
+	// The published configuration is immutable within its generation. Reuse the
+	// derived ladder unless publication or the live number-ring mode changed.
+	if (m_zoom_params.m_iSvpMagnificationMode != svp_mag_none &&
+		m_zoom_params.m_uSvpMagnificationToken == config.context_token &&
+		m_zoom_params.m_uSvpMagnificationGeneration == config.generation &&
+		m_zoom_params.m_uSvpMagnificationRouteEpoch == config.route_epoch &&
+		m_zoom_params.m_uSvpMagnificationSession == config.session &&
+		m_zoom_params.m_bSvpMagnificationRing == number_ring)
+		return true;
+
 	svp_mags_data ladder;
 	switch (config.magnifications.mode)
 	{
@@ -2363,8 +2392,7 @@ bool CWeapon::SyncSvpTypedMagnifications()
 	CopyMemory(ladder.values, config.magnifications.values, sizeof(ladder.values));
 	// a rotating number ring reads true only on its engraved stops, a continuous
 	// range becomes integer detents so every stop parks the mark on a glyph
-	extern Fvector4 ps_s3ds_param_3;
-	if (ladder.mode == svp_mag_continuous && (int)ps_s3ds_param_3.y == 5)
+	if (ladder.mode == svp_mag_continuous && number_ring)
 	{
 		const float lo = ladder.values[0];
 		const float hi = ladder.values[1];
@@ -2410,6 +2438,7 @@ bool CWeapon::SyncSvpTypedMagnifications()
 	m_zoom_params.m_uSvpMagnificationGeneration = config.generation;
 	m_zoom_params.m_uSvpMagnificationRouteEpoch = config.route_epoch;
 	m_zoom_params.m_uSvpMagnificationSession = config.session;
+	m_zoom_params.m_bSvpMagnificationRing = number_ring;
 	return true;
 }
 
@@ -2491,6 +2520,7 @@ void CWeapon::SyncSvpZoomSeedMode()
 
 void CWeapon::OnZoomIn()
 {
+    if(RejectReferenceActionAimStart())return;
 	SyncSvpZoomSeedMode();
 	if (m_zoomtype == 0)
 		RefreshSvpTypedMagnifications();
@@ -2970,69 +3000,36 @@ void CWeapon::UpdateHudAdditional(Fmatrix& trans)
 		Fvector curr_offs, curr_rot, curr_aim_rot;
 		curr_aim_rot.set(0, 0, 0);
 
-		if ((idx == 1 || idx == 3) && m_modular_attachments) {
-			if (si) {
-				curr_offs.set(hi->attach_base_offset_pos());
-				curr_rot.set(hi->attach_base_offset_rot());
-
-				curr_offs.sub(hi->attach_mount_offset_pos());
-				curr_rot.sub(hi->attach_mount_offset_rot());
-
-				Fvector aim_offs;
-				if (idx == 1) {
-					aim_offs.set(si->aim_offset_pos());
-					curr_aim_rot.set(si->aim_offset_rot());
-				} else {
-					aim_offs.set(si->alt_aim_offset_pos());
-					curr_aim_rot.set(si->alt_aim_offset_rot());
-				}
-				aim_offs.mul(hi->attach_scale());
-				curr_offs.add(aim_offs);
-			} else {
-				curr_offs.set(hi->attach_base_offset_pos());
-				curr_rot.set(hi->attach_base_offset_rot());
-
-				curr_offs.add(hi->aim_offset_pos());
-				curr_rot.add(hi->aim_offset_rot());
-			}
-		}
-		else if (g_player_hud->m_adjust_mode)
-		{
-			if (idx == 0)
-			{
-				curr_offs = g_player_hud->m_adjust_offset[0][5]; //pos,normal2
-				curr_rot = g_player_hud->m_adjust_offset[1][5]; //rot,normal2
-			}
-			else
-			{
-				curr_offs = g_player_hud->m_adjust_offset[0][idx]; //pos,aim
-				curr_rot = g_player_hud->m_adjust_offset[1][idx]; //rot,aim
-			}
-		}
-		else
-		{
-			if (idx == 0)
-			{
-				curr_offs = hi->m_measures.m_hands_offset[0][5]; //pos,normal2
-				curr_rot = hi->m_measures.m_hands_offset[1][5]; //pos,normal2
-			}
-			else {
-				curr_offs = hi->m_measures.m_hands_offset[0][idx]; //pos,aim
-				curr_rot = hi->m_measures.m_hands_offset[1][idx]; //rot,aim
-			}
-		}
+		ResolveHudOffsetTarget(idx, curr_offs, curr_rot, curr_aim_rot, true);
 		
 		float factor;
+		// At most a 30 fps frame per step: a 100 ms hitch frame would snap the aim transition.
+		const float step_time = _min(Device.fTimeDelta, 1.f / 30.f);
 		
 		if (idx == 4 || last_idx == 4)
-			factor = Device.fTimeDelta / m_fSafeModeRotateTime;
+			factor = step_time / m_fSafeModeRotateTime;
 		else
-			factor = Device.fTimeDelta /
+			factor = step_time /
 			(m_zoom_params.m_fZoomRotateTime * cur_silencer_koef.zoom_rotate_time * cur_scope_koef.zoom_rotate_time
 					* cur_launcher_koef.zoom_rotate_time);
 
-		InterpolateOffset(m_hud_offset[0], curr_offs, factor);
-		InterpolateOffset(m_hud_offset[1], curr_rot, factor);
+		// Classic sprint start: while the sprint lowering is held, the weapon
+		// travels toward its authored lowered pose with sprint progress, so the
+		// lowering at full sprint starts from that pose.
+		float offset_factor = factor;
+		float lower;
+		if (idx == 0 && pActor->BodycamSprintLowerProgress(this, lower))
+		{
+			Fvector lowered_offs, lowered_rot, lowered_aim;
+			ResolveHudOffsetTarget(4, lowered_offs, lowered_rot, lowered_aim, true);
+			curr_offs.lerp(Fvector(curr_offs), lowered_offs, lower);
+			curr_rot.lerp(Fvector(curr_rot), lowered_rot, lower);
+			// InterpolateOffset applies 2.5x the factor: about an 80 ms follow.
+			offset_factor = std::min(Device.fTimeDelta / 0.2f, 0.4f);
+		}
+
+		InterpolateOffset(m_hud_offset[0], curr_offs, offset_factor);
+		InterpolateOffset(m_hud_offset[1], curr_rot, offset_factor);
 		InterpolateOffset(m_hud_aim_rot, curr_aim_rot, factor);
 
 		// Remove pending state before weapon has fully moved to the new position to remove some delay
@@ -3324,6 +3321,7 @@ void CWeapon::UpdateHudAdditional(Fmatrix& trans)
 
 	//============= Инерция оружия =============//
 	// Параметры инерции
+
 	float fInertiaSpeedMod = _lerp(
 		hi->m_measures.m_inertion_params.m_tendto_speed,
 		hi->m_measures.m_inertion_params.m_tendto_speed_aim,
@@ -3742,6 +3740,65 @@ void CWeapon::OnStateSwitch(u32 S, u32 oldState)
 void CWeapon::OnAnimationEnd(u32 state)
 {
 	inherited::OnAnimationEnd(state);
+}
+
+void CWeapon::ResolveHudOffsetTarget(u8 idx, Fvector& curr_offs, Fvector& curr_rot, Fvector& curr_aim_rot, bool adjustments)
+{
+    auto* hi=HudItemData();
+    auto* si=g_player_hud->attached_item(SCOPE_ATTACH_IDX);
+    R_ASSERT(hi);
+    curr_aim_rot.set(0,0,0);
+		if ((idx == 1 || idx == 3) && m_modular_attachments) {
+			if (si) {
+				curr_offs.set((adjustments ? hi->attach_base_offset_pos() : hi->m_measures.m_hands_offset[0][6]));
+				curr_rot.set((adjustments ? hi->attach_base_offset_rot() : hi->m_measures.m_hands_offset[1][6]));
+
+				curr_offs.sub((adjustments ? hi->attach_mount_offset_pos() : hi->m_measures.m_hands_offset[0][7]));
+				curr_rot.sub((adjustments ? hi->attach_mount_offset_rot() : hi->m_measures.m_hands_offset[1][7]));
+
+				Fvector aim_offs;
+				if (idx == 1) {
+					aim_offs.set((adjustments ? si->aim_offset_pos() : si->m_measures.m_hands_offset[0][1]));
+					curr_aim_rot.set((adjustments ? si->aim_offset_rot() : si->m_measures.m_hands_offset[1][1]));
+				} else {
+					aim_offs.set((adjustments ? si->alt_aim_offset_pos() : si->m_measures.m_hands_offset[0][3]));
+					curr_aim_rot.set((adjustments ? si->alt_aim_offset_rot() : si->m_measures.m_hands_offset[1][3]));
+				}
+				aim_offs.mul(hi->attach_scale());
+				curr_offs.add(aim_offs);
+			} else {
+				curr_offs.set((adjustments ? hi->attach_base_offset_pos() : hi->m_measures.m_hands_offset[0][6]));
+				curr_rot.set((adjustments ? hi->attach_base_offset_rot() : hi->m_measures.m_hands_offset[1][6]));
+
+				curr_offs.add((adjustments ? hi->aim_offset_pos() : hi->m_measures.m_hands_offset[0][1]));
+				curr_rot.add((adjustments ? hi->aim_offset_rot() : hi->m_measures.m_hands_offset[1][1]));
+			}
+		}
+		else if (adjustments && g_player_hud->m_adjust_mode)
+		{
+			if (idx == 0)
+			{
+				curr_offs = g_player_hud->m_adjust_offset[0][5]; //pos,normal2
+				curr_rot = g_player_hud->m_adjust_offset[1][5]; //rot,normal2
+			}
+			else
+			{
+				curr_offs = g_player_hud->m_adjust_offset[0][idx]; //pos,aim
+				curr_rot = g_player_hud->m_adjust_offset[1][idx]; //rot,aim
+			}
+		}
+		else
+		{
+			if (idx == 0)
+			{
+				curr_offs = hi->m_measures.m_hands_offset[0][5]; //pos,normal2
+				curr_rot = hi->m_measures.m_hands_offset[1][5]; //pos,normal2
+			}
+			else {
+				curr_offs = hi->m_measures.m_hands_offset[0][idx]; //pos,aim
+				curr_rot = hi->m_measures.m_hands_offset[1][idx]; //rot,aim
+			}
+		}
 }
 
 u8 CWeapon::GetCurrentHudOffsetIdx()

@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "scope_vslr_renderer.h"
 #include "../xrRender/resourcemanager.h"
 #include "blender_light_occq.h"
 #include "blender_light_mask.h"
@@ -202,7 +203,7 @@ void CRenderTarget::u_setrt(const ref_rt& _1, const ref_rt& _2, const ref_rt& _3
 		dwWidth = _1->dwWidth;
 		dwHeight = _1->dwHeight;
 	}
-	else
+	else if (!ps_r__light_lean || !RCache.get_smapsize_memo(zb, dwWidth, dwHeight))
 	{
 		D3D_DEPTH_STENCIL_VIEW_DESC desc;
 		zb->GetDesc(&desc);
@@ -223,6 +224,9 @@ void CRenderTarget::u_setrt(const ref_rt& _1, const ref_rt& _2, const ref_rt& _3
 		dwWidth = TexDesc.Width;
 		dwHeight = TexDesc.Height;
 		_RELEASE(pRes);
+
+		if (ps_r__light_lean)
+			RCache.set_smapsize_memo(zb, dwWidth, dwHeight);
 	}
 
 	if (_1) RCache.set_RT(_1->pRT, 0);
@@ -782,12 +786,16 @@ CRenderTarget::CRenderTarget(LPCSTR name, u32 width, u32 height)
 		// format, Ascii must pick a UAV-capable SVP output for real DLSS. gate 0 keeps the stock target
 		m_svp_dlss_built = (!isMain && ps_r__svp_dlss != 0);
 		bool svp_uav = (m_svp_dlss_built && rt_Color->fmt == D3DFMT_A16B16G16R16F);
+		// RenderToTarget(rtPDA) CopyResource()s the swapchain backbuffer into rt_ui_pda, which needs
+		// identical dimensions. The backbuffer is display-sized, so with an upscaler active a render-sized
+		// target made the copy fail silently and the 3D PDA screen stayed black (fine only at DLAA).
+		const u32 ui_w = isMain ? Device.dwWidth : w, ui_h = isMain ? Device.dwHeight : h;
 		if (RImplementation.o.dx11_hdr10) {
 			rt_secondVP = createUnique(r2_RT_secondVP, svp_out_w, svp_out_h, rt_Color->fmt, 1, svp_uav); //--#SM+#-- +SecondVP+
-			rt_ui_pda = createUnique(r2_RT_ui, w, h, D3DFMT_A2R10G10B10); // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
+			rt_ui_pda = createUnique(r2_RT_ui, ui_w, ui_h, D3DFMT_A2R10G10B10); // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
 		} else {
 			rt_secondVP = createUnique(r2_RT_secondVP, svp_out_w, svp_out_h, rt_Color->fmt, 1, svp_uav); //--#SM+#-- +SecondVP+
-			rt_ui_pda = createUnique(r2_RT_ui, w, h, D3DFMT_A8R8G8B8);
+			rt_ui_pda = createUnique(r2_RT_ui, ui_w, ui_h, D3DFMT_A8R8G8B8);
 		}
 
 		// pip mipped svp color source, feeds the near-blur prefilter so each sparse ring area-averages
@@ -957,11 +965,15 @@ CRenderTarget::CRenderTarget(LPCSTR name, u32 width, u32 height)
 		if (RImplementation.o.nullrt) nullrt = (D3DFORMAT)MAKEFOURCC('N', 'U', 'L', 'L');
 
 		u32 size = RImplementation.o.smapsize;
-		rt_smap_depth = createUnique(r2_RT_smap_depth, size, size, depth_format);
+		// the svp never rasterizes a shadow map, it reads the main atlas through the stock texture name
+		const bool smap_alloc = isMain || ps_r__svp_smap_alloc != 0;
+		if (smap_alloc)
+			rt_smap_depth = createUnique(r2_RT_smap_depth, size, size, depth_format);
 
 		if (RImplementation.o.dx10_minmax_sm)
 		{
-			rt_smap_depth_minmax = createUnique(r2_RT_smap_depth_minmax, size / 4, size / 4, D3DFMT_R32F);
+			if (smap_alloc)
+				rt_smap_depth_minmax = createUnique(r2_RT_smap_depth_minmax, size / 4, size / 4, D3DFMT_R32F);
 			CBlender_createminmax TempBlender;
 			s_create_minmax_sm.create(&TempBlender, "null");
 		}
@@ -1250,6 +1262,11 @@ CRenderTarget::CRenderTarget(LPCSTR name, u32 width, u32 height)
 		t_envmap_1.create(r2_T_envs1);
 	}
 	t_reticle.create("$user$reticle"); // pip per-lens reticle texture for the scope color shader
+	if (isMain)
+	{
+		reticle_glow_create(); // 3DSS reticle glow targets and passes (r4_rendertarget_phase_3dss_reticle.cpp)
+		scope_glass_compose_create(); // scope glass composition passes (svp_optics.cpp)
+	}
 
 	// Build textures
 	{
@@ -1538,6 +1555,8 @@ CRenderTarget::CRenderTarget(LPCSTR name, u32 width, u32 height)
 	{
 		rt_dlss_post_source.create("$user$dlss_post_source", Device.dwWidth, Device.dwHeight, D3DFMT_A16B16G16R16F);
 		rt_dlss_post_color.create("$user$dlss_post_color", Device.dwWidth, Device.dwHeight, D3DFMT_A16B16G16R16F);
+		rt_dlss_scope_mask.create("$user$dlss_scope_mask", dlss::RenderWidth(), dlss::RenderHeight(), D3DFMT_A8R8G8B8); // scene size: lens coverage in the pre-upscale frame
+		s_dlss_scope_resolve.create("dlss_scope_resolve");
 		t_dlss_output.create("$user$dlss_output");
 		t_dlss_output->surface_set(dlss::Output());
 		t_dlss_scene_depth.create("$user$dlss_scene_depth");
@@ -1586,6 +1605,7 @@ CRenderTarget::~CRenderTarget()
 		if (t_dlss_scene_depth) t_dlss_scene_depth->surface_set(nullptr);
 		dlss::ReleaseTargets();
 	}
+	if (this == RImplementation.TargetMain) scope_vslr_destroy();
 	_RELEASE(t_ss_async);
 
 	// Textures

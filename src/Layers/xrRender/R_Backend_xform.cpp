@@ -5,6 +5,10 @@
 
 void R_xforms::set_W(const Fmatrix& m)
 {
+	// an unchanged world matrix is already resident, the c_w binders re-push it on every shader bind
+	if (0 == memcmp(&m_w, &m, sizeof(Fmatrix)))
+		return;
+
 	m_w.set(m);
 	m_wv.mul_43(m_v, m_w);
 	m_wvp.mul(m_p, m_wv);

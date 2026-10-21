@@ -1576,6 +1576,27 @@ void CLocatorAPI::file_rename(LPCSTR src, LPCSTR dest, bool bOwerwrite)
 	}
 }
 
+bool CLocatorAPI::file_replace(LPCSTR src, LPCSTR dest)
+{
+	// Unlike file_rename, a failed replacement leaves the destination intact.
+	if (!MoveFileExA(src, dest, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+		return false;
+	const auto refresh = [this](LPCSTR path)
+	{
+		string_path folder;
+		xr_strcpy(folder, path);
+		LPSTR slash = strrchr(folder, '\\');
+		if (slash)
+		{
+			slash[1] = 0;
+			rescan_path(folder, FALSE);
+		}
+	};
+	refresh(src);
+	refresh(dest);
+	return true;
+}
+
 int CLocatorAPI::file_length(LPCSTR src)
 {
 	files_it I = file_find_it(src);

@@ -13,6 +13,7 @@ void BeginScene();
 void EndScene(bool invalidateHistory = false);
 bool Active();
 bool Configured();
+void InvalidateHistory();
 unsigned RenderWidth();
 unsigned RenderHeight();
 Offset RasterJitter();

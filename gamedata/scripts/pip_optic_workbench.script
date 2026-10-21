@@ -256,7 +256,7 @@ end
 
 local function split_numbers(raw)
     local values = {}
-    for item in string.gmatch(raw, "[^,]+") do
+    for item in string.gmatch(raw .. ",", "(.-),") do
         local number = tonumber(trim(item))
         if not finite(number) then
             return
@@ -278,7 +278,10 @@ local function coerce(name, raw)
             return
         end
         if kind == "integer" then
-            return math.floor(number + 0.5)
+            if number == math.floor(number) then
+                return number
+            end
+            return
         end
         return number
     end
@@ -327,7 +330,7 @@ local function format_value(name, value)
     end
     local kind = descriptor.type
     if kind == "number" then
-        return string.format("%.6g", value)
+        return string.format("%.9g", value)
     end
     if kind == "integer" then
         return string.format("%d", math.floor(value + 0.5))
@@ -341,14 +344,14 @@ local function format_value(name, value)
     if kind == "array" then
         local parts = {}
         for index, entry in ipairs(value) do
-            parts[index] = string.format("%.6g", entry)
+            parts[index] = string.format("%.9g", entry)
         end
         return table.concat(parts, ", ")
     end
     if kind == "object" then
         local parts = {}
         for _, key in ipairs(descriptor.allowed_keys or {}) do
-            parts[#parts + 1] = string.format("%.6g", value[key] or 0)
+            parts[#parts + 1] = string.format("%.9g", value[key] or 0)
         end
         return table.concat(parts, ", ")
     end
@@ -455,6 +458,7 @@ function overlay_apply(config)
     if #ensure_descriptors() == 0 then
         return config
     end
+    config = copy_value(config)
     if type(config.sources) ~= "table" then
         config.sources = {}
     end
@@ -475,7 +479,7 @@ end
 local function validate_subset(names, source)
     local validate = rawget(_G, "svp_validate_optic_fields")
     if type(validate) ~= "function" then
-        return true
+        return false, { path = "api", code = "unavailable", message = "optic validation is unavailable" }
     end
     local subset = {}
     for _, name in ipairs(names) do
@@ -542,16 +546,23 @@ local function apply_draft()
     if not session then
         return
     end
-    local names = {}
+    local names, included = {}, {}
     for _, field in ipairs(ensure_descriptors()) do
         local name = field.name
         if session.draft[name] ~= nil
             and not values_equal(session.draft[name], session.baseline[name]) then
-            names[#names + 1] = name
+            for _, entry in ipairs(change_set(name)) do
+                if not included[entry] then
+                    names[#names + 1] = entry
+                    included[entry] = true
+                end
+            end
         end
     end
     if #names == 0 then
-        status_text = "nothing to apply"
+        session.overlay = {}
+        bump("apply baseline")
+        status_text = "baseline applied"
         return
     end
     local ok, failure = validate_subset(names, session.draft)
@@ -561,6 +572,7 @@ local function apply_draft()
         return
     end
     field_error = nil
+    session.overlay = {}
     for _, name in ipairs(names) do
         session.overlay[name] = copy_value(session.draft[name])
     end
@@ -632,9 +644,9 @@ local function stop_session(reason)
     status_text = "session closed " .. tostring(reason)
 end
 
-local function sorted_sections()
+local function sorted_sections(values)
     local names = {}
-    for name in pairs(user_values) do
+    for name in pairs(values) do
         names[#names + 1] = name
     end
     table.sort(names)
@@ -650,24 +662,32 @@ local function sorted_keys(values)
     return names
 end
 
-local function write_user_file()
+local function write_user_file(values)
     local path = user_path()
-    local handle = io.open(path, "w")
+    local temporary = path .. ".tmp"
+    local handle = io.open(temporary, "w")
     if not handle then
         printf("![SVP-EDIT] user file write failed path=%s", path)
         return false
     end
-    handle:write("; pip optics workbench overrides, written by the in game editor\n")
-    for _, section in ipairs(sorted_sections()) do
-        local values = user_values[section]
-        if next(values) then
-            handle:write(string.format("\n[%s]\n", section))
-            for _, key in ipairs(sorted_keys(values)) do
-                handle:write(string.format("%s = %s\n", key, values[key]))
+    local lines = { "; pip optics workbench overrides, written by the in game editor\n" }
+    for _, section in ipairs(sorted_sections(values)) do
+        local entries = values[section]
+        if next(entries) then
+            lines[#lines + 1] = string.format("\n[%s]\n", section)
+            for _, key in ipairs(sorted_keys(entries)) do
+                lines[#lines + 1] = string.format("%s = %s\n", key, entries[key])
             end
         end
     end
-    handle:close()
+    local written, write_error = handle:write(table.concat(lines))
+    local closed, close_error = handle:close()
+    if not written or not closed or not getFS():file_replace(temporary, path) then
+        os.remove(temporary)
+        printf("![SVP-EDIT] user file save failed path=%s error=%s", path,
+            tostring(write_error or close_error or "replacement failed"))
+        return false
+    end
     return true
 end
 
@@ -677,8 +697,9 @@ local function save_session()
         return
     end
     ensure_user_file()
-    local target = user_values[session.key] or {}
-    user_values[session.key] = target
+    local pending = copy_value(user_values)
+    local target = pending[session.key] or {}
+    pending[session.key] = target
     local written = 0
     for name, value in pairs(session.overlay) do
         if not values_equal(value, session.baseline[name]) then
@@ -693,7 +714,7 @@ local function save_session()
         status_text = "nothing differs from baseline"
         return
     end
-    if not write_user_file() then
+    if not write_user_file(pending) then
         status_text = "write failed"
         return
     end
@@ -713,8 +734,9 @@ local function clear_saved()
         status_text = "no saved section"
         return
     end
-    user_values[session.key] = nil
-    if not write_user_file() then
+    local pending = copy_value(user_values)
+    pending[session.key] = nil
+    if not write_user_file(pending) then
         status_text = "write failed"
         return
     end
@@ -925,7 +947,7 @@ local function draw_rows(profile, id, names)
     ImGui.TableSetupColumn("Source", STRETCH_COLUMN, 1, 0)
     ImGui.TableSetupColumn("Reset", FIXED_COLUMN, 110, 0)
     ImGui.TableHeadersRow()
-    pcall(function()
+    local ok, failure = pcall(function()
         for _, name in ipairs(names) do
             local descriptor = descriptor_map[name]
             if descriptor and session.draft[name] ~= nil then
@@ -934,6 +956,9 @@ local function draw_rows(profile, id, names)
         end
     end)
     ImGui.EndTable()
+    if not ok then
+        error(failure)
+    end
 end
 
 local function ladder_topology(mode)
@@ -959,6 +984,11 @@ local function normalize_ladder(mode)
     for index = 2, #values do
         if values[index] <= values[index - 1] then
             values[index] = math.min(values[index - 1] * 1.1, 200)
+        end
+    end
+    for index = #values - 1, 1, -1 do
+        if values[index] >= values[index + 1] then
+            values[index] = values[index + 1] / 1.1
         end
     end
 end
@@ -1025,6 +1055,7 @@ local function draw_magnifications(profile)
         if ImGui.SmallButton("add entry##mag") then
             local last = values[#values] or 1
             values[#values + 1] = math.min(last * 1.5, 200)
+            normalize_ladder(session.draft.magnification_mode)
             commit("magnifications")
         end
         ImGui.SameLine(0)

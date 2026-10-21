@@ -278,6 +278,7 @@ void CEffect_Thunderbolt::OnFrame(shared_str id, float period, float duration)
 		undo_flash_value(environment.CurrentEnv->sun_dir, flash_sun_dir, base_sun_dir);
 	}
 	flash_applied = false;
+
 	BOOL enabled = !!(id.size());
 	if (bEnabled != enabled)
 	{

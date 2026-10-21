@@ -179,6 +179,10 @@ public:
 	              const Fvector& dir, u16 bone_id);
 	virtual void EnumBoneVertices(SEnumVerticesCallback& C, u16 bone_id);
 	virtual bool GetLensDetection(SLensDetection& out);
+	virtual bool IsPhysicalScopeGlassBone(u16 bone) override;
+    virtual void SetPhysicalScopeGlassMask(u16 bone, bool enabled) override;
+    u64 PhysicalScopeGlassMask = 0;
+    u64 ScopeGlassBoneSubtree(u16 bone);
 public:
 	CKinematics();
 	virtual ~CKinematics();

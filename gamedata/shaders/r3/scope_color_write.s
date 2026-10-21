@@ -14,8 +14,12 @@ function normal(shader, t_base, t_second, t_detail)
 	shader:dx10texture("s_inside_blurred", "wpn\\scope_utility\\inside_blurred")
 	shader:dx10texture("s_dirt", "wpn\\scope_utility\\dirt")
 	shader:dx10texture("s_reflection", "wpn\\scope_utility\\reflection")
+	shader:dx10texture("s_lens_env0", "$user$env_s0")
+	shader:dx10texture("s_lens_env1", "$user$env_s1")
 	shader:dx10texture("s_heat_map", "wpn\\scope_utility\\heat_map")
+	shader:dx10texture("s_powered_off", "wpn\\eft_echo1\\eft_echo1_screen")
 	shader:dx10texture("s_svp_rain", "fx\\svp_rain")
 	shader:dx10sampler("smp_base")
 	shader:dx10sampler("smp_rtlinear");
+	shader:dx10sampler("smp_linear") -- MSDF reticle tiles (reticle_msdf.h)
 end

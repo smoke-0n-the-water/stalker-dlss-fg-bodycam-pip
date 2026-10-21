@@ -5,6 +5,10 @@
 
 using dx10StateUtils::operator==;
 
+// fps audit tally, one shared counter across every shader-stage sampler apply, read by the overlay
+extern int ps_r__svp_stats;
+extern u32 svp_stats_sampler_set;
+
 dx10SamplerStateCache SSManager;
 
 dx10SamplerStateCache::dx10SamplerStateCache():
@@ -124,6 +128,7 @@ void dx10SamplerStateCache::VSApplySamplers(HArray& samplers)
 	u32 uiMin;
 	u32 uiMax;
 	PrepareSamplerStates(samplers, pSS, m_aVSSamplers, uiMin, uiMax);
+	if (ps_r__svp_stats) ++svp_stats_sampler_set;
 	HW.pContext->VSSetSamplers(uiMin, uiMax - uiMin + 1, &pSS[uiMin]);
 }
 
@@ -133,6 +138,7 @@ void dx10SamplerStateCache::PSApplySamplers(HArray& samplers)
 	u32 uiMin;
 	u32 uiMax;
 	PrepareSamplerStates(samplers, pSS, m_aPSSamplers, uiMin, uiMax);
+	if (ps_r__svp_stats) ++svp_stats_sampler_set;
 	HW.pContext->PSSetSamplers(uiMin, uiMax - uiMin + 1, &pSS[uiMin]);
 }
 
@@ -142,6 +148,7 @@ void dx10SamplerStateCache::GSApplySamplers(HArray& samplers)
 	u32 uiMin;
 	u32 uiMax;
 	PrepareSamplerStates(samplers, pSS, m_aGSSamplers, uiMin, uiMax);
+	if (ps_r__svp_stats) ++svp_stats_sampler_set;
 	HW.pContext->GSSetSamplers(uiMin, uiMax - uiMin + 1, &pSS[uiMin]);
 }
 
@@ -152,6 +159,7 @@ void dx10SamplerStateCache::HSApplySamplers(HArray& samplers)
 	u32 uiMin;
 	u32 uiMax;
 	PrepareSamplerStates(samplers, pSS, m_aHSSamplers, uiMin, uiMax);
+	if (ps_r__svp_stats) ++svp_stats_sampler_set;
 	HW.pContext->HSSetSamplers(uiMin, uiMax - uiMin + 1, &pSS[uiMin]);
 }
 
@@ -161,6 +169,7 @@ void dx10SamplerStateCache::DSApplySamplers(HArray& samplers)
 	u32 uiMin;
 	u32 uiMax;
 	PrepareSamplerStates(samplers, pSS, m_aDSSamplers, uiMin, uiMax);
+	if (ps_r__svp_stats) ++svp_stats_sampler_set;
 	HW.pContext->DSSetSamplers(uiMin, uiMax - uiMin + 1, &pSS[uiMin]);
 }
 
@@ -170,6 +179,7 @@ void dx10SamplerStateCache::CSApplySamplers(HArray& samplers)
 	u32 uiMin;
 	u32 uiMax;
 	PrepareSamplerStates(samplers, pSS, m_aCSSamplers, uiMin, uiMax);
+	if (ps_r__svp_stats) ++svp_stats_sampler_set;
 	HW.pContext->CSSetSamplers(uiMin, uiMax - uiMin + 1, &pSS[uiMin]);
 }
 #endif

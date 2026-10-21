@@ -4,6 +4,9 @@
 #include "FBasicVisual.h"
 
 #include "R_sun_support.h"
+#if defined(USE_DX11)
+#include "../xrRenderPC_R4/scope_vslr_renderer.h"
+#endif
 
 constexpr float tweak_COP_initial_offs = 1200.f;
 
@@ -64,6 +67,22 @@ void CRender::init_cacades()
 	/// 	m_sun_cascades[m_sun_cascades.size()-1].size = 80;
 }
 
+#if RENDER == R_R4
+// sun sub timer brackets, only the r4 stats module defines the wrappers
+static void sun_sub_begin(u32 s) { svp_stats_sun_sub_begin(s); }
+static void sun_sub_end(u32 s) { svp_stats_sun_sub_end(s); }
+#else
+static void sun_sub_begin(u32) {}
+static void sun_sub_end(u32) {}
+#endif
+
+#if defined(USE_DX10) || defined(USE_DX11)
+// depth only caster raster arming, the dx9 backend has no null shader path
+static void smap_null_arm(bool on) { RCache.arm_smap_null_ps(on); }
+#else
+static void smap_null_arm(bool) {}
+#endif
+
 void CRender::render_sun_cascades()
 {
 	bool b_need_to_render_sunshafts = Target->need_to_render_sunshafts();
@@ -72,7 +91,18 @@ void CRender::render_sun_cascades()
 		m_sun_cascades[m_sun_cascades.size() - 1].reset_chain = true;
 
 	for (u32 i = 0; i < m_sun_cascades.size(); ++i)
+	{
+#if RENDER == R_R4
+		// pip per-cascade gpu cost, read by the fps audit overlay
+		extern void svp_stats_sun_cascade_begin(u32 idx);
+		extern void svp_stats_sun_cascade_end(u32 idx);
+		svp_stats_sun_cascade_begin(i);
 		render_sun_cascade(i);
+		svp_stats_sun_cascade_end(i);
+#else
+		render_sun_cascade(i);
+#endif
+	}
 
 	if (b_need_to_render_sunshafts)
 		m_sun_cascades[m_sun_cascades.size() - 1].reset_chain = last_cascade_chain_mode;
@@ -288,8 +318,16 @@ void CRender::render_sun_cascade(u32 cascade_ind)
     {
         PROF_EVENT("Render Cascade: SMAP traverse");
         phase = PHASE_SMAP;
+        // pip cpu cost of this cascade's traverse plus capture, read by the fps audit overlay
+        const bool timed = ps_r__svp_stats != 0 && cascade_ind < 3;
+        CTimer capture_timer;
+        if (timed) capture_timer.Start();
         cascade.GMCascade.traverse(pOutdoorSector, cascade.cull_frustum, cascade.cull_COP, cascade.cull_xform);
         cascade.GMCascade.r_dsgraph_capture(false, true);
+        if (timed) svp_stats_capture_cascade_ms[cascade_ind] = capture_timer.GetElapsed_ms_f();
+        // cascade graphs never draw lods so this list only ever grows
+        if (ps_r__svp_stats >= 2 && (Device.dwFrame & 255) == 0)
+            Msg("[SUN-LOD] c%u lod %u", cascade_ind, (u32)cascade.GMCascade.RGraph.mapLOD.size());
     }
 
     // Finalize & Cleanup
@@ -305,16 +343,28 @@ void CRender::render_sun_cascade(u32 cascade_ind)
             bool bForward_Shadows = cascade.GMCascade.RGraph.mapStaticPasses[1][0].size() || cascade.GMCascade.RGraph.mapDynamicPasses[1][0].size() || cascade.GMCascade.RGraph.mapStaticSorted.Sorted.size() || cascade.GMCascade.RGraph.mapDynamicSorted.Sorted.size();
             if (bDeffered_Shadows || bForward_Shadows)
             {
+                sun_sub_begin(SUN_SUB_SMAP);
                 Target->phase_smap_direct(fuckingsun, SE_SUN_FAR);
                 RCache.set_xform_world(Fidentity);
                 RCache.set_xform_view(Fidentity);
                 RCache.set_xform_project(fuckingsun->X.D.combine);
+                smap_null_arm(ps_r__smap_null_ps != 0);
                 cascade.GMCascade.r_dsgraph_render_graph(0);
+                smap_null_arm(false);
+                sun_sub_end(SUN_SUB_SMAP);
 
                 if (psDeviceFlags2.test(rsGrassShadow) && cascade_ind <= ps_ssfx_grass_shadows.x)
                 {
+                    sun_sub_begin(SUN_SUB_GRASS);
                     Details->fade_distance = dm_fade * dm_fade * ps_ssfx_grass_shadows.y;
+#ifdef USE_DX11
+                    Details->hw_Run_Begin(&cascade.cull_frustum, cascade_ind);
+#endif
                     Details->Render();
+#ifdef USE_DX11
+                    Details->hw_Run_End();
+#endif
+                    sun_sub_end(SUN_SUB_GRASS);
                 }
 
                 fuckingsun->X.D.transluent = FALSE;
@@ -336,12 +386,25 @@ void CRender::render_sun_cascade(u32 cascade_ind)
 	Target->phase_accumulator();
 
 #if defined(USE_DX10) || defined(USE_DX11)
-	if (Target->use_minmax_sm_this_frame())
+	bool need_minmax_sm = Target->use_minmax_sm_this_frame();
+	if (ps_r__sun_minmax_lean)
 	{
+		const u32 last = m_sun_cascades.size() - 1;
+		// both terms read the same source of truth the two minmax consumers read
+		need_minmax_sm = (cascade_ind == 0)
+			? Target->use_minmax_sm_this_frame()
+			: (cascade_ind == last && RImplementation.o.advancedpp
+				&& (ps_sunshafts_mode == R2SS_VOLUMETRIC || ps_sunshafts_mode == R2SS_COMBINE_SUNSHAFTS)
+				&& Target->use_minmax_sm_this_frame());
+	}
+	if (need_minmax_sm)
+	{
+		sun_sub_begin(SUN_SUB_MINMAX);
 #if defined(USE_DX10) || defined(USE_DX11)
 		PIX_EVENT(SE_SUN_NEAR_MINMAX_GENERATE);
 #endif
 		Target->create_minmax_SM();
+		sun_sub_end(SUN_SUB_MINMAX);
 	}
 #endif
 
@@ -349,6 +412,7 @@ void CRender::render_sun_cascade(u32 cascade_ind)
 	PIX_EVENT(SE_SUN_NEAR);
 #endif
 
+	sun_sub_begin(SUN_SUB_ACCUM);
 	if (cascade_ind == 0)
 		Target->accum_direct_cascade(SE_SUN_NEAR, cascade.xform, cascade.xform,
 		                             cascade.bias);
@@ -356,12 +420,19 @@ void CRender::render_sun_cascade(u32 cascade_ind)
 		Target->accum_direct_cascade(SE_SUN_MIDDLE, cascade.xform,
 		                             m_sun_cascades[cascade_ind - 1].xform, cascade.bias);
 	else
+	{
 		Target->accum_direct_cascade(SE_SUN_FAR, cascade.xform,
 		                             m_sun_cascades[cascade_ind - 1].xform, cascade.bias);
+#if defined(USE_DX11)
+		scope_vslr_sun_cascade(cascade.bias); // scope reflections keep the widest sun cascade
+#endif
+	}
+	sun_sub_end(SUN_SUB_ACCUM);
 
 	// pip shared-shadow, the cascade smap was just built on the main atlas, re-accumulate it into the
 	// SVP (the hook re-points the atlas at the main maps so this reads them, no second smap render),
 	// the minmax SM above is generation and is skipped, the SVP reads the shared minmax
+	sun_sub_begin(SUN_SUB_SVP);
 	if (Device.m_SecondViewport.dual_accum)
 	{
 		auto svp_accum = [&]
@@ -379,6 +450,7 @@ void CRender::render_sun_cascade(u32 cascade_ind)
 		};
 		Device.m_SecondViewport.dual_accum(svp_accum);
 	}
+	sun_sub_end(SUN_SUB_SVP);
 
 	// Restore XForms
 	RCache.set_xform_world(Fidentity);

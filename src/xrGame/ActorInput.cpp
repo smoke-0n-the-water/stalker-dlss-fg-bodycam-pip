@@ -464,6 +464,10 @@ void CActor::IR_OnMouseMove(int dx, int dy)
 	if (cam_freelook == eflEnabling || cam_freelook == eflDisabling)
 		return;
 
+	if (cam_active == eacFirstEye && cam_freelook == eflDisabled &&
+		IsFocused() && g_player_hud && g_player_hud->ReferenceMouse(dx, dy))
+		return;
+
 	const float LookFactor = GetLookFactor();
 
 	CCameraBase* C = cameras[cam_active];

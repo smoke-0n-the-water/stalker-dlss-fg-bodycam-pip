@@ -12,6 +12,7 @@ public:
 		VQ_HOM = (1 << 0),
 		VQ_SSA = (1 << 1),
 		VQ_FADE = (1 << 2),				// requires SSA to work
+		VQ_OFFSCREEN = (1 << 3), // independent view; cannot use main-camera occlusion
 	};
 
 	R_dsgraph::DynamicSceneRgraph RGraph;
@@ -24,9 +25,11 @@ public:
 	xrCriticalSection						P_CS;
 	xrSRWLock								S_LC;
 
-	FixedMAP<CSector*, std::pair<xr_vector<CFrustum>, FixedSet<CPortal*>>>		m_sector_frustums;
+	using sector_frustums_t = FixedMAP<CSector*, std::pair<xr_vector<CFrustum>, FixedSet<CPortal*>>>;
+	sector_frustums_t						m_sector_frustums;
 	xr_unordered_flat_set<dxRender_Visual*>				m_static_seen;
 	xr_vector<ISpatialShared>				lstRenderables, lstLights;
+	xr_vector<int>							lstLODgroups;
 	FixedMAP<CPortal*, float>				f_portals;
 	sPoly S, D;
 	ref_shader								f_shader;
@@ -39,22 +42,31 @@ public:
 	void initialize();
 	void destroy();
 	void traverse(CSector* start, CFrustum& F, Fvector& vBase, Fmatrix& mXFORM);
-	IC bool is_sector_visible(CSector* sector)
+	// node hands back the frustum entry the lookup already found, so a caller that needs the
+	// frustums does not repeat the find, it stays null on the i_start early-out
+	// The main camera's occlusion applies: the normal phase of a view that is not off-screen.
+	IC bool main_occlusion() const { return i_mask[fl_normal] && !(i_options & VQ_OFFSCREEN); }
+
+	IC bool is_sector_visible(CSector* sector, sector_frustums_t::TNode** node = nullptr)
 	{
+		if (node) *node = nullptr;
+
 		if (sector == i_start) return true;
 
 		{
 			xrSRWLockGuard guard(&S_LC, true);
 			if(m_sector_frustums.size())
 			{
-				if (auto node = m_sector_frustums.find(sector))
-					return !node->val.first.empty();
+				if (auto found = m_sector_frustums.find(sector))
+				{
+					if (node) *node = found;
+					return !found->val.first.empty();
+				}
 			}
 		}
 
 		return false;
 	};
-	CDSGraphManager& get_traverser_safed() { xrSRWLockGuard guard(&S_LC, false); return *this; };
 	void fade_portal(CPortal* _p, float ssa);
 	void fade_render();
 
@@ -83,7 +95,6 @@ public:
 	static void svp_set_lod_scale(float s); // pip SVP LOD: scale captured ssa to the SVP's pixel coverage
 	static void svp_set_ssa_cull(float strength, float cov); // pip SVP small-object cull threshold
 	static bool svp_cull_reject(dxRender_Visual* V, Fmatrix* M);
-	static bool svp_cull_reject_sphere(const Fvector& c, float r);
 	static float svp_drain_lod(float ssa, float R); // pip lod for the drained weapon via the inline lod helpers
 	IC void r_dsgraph_render_graph(u32 _priority, bool _clear = true)
 	{
@@ -109,6 +120,7 @@ public:
 	void r_dsgraph_render_native_ui(bool renderHudUi);
 #endif
 	void r_dsgraph_render_hud(bool _clear = true);
+	void r_dsgraph_render_physical_glass(bool deferred = false);
 	void r_dsgraph_render_hud_svp();
 	// pip one hud pose sample feeds the housing and every late scope draw
 	struct SSvpPoseLatch
@@ -161,6 +173,8 @@ public:
 	// Anomaly
 #if defined(USE_DX11)
 	void r_dsgraph_render_ScopeSorted();
+	void r_dsgraph_render_ScopeOverlay(); // pip non-lens 3DSS late-pass meshes after the lens composite
+	void r_dsgraph_render_ReflexSorted(); // 3DSS reflex reticles in the reticle pass
 #endif
 	void r_dsgraph_render_cam_ui();
 	void r_dsgraph_render_water_ssr();

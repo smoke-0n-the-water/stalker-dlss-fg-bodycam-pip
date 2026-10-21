@@ -73,7 +73,8 @@ bool configured_scope_glass_texture(LPCSTR texture, string_path& replacement)
 	const CInifile::Sect& materials = pSettings->r_section(scope_glass_materials_section);
 	for (const CInifile::Item& material : materials.Data)
 	{
-		if (_GetItemCount(*material.second, '|') != 2)
+		const u32 item_count = _GetItemCount(*material.second, '|');
+		if (item_count < 1 || item_count > 2)
 			continue;
 
 		string_path configured = {};
@@ -82,17 +83,38 @@ bool configured_scope_glass_texture(LPCSTR texture, string_path& replacement)
 		if (xr_strcmp(texture, configured) != 0)
 			continue;
 
-		_GetItem(*material.second, 1, replacement, '|');
-		normalize_texture_name(replacement);
-		return replacement[0] != '\0';
+		if (item_count == 2)
+		{
+			_GetItem(*material.second, 1, replacement, '|');
+			normalize_texture_name(replacement);
+		}
+		return true;
 	}
 
 	return false;
 }
 
+constexpr LPCSTR scope_glass_source_shaders_section = "scope_glass_source_shaders";
+
+// models\model is always a glass source. A config may name more shaders a script can swap onto
+// the same glass texture at runtime (3DSS 5.x see-through ADS), so the glass keeps its material.
+// That exception is for true PiP only: with PiP off the swap keeps its stock effect. The swap
+// re-creates the shader on each aim, so a mode change takes effect on the next aim.
+bool scope_glass_source_shader(LPCSTR shader)
+{
+	if (!stricmp(shader, "models\\model"))
+		return true;
+	if (!scope_svp_enabled || !pSettings || !pSettings->section_exist(scope_glass_source_shaders_section))
+		return false;
+	for (const CInifile::Item& item : pSettings->r_section(scope_glass_source_shaders_section).Data)
+		if (!stricmp(shader, *item.first))
+			return true;
+	return false;
+}
+
 bool route_scope_glass_material(LPCSTR shader, LPCSTR textures, string1024& routed_textures)
 {
-	if (!ps_r__scope_glass || !shader || stricmp(shader, "models\\model") != 0)
+	if (!ps_r__scope_glass || !shader || !scope_glass_source_shader(shader))
 		return false;
 
 	string_path texture = {};
@@ -100,12 +122,11 @@ bool route_scope_glass_material(LPCSTR shader, LPCSTR textures, string1024& rout
 	if (!normalize_first_texture(textures, texture) || !configured_scope_glass_texture(texture, replacement))
 		return false;
 
-	xr_strcpy(routed_textures, replacement);
-	if (LPCSTR remaining_textures = strchr(textures, ','))
-		xr_strcat(routed_textures, remaining_textures);
+	xr_strcpy(routed_textures, replacement[0] ? replacement : textures);
 
 	if (ps_r__scope_glass_debug)
-		Msg("[scope-glass] %s -> %s", texture, replacement);
+		Msg("[scope-glass] %s/%s -> models\\scope_glass/%s", shader, texture,
+			replacement[0] ? replacement : texture);
 
 	return true;
 }
@@ -425,7 +446,10 @@ Shader* CResourceManager::Create(LPCSTR s_shader, LPCSTR s_textures, LPCSTR s_co
 #if RENDER == R_R4
 		string1024 scope_glass_textures = {};
 		if (route_scope_glass_material(s_shader, s_textures, scope_glass_textures))
+		{
+			s_shader = "models\\scope_glass";
 			s_textures = scope_glass_textures;
+		}
 #endif
 
 		//	TODO: DX10: When all shaders are ready switch to common path
@@ -480,65 +504,70 @@ void CResourceManager::Delete(const Shader* S)
 	Msg("! ERROR: Failed to find complete shader");
 }
 
+// Registry lookup and the last owner release must share the same guard.
+// Destruction also runs on exceptional exits from a loading/unloading batch.
+namespace {
+struct OwnedTextureSnapshot {
+    xrCriticalSection& guard;
+    xr_vector<ref_texture> textures;
+    explicit OwnedTextureSnapshot(xrCriticalSection& value):guard(value){}
+    ~OwnedTextureSnapshot(){xrCriticalSectionGuard lock(guard);textures.clear();}
+};
+}
+
 void CResourceManager::DeferredUpload()
 {
-	if (!RDEVICE.b_is_Ready) return;
-
-	Msg("CResourceManager::DeferredUpload -> START, size = %d", m_textures.size());
-
-	CTimer timer;
-	timer.Start();
-
-	// Snapshot the pointers under creationGuard so this walk doesn't run
-	// concurrently with _CreateTexture's insert into the same std::map, then
-	// release the lock before running Load() across PPL worker threads (some
-	// of which may themselves need creationGuard, e.g. via _CreateTexture).
-	xr_vector<CTexture*> textures;
-	{
-		xrCriticalSectionGuard guard(creationGuard);
-		textures.reserve(m_textures.size());
-		for (auto& pair : m_textures)
-			textures.push_back(pair.second);
-	}
-
-	static DWORD this_thread_id = 0;
-	this_thread_id = GetCurrentThreadId();
-	xr_parallel_foreach(textures.begin(), textures.end(), [](CTexture* texture)
-	{
-		if (this_thread_id != GetCurrentThreadId()) { PROF_THREAD("X-Ray PPL Thread") }
-		texture->Load();
-	});
-
-	Msg("texture loading time: %d", timer.GetElapsed_ms());
+    if(!RDEVICE.b_is_Ready)return;
+    CTimer timer;timer.Start();
+#if defined(USE_DX10) || defined(USE_DX11)
+    DrainTextureLoads();
+    OwnedTextureSnapshot ownership(creationGuard);
+    auto& snapshot=ownership.textures;
+    {xrCriticalSectionGuard guard(creationGuard);snapshot.reserve(m_textures.size());
+        for(const auto& entry:m_textures)snapshot.emplace_back(entry.second);}
+    Msg("CResourceManager::DeferredUpload -> START, size = %d",snapshot.size());
+    for(const auto& texture:snapshot)QueueTextureLoad(texture);
+    DrainTextureLoads();
+#else
+    Msg("CResourceManager::DeferredUpload -> START, size = %d",m_textures.size());
+    static DWORD this_thread_id=0;this_thread_id=GetCurrentThreadId();
+    xr_parallel_foreach(m_textures.begin(),m_textures.end(),[](auto& pair){
+        if(this_thread_id!=GetCurrentThreadId()){PROF_THREAD("X-Ray PPL Thread")}
+        pair.second->Load();
+    });
+#endif
+    Msg("texture loading time: %d",timer.GetElapsed_ms());
 }
 
 void CResourceManager::DeferredUnload()
 {
-	if (!RDEVICE.b_is_Ready)
-		return;
-
-	xr_vector<CTexture*> textures;
-	{
-		xrCriticalSectionGuard guard(creationGuard);
-		textures.reserve(m_textures.size());
-		for (auto& pair : m_textures)
-			textures.push_back(pair.second);
-	}
-
-	xr_parallel_foreach(textures.begin(), textures.end(), [](CTexture* texture)
-	{
-		texture->Unload();
-	});
+    if(!RDEVICE.b_is_Ready)return;
+#if defined(USE_DX10) || defined(USE_DX11)
+    DrainTextureLoads();
+    OwnedTextureSnapshot ownership(creationGuard);
+    auto& snapshot=ownership.textures;
+    {xrCriticalSectionGuard guard(creationGuard);snapshot.reserve(m_textures.size());
+        for(const auto& entry:m_textures)snapshot.emplace_back(entry.second);}
+    xr_parallel_foreach(snapshot.begin(),snapshot.end(),[](auto& texture){texture->Unload();});
+#else
+    xr_parallel_foreach(m_textures.begin(),m_textures.end(),[](auto& pair){pair.second->Unload();});
+#endif
 }
 
 void CResourceManager::UnloadAllTexturesOnLevelUnload()
 {
+#if defined(USE_DX10) || defined(USE_DX11)
+    DrainTextureLoads();
+    ReleasePrefetchedTextures();
+#endif
 	if (!RDEVICE.b_is_Ready)
 		return;
 
+#if defined(USE_DX10) || defined(USE_DX11)
+    OwnedTextureSnapshot ownership(creationGuard);
+    auto& textures_to_unload=ownership.textures;
+    {
     xrCriticalSectionGuard guard(creationGuard);
-
-    xr_vector<CTexture*> textures_to_unload;
     textures_to_unload.reserve(m_textures.size());
 
     for (const auto& pair : m_textures)
@@ -559,11 +588,25 @@ void CResourceManager::UnloadAllTexturesOnLevelUnload()
         if (strncmp(name, "ui\\", 3) == 0 || strncmp(name, "ui/", 3) == 0)
             continue;
 
-        textures_to_unload.push_back(texture);
+        textures_to_unload.emplace_back(texture);
     }
 
-    for (CTexture* texture : textures_to_unload)
+    } // Release registry lock before waiting or unloading any texture.
+    for (const auto& texture : textures_to_unload)
         texture->Unload();
+#else
+    xrCriticalSectionGuard guard(creationGuard);
+    xr_vector<CTexture*> textures_to_unload;
+    for(const auto& pair:m_textures) {
+        CTexture* texture=pair.second;
+        if(!texture||texture->flags.bUser||strstr(*texture->cName,"$"))continue;
+        LPCSTR name=pair.first;
+        if(strncmp(name,"ui\\",3)==0||strncmp(name,"ui/",3)==0)continue;
+        textures_to_unload.push_back(texture);
+    }
+    for(CTexture* texture:textures_to_unload)texture->Unload();
+#endif
+
 }
 
 #ifdef _EDITOR

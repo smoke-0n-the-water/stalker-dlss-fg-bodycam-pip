@@ -238,7 +238,7 @@ void player_legs_controller::update(CActor* actor, bool isShadowPass)
     actor->XFORMShadow.translate_over(m_legs_transform.c);
 }
 
-void player_legs_controller::render(bool isShadowPass, IDSGraphManager* DM)
+void player_legs_controller::render(IDSGraphManager* DM, bool isShadowPass)
 {
     IKinematics* model = isShadowPass ? m_shadow_model : m_model;
     if (!model)

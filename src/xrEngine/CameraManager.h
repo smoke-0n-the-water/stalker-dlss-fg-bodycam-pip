@@ -137,6 +137,8 @@ protected:
 	bool m_bAutoApply;
 	SPPInfo pp_affected;
 	void UpdateDeffered();
+	void UpdateInternal(const Fvector& P, const Fvector& D, const Fvector& N, float fFOV_Dest,
+		float fASPECT_Dest, float fFAR_Dest, u32 flags, bool reference);
 
 	BENCH_SEC_SCRAMBLEVTBL1
 	virtual void UpdateCamEffectors();
@@ -187,6 +189,8 @@ public:
 	void Update(const Fvector& P, const Fvector& D, const Fvector& N, float fFOV_Dest, float fASPECT_Dest,
 	            float fFAR_Dest, u32 flags);
 	void UpdateFromCamera(const CCameraBase* C);
+	// Layers native effectors/PP over the solved base without automatically publishing.
+	virtual void UpdateReference(const Fmatrix& cameraWorld, float fFOV, float fASPECT, float fFAR);
 	void ApplyDeviceOverride(const Fvector& P, const Fvector& D, const Fvector& N, float fFOV, float fASPECT,
 		float fFAR, float viewport_near);
 

@@ -469,6 +469,8 @@ void CMapLocation::UpdateSpot(CUICustomMap* map, CMapSpot* sp, CMapSpotPointer* 
 	else if (Level().name() == map->MapName() && pt)
 	{
 		VERIFY(Actor());
+		if (!m_owner_se_object)
+			return;
 		GameGraph::_GRAPH_ID dest_graph_id = m_owner_se_object->m_tGraphID;
 		GameGraph::_GRAPH_ID actor_graph_id = Actor()->ai_location().game_vertex_id();
 

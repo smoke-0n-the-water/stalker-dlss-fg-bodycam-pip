@@ -1717,6 +1717,10 @@ void CBlender_Compile::SetMapping()
 	r_Constant("s3ds_param_2", &s3ds_param_2);
 	r_Constant("s3ds_param_3", &s3ds_param_3);
 	r_Constant("s3ds_param_4", &s3ds_param_4);
+#if defined(USE_DX11)
+	extern void RegisterReticle3DSSConstants(CBlender_Compile& dst);
+	RegisterReticle3DSSConstants(*this); // 3DSS reticle constants (xrRenderPC_R4/r4_3dss_reticle.cpp)
+#endif
 	RegisterSvpConstants(*this); // pip binders and their names live in svp_constants.cpp
 
 	// crookr

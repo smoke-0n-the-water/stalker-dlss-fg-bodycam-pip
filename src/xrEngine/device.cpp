@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "bodycam_reference_projection.h"
 #include "../xrCDB/frustum.h"
 #include "xr_ioconsole.h"
 #include "xr_input.h"
@@ -352,6 +353,10 @@ void CRenderDevice::on_idle()
 
 	PROF_FRAME("Main Thread");
 
+	// bounds a running Optick capture (time limit / free-RAM floor); no-op otherwise
+	extern void prof_capture_frame();
+	prof_capture_frame();
+
 #ifdef DEDICATED_SERVER
     u32 FrameStartTime = TimerGlobal.GetElapsed_ms();
 #endif
@@ -460,9 +465,15 @@ void CRenderDevice::on_idle()
 
 	// pip true hud fov renders the weapon at the scene perspective while fully aimed through a PiP scope
 	extern int g_svp_hud_true_fov;
-	const float hud_fov_deg = (g_svp_hud_true_fov && true_pip_on && m_SecondViewport.IsSVPActive()
-		&& g_pGamePersistent && g_pGamePersistent->m_pGShaderConstants->hud_params.x > 0.999f) ? fFOV : psHUD_FOV * 83.f;
+	const float hud_fov_deg = BodycamReference::HudProjectionFov(
+		dwFrame, reference_hud_projection_frame, fFOV, psHUD_FOV * 83.f,
+		g_svp_hud_true_fov && true_pip_on && m_SecondViewport.IsSVPActive()
+		&& g_pGamePersistent && g_pGamePersistent->m_pGShaderConstants->hud_params.x > 0.999f, reference_hud_nearwall_scale);
 	mProjectHud.build_projection(deg2rad(hud_fov_deg), fASPECT, R_VIEWPORT_NEAR, g_pGamePersistent->Environment().CurrentEnv->far_plane);
+    const float referenceClipScale=BodycamReference::HudProjectionClipScale(
+        dwFrame,reference_hud_projection_frame,reference_hud_clip_scale);
+    mProjectHud._11*=referenceClipScale;
+    mProjectHud._22*=referenceClipScale;
 	mProjectCam.build_projection(deg2rad(83.f), fASPECT, R_VIEWPORT_NEAR, g_pGamePersistent->Environment().CurrentEnv->far_plane);
 	
 	mViewHud.set(mView);
@@ -496,6 +507,9 @@ void CRenderDevice::on_idle()
 	mFullTransform_saved = mFullTransform;
 	mView_saved = mView;
 	mProject_saved = mProject;
+
+	vCameraPosition_bones = vCameraPosition;
+	mFullTransform_bones = mFullTransform;
 
 	STOP_PROFILE;
 
@@ -561,7 +575,16 @@ void CRenderDevice::on_idle()
 #endif 
 	Device.isRendering = false;
 
-	secondary_tasks.wait();
+	// pip wall time of the secondary task join, read by the fps audit overlay
+	{
+		extern int ps_r__svp_stats;
+		extern float svp_stats_join_ms;
+		const bool timed = ps_r__svp_stats != 0;
+		CTimer join_timer;
+		if (timed) join_timer.Start();
+		secondary_tasks.wait();
+		if (timed) svp_stats_join_ms = join_timer.GetElapsed_ms_f();
+	}
 
 	if (psLua_ParallelGC_debug && psLua_ParallelGC && Device.LuaGCDebug)
 	{
@@ -689,6 +712,12 @@ void CRenderDevice::FrameMove()
 
 	dwFrame++;
 	Core.dwFrame = dwFrame;
+	// Sample once, before any viewport or actor work. This timer remains at unit
+	// rate and participates in pause management, independently of gameplay time.
+	application_delta = Paused() ? 0.0 :
+		(psDeviceFlags.test(rsConstantFPS) ? 0.033 :
+			double(application_timer.GetElapsed_ticks()) / double(CPU::qpc_freq));
+	application_timer.Start();
 	renderdoc_poll_captures();
 	dwTimeContinual = TimerMM.GetElapsed_ms() - app_inactive_time;
 	if (psDeviceFlags.test(rsConstantFPS))

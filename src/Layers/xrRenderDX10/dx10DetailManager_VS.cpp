@@ -5,6 +5,7 @@
 #include "../../xrEngine/environment.h"
 
 #include "../xrRenderDX10/dx10BufferUtils.h"
+#include "StateManager/dx10ShaderResourceStateCache.h"
 
 // Vars to store wind prev frame data ( Motion vectors )
 static u32 prev_frame = -1;
@@ -51,6 +52,99 @@ float GoToValue(float& current, float go_to)
 	return current < go_to ? r_value : -r_value;
 }
 
+#ifdef USE_DX11
+// reserved vs resource slot for the instance records, the grass vs itself only binds s_waves at t0
+enum { DETAIL_INSTANCE_SRV_SLOT = 3 };
+
+ICF u16 dm_unorm16(float v) { return u16(iFloor(clampr(v, 0.f, 1.f) * 65535.f + .5f)); }
+ICF u8 dm_unorm8(float v) { return u8(iFloor(clampr(v, 0.f, 1.f) * 255.f + .5f)); }
+
+// unit vector to an octahedral unorm16 pair
+ICF void dm_oct_encode(const Fvector& n, u16& ox, u16& oy)
+{
+	const float inv = 1.f / (_abs(n.x) + _abs(n.y) + _abs(n.z));
+	float px = n.x * inv;
+	float py = n.y * inv;
+	if (n.z <= 0.f)
+	{
+		const float fx = 1.f - _abs(py);
+		const float fy = 1.f - _abs(px);
+		px = px >= 0.f ? fx : -fx;
+		py = py >= 0.f ? fy : -fy;
+	}
+	ox = dm_unorm16(px * .5f + .5f);
+	oy = dm_unorm16(py * .5f + .5f);
+}
+
+// orthonormal basis to a smallest three quaternion, three snorm16 plus the dropped index
+ICF void dm_quat_encode(const Fmatrix& M, s16* qs, u16& qidx)
+{
+	float t, q[4];
+	if (M._33 < 0.f)
+	{
+		if (M._11 > M._22)
+		{
+			t = 1.f + M._11 - M._22 - M._33;
+			q[0] = t; q[1] = M._12 + M._21; q[2] = M._31 + M._13; q[3] = M._23 - M._32;
+		}
+		else
+		{
+			t = 1.f - M._11 + M._22 - M._33;
+			q[0] = M._12 + M._21; q[1] = t; q[2] = M._23 + M._32; q[3] = M._31 - M._13;
+		}
+	}
+	else
+	{
+		if (M._11 < -M._22)
+		{
+			t = 1.f - M._11 - M._22 + M._33;
+			q[0] = M._31 + M._13; q[1] = M._23 + M._32; q[2] = t; q[3] = M._12 - M._21;
+		}
+		else
+		{
+			t = 1.f + M._11 + M._22 + M._33;
+			q[0] = M._23 - M._32; q[1] = M._31 - M._13; q[2] = M._12 - M._21; q[3] = t;
+		}
+	}
+
+	const float mag = _sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+	const float inv = mag > 0.f ? 1.f / mag : 0.f;
+
+	u32 idx = 0;
+	float best = _abs(q[0]);
+	for (u32 c = 1; c < 4; c++)
+	{
+		const float a = _abs(q[c]);
+		if (a > best) { best = a; idx = c; }
+	}
+
+	// the dropped component is forced positive so the shader can rebuild it from a square root
+	const float enc = (q[idx] < 0.f ? -inv : inv) * 46340.95f;
+	u32 w = 0;
+	for (u32 c = 0; c < 4; c++)
+	{
+		if (c == idx) continue;
+		qs[w++] = s16(clampr(iFloor(q[c] * enc + .5f), -32767, 32767));
+	}
+	qidx = u16(idx);
+}
+
+#pragma pack(push, 1)
+struct InstanceHW
+{
+	float px, py, pz; // world position
+	s16 q[3];         // rotation, smallest three
+	u16 qidx;         // dropped rotation component
+	u16 nx, ny;       // terrain normal, octahedral
+	u16 alpha;        // unorm
+	u8 c_sun;         // unorm
+	u8 c_hemi;        // unorm
+	float scale;      // uniform draw scale
+};
+#pragma pack(pop)
+static_assert(sizeof(InstanceHW) == CDetailManager::hw_InstanceStride, "InstanceHW must match hw_InstanceStride");
+#endif
+
 void CDetailManager::hw_Load_Shaders()
 {
 	// Create shader to access constant storage
@@ -94,6 +188,16 @@ void CDetailManager::hw_Render(light* L)
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_xform_world(Fidentity);
 	RCache.set_Geometry(hw_Geom);
+
+#ifdef USE_DX11
+	// fill once per frame, the later phases replay the same buffer through their own ranges
+	if (hw_instancing && hw_frame_filled != Device.dwFrame)
+	{
+		Device.Statistic->RenderDUMP_DT_Count = 0; // accumulates across this frame's phases
+		hw_Fill_Instances();
+	}
+#endif
+
 	float scale = 1.f / float(quant);
 	Fvector4 wave, prev_wave;
 	Fvector4 consts;
@@ -140,7 +244,176 @@ void CDetailManager::hw_Render(light* L)
 	RCache.set_CullMode(CULL_CCW);
 }
 
-void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave, const Fvector4& wind, 
+#ifdef USE_DX11
+void CDetailManager::hw_Fill_Instances()
+{
+	// pack every visible instance into the buffer with one map and record the per object ranges
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	CHK_DX(HW.pContext->Map(hw_instanceVB, 0, D3D_MAP_WRITE_DISCARD, 0, &mapped));
+	InstanceHW* pInst = (InstanceHW*)mapped.pData;
+
+	const u32 nObj = (u32)objects.size();
+	u32 instTotal = 0;
+	BOOL bOverflow = FALSE;
+	// the scope gbuffer pass culls whole slots, so each slot's instance range is kept
+	hw_slot_ranges.clear();
+	for (u32 vid = 0; vid < 3; vid++)
+	{
+		vis_list& list = m_visibles[vid];
+		for (u32 O = 0; O < nObj; O++)
+		{
+			hw_inst_base[vid * nObj + O] = instTotal;
+			hw_slot_base[vid * nObj + O] = (u32)hw_slot_ranges.size();
+			hw_inst_count[vid * nObj + O] = 0;
+			hw_slot_count[vid * nObj + O] = 0;
+
+			xr_vector<SlotItemVec*>& vis = list[O];
+			// batched objects keep their visible set for the batched loop
+			if (hw_obj_path[O] == hw_path_batched)
+				continue;
+			if (hw_obj_path[O] == hw_path_unusable)
+			{
+				if (!vis.empty())
+					vis.clear_not_free();
+				continue;
+			}
+			xr_vector<SlotItemVec*>::iterator _vI = vis.begin();
+			xr_vector<SlotItemVec*>::iterator _vE = vis.end();
+			for (; _vI != _vE; _vI++)
+			{
+				SlotItemVec* items = *_vI;
+				// every item of a vec belongs to one slot and carries that slot's centre
+				const u32 slot_first = instTotal;
+				SlotItemVecIt _iI = items->begin();
+				SlotItemVecIt _iE = items->end();
+				for (; _iI != _iE; _iI++)
+				{
+					SlotItem& Instance = **_iI;
+
+					// alpha smoothing advances once per frame
+					Instance.alpha += GoToValue(Instance.alpha, Instance.alpha_target);
+
+					if (Instance.alpha <= 0)
+						break;
+
+					if (instTotal >= hw_instance_cap)
+					{
+						bOverflow = TRUE;
+						break;
+					}
+
+					// position and scale stay exact, the vs rebuilds the rows from the quaternion
+					const Fmatrix& M = Instance.mRotY;
+					InstanceHW& R = pInst[instTotal];
+					R.px = M._41;
+					R.py = M._42;
+					R.pz = M._43;
+					dm_quat_encode(M, R.q, R.qidx);
+					dm_oct_encode(Instance.normal, R.nx, R.ny);
+					R.alpha = dm_unorm16(Instance.alpha);
+					R.c_sun = dm_unorm8(Instance.c_sun);
+					R.c_hemi = dm_unorm8(Instance.c_hemi);
+					R.scale = Instance.scale_calculated;
+					instTotal++;
+				}
+				if (instTotal != slot_first)
+					hw_slot_ranges.push_back({ items->front()->position, items->front()->radius, items->front()->distance, slot_first, instTotal - slot_first });
+				if (instTotal >= hw_instance_cap)
+					break;
+			}
+			hw_inst_count[vid * nObj + O] = instTotal - hw_inst_base[vid * nObj + O];
+			hw_slot_count[vid * nObj + O] = (u32)hw_slot_ranges.size() - hw_slot_base[vid * nObj + O];
+
+			// UpdateVisibleM rebuilds the lists on the next frame
+			if (!vis.empty())
+				vis.clear_not_free();
+		}
+	}
+
+	HW.pContext->Unmap(hw_instanceVB, 0);
+
+	if (bOverflow && !hw_overflow_logged)
+	{
+		hw_overflow_logged = true;
+		Msg("! [DETAILS] instance buffer overflow, cap(%d) - some grass dropped", hw_instance_cap);
+	}
+
+	hw_frame_filled = Device.dwFrame;
+}
+
+void CDetailManager::hw_Run_Begin(const CFrustum* F, u32 cascade)
+{
+	if (!hw_instancing)
+		return;
+	VERIFY(hw_run_frustum == nullptr);
+	hw_run_frustum = F;
+	hw_run_site = hw_run_site_sun;
+	hw_run_cascade = cascade;
+	hw_run_tested = hw_run_kept = hw_run_runs = hw_run_max = 0;
+	hw_run_dropped = hw_run_draws = 0;
+}
+
+void CDetailManager::hw_Run_Begin_Scope(Fmatrix& full_xform)
+{
+	if (!hw_instancing || !ps_r__svp_grass_cull)
+		return;
+	VERIFY(hw_run_frustum == nullptr);
+	// lateral planes and a far plane, no near plane, same build the scope world cull uses
+	hw_run_frustum_own.CreateFromMatrix(full_xform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
+	hw_run_frustum = &hw_run_frustum_own;
+	hw_run_site = hw_run_site_svp;
+	hw_run_cascade = 0;
+	hw_run_tested = hw_run_kept = hw_run_runs = hw_run_max = 0;
+	hw_run_dropped = hw_run_draws = 0;
+}
+
+void CDetailManager::hw_Run_End()
+{
+	if (!hw_run_frustum)
+		return;
+	// the token arms on every cascade, only a walked site has numbers to publish
+	const u32 site = hw_run_site;
+	const bool sun = (site == hw_run_site_sun) && (ps_r__sun_grass_runs || ps_r__sun_grass_cull);
+	const bool svp = (site == hw_run_site_svp) && ps_r__svp_grass_cull;
+	hw_run_frustum = nullptr;
+	hw_run_site = hw_run_site_none;
+
+	if (svp && hw_run_dropped)
+		svp_ledger_grass_cull = 1;
+
+	if (ps_r__svp_stats && svp)
+	{
+		svp_stats_grass_svp_slots += hw_run_tested;
+		svp_stats_grass_svp_keep += hw_run_kept;
+		svp_stats_grass_svp_runs += hw_run_runs;
+		svp_stats_grass_svp_drop += hw_run_dropped;
+		svp_stats_grass_svp_draws += hw_run_draws;
+		if (hw_run_max > svp_stats_grass_svp_run_max)
+			svp_stats_grass_svp_run_max = hw_run_max;
+	}
+
+	if (!sun)
+		return;
+
+	if (ps_r__svp_stats)
+	{
+		svp_stats_grass_slots += hw_run_tested;
+		svp_stats_grass_keep += hw_run_kept;
+		svp_stats_grass_runs += hw_run_runs;
+		svp_stats_grass_drop += hw_run_dropped;
+		svp_stats_grass_draws += hw_run_draws;
+		if (hw_run_max > svp_stats_grass_run_max)
+			svp_stats_grass_run_max = hw_run_max;
+	}
+
+	if (ps_r__sun_grass_runs && (Device.dwFrame & 255) == 0)
+		Msg("[SUN-RUNS] c%u slots %u keep %u runs %u max %u drop %u draws %u",
+		    hw_run_cascade, hw_run_tested, hw_run_kept, hw_run_runs, hw_run_max,
+		    hw_run_dropped, hw_run_draws);
+}
+#endif
+
+void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave, const Fvector4& wind,
 									const Fvector4& prev_wave, const Fvector4& prev_wind, u32 var_id, u32 lod_id, light* L)
 {
 	if (RImplementation.phase == CRender::PHASE_SMAP && var_id == 0)
@@ -173,7 +446,214 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 	if (ps_ssfx_grass_interactive.x > 0)
 		player_pos.set(Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, -1);
 
-	Device.Statistic->RenderDUMP_DT_Count = 0;
+#ifdef USE_DX11
+	if (hw_instancing)
+	{
+		// the outdoor sector test the batched loop makes for every instance
+		const bool outdoor_visible = RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector)
+			&& !(RImplementation.phase == CRender::PHASE_SMAP && L && !L->GMLight.is_sector_visible(RImplementation.pOutdoorSector));
+
+		static shared_str strFadeParams("dt_fade_params");
+		static shared_str strInstBase("dt_instance_base");
+
+		const u32 nObj = (u32)objects.size();
+		const u32 rbase = var_id * nObj;
+
+		u32 total = 0;
+		for (u32 obj = 0; outdoor_visible && obj < nObj; obj++)
+			total += hw_inst_count[rbase + obj];
+
+		// Every instance of a slot shares the slot centre and distance, so the batched loop's per
+		// instance tests and fade are made once per slot here, with the same values: the light range
+		// in a shadow pass and the shadow fade. The armed bracket adds a slot sphere cull against the
+		// scope cone (scope gbuffer pass) or the cascade frustum (sun cascades, the still set casts
+		// no cascade shadow so it never reaches here in a shadow pass).
+		const bool sun_site = hw_run_frustum && hw_run_site == hw_run_site_sun && var_id != 0;
+		const bool svp_site = hw_run_frustum && hw_run_site == hw_run_site_svp;
+		const bool cull = (sun_site && ps_r__sun_grass_cull) || (svp_site && ps_r__svp_grass_cull);
+		const bool walk = cull || (sun_site && ps_r__sun_grass_runs);
+		const bool light_range = RImplementation.phase == CRender::PHASE_SMAP && L;
+		// the walk counters describe the slot classification, so only the first shader pass counts
+		u32 walk_run = 0;
+		bool walk_count = false;
+		auto slot_scale = [&](const SlotRange& slot) -> float
+		{
+			if (walk)
+			{
+				Fvector c = slot.center;
+				const bool inside = hw_run_frustum->testSphere_dirty(c, slot.radius);
+				if (walk_count)
+				{
+					++hw_run_tested;
+					if (inside)
+					{
+						++hw_run_kept;
+						if (++walk_run == 1)
+							++hw_run_runs;
+						if (walk_run > hw_run_max)
+							hw_run_max = walk_run;
+					}
+					else
+						walk_run = 0;
+				}
+				if (!inside && cull)
+				{
+					if (walk_count)
+						hw_run_dropped += slot.inst_count; // frustum rejects only, not fade or light range
+					return 0.f;
+				}
+			}
+			if (light_range && L->position.distance_to_sqr(slot.center) >= _sqr(L->range))
+				return 0.f;
+			float scale = 1.f;
+			if (fade_distance <= -1)
+				scale *= 1.0f - slot.center.distance_to_xz_sqr(light_position) * 0.005f;
+			else if (slot.distance > fade_distance)
+				scale *= 1.0f - abs(slot.distance - fade_distance) * 0.005f;
+			return scale;
+		};
+
+		// the cascade grass draw prefers the depth only shadow element when the grass shaders carry
+		// one, both resolutions must agree or the pass counts diverge
+		const bool smap_element = sun_site && ps_r__grass_smap_element;
+		auto pick_element = [&](u32 O) -> ShaderElement*
+		{
+			Shader* S = objects[O]->shader._get();
+			if (!S)
+				return nullptr;
+			if (smap_element)
+			{
+				if (ShaderElement* Esm = S->E[2]._get())
+					return Esm;
+			}
+			return S->E[lod_id]._get();
+		};
+
+		u32 maxPasses = total ? 1 : 0;
+		for (u32 O = 0; total && O < nObj; O++)
+		{
+			if (!hw_inst_count[rbase + O])
+				continue;
+			ShaderElement* E = pick_element(O);
+			if (E)
+				maxPasses = _max(maxPasses, (u32)E->passes.size());
+		}
+
+		for (u32 iPass = 0; iPass < maxPasses; ++iPass)
+		{
+			// group consecutive objects that share an element so the binds do not repeat
+			ShaderElement* curE = 0;
+			u32 vOffset = 0;
+			u32 iOffset = 0;
+			for (u32 O = 0; O < nObj; O++)
+			{
+				CDetail& Object = *objects[O];
+				u32 count = hw_inst_count[rbase + O];
+				ShaderElement* E = pick_element(O);
+				if (count && E && iPass < E->passes.size())
+				{
+					if (E != curE)
+					{
+						curE = E;
+						RCache.set_Element(E, iPass);
+						// set_Element can disturb the vs resource slots, re-bind the record buffer
+						SRVSManager.SetVSResource(DETAIL_INSTANCE_SRV_SLOT, hw_instanceSRV);
+						RImplementation.apply_lmaterial();
+
+						RCache.set_c(strConsts, consts);
+						RCache.set_c(strWave, wave);
+						RCache.set_c(strDir2D, wind);
+						RCache.set_c(strXForm, Device.mFullTransform);
+						RCache.set_c(strGrassAlign, ps_ssfx_terrain_grass_align);
+						RCache.set_c(strWavePrev, prev_wave);
+						RCache.set_c(strDir2DPrev, prev_wind);
+
+						if (ps_ssfx_grass_interactive.y > 0)
+						{
+							RCache.set_c(strGrassSetup, ps_ssfx_int_grass_params_1);
+
+							Fvector4* c_grass;
+							{
+								void* GrassData;
+								RCache.get_ConstantDirect(strPos, BendersQty * sizeof(Fvector4) * 2, &GrassData, 0, 0);
+								c_grass = (Fvector4*)GrassData;
+							}
+							if (c_grass)
+							{
+								c_grass[0].set(player_pos);
+								c_grass[16].set(0.0f, -99.0f, 0.0f, 1.0f);
+
+								for (int Bend = 1; Bend < BendersQty; Bend++)
+								{
+									c_grass[Bend].set(GData.pos[Bend].x, GData.pos[Bend].y, GData.pos[Bend].z, GData.radius_curr[Bend]);
+									c_grass[Bend + 16].set(GData.dir[Bend].x, GData.dir[Bend].y, GData.dir[Bend].z, GData.str[Bend]);
+								}
+							}
+
+							Fvector4* c_prev_grass;
+							{
+								void* prev_GrassData;
+								RCache.get_ConstantDirect(strPrevPos, BendersQty * sizeof(Fvector4) * 2, &prev_GrassData, 0, 0);
+								c_prev_grass = (Fvector4*)prev_GrassData;
+							}
+							if (c_prev_grass)
+							{
+								for (int Bend = 0; Bend < BendersQty; Bend++)
+								{
+									c_prev_grass[Bend].set(GData.prev_pos[Bend]);
+									c_prev_grass[Bend + 16].set(GData.prev_dir[Bend]);
+								}
+							}
+						}
+					}
+
+					// SV_InstanceID restarts at zero every draw, so the range start travels as a constant,
+					// with the draw's fade (x = 3: a constant scale around each blade's pivot). Unfaded
+					// slots in a row go out as one draw, a fading slot by itself.
+					auto draw = [&](u32 first, u32 n, float scale)
+					{
+						RCache.set_c(strInstBase, float(first), 0.f, 0.f, 0.f);
+						RCache.set_c(strFadeParams, 3.f, scale, 0.f, 0.f);
+						RCache.RenderInstanced(D3DPT_TRIANGLELIST, n, vOffset, 0, Object.number_vertices, iOffset,
+						                       Object.number_indices / 3);
+						Device.Statistic->RenderDUMP_DT_Count += n;
+						RCache.stat.r.s_details.add(n * Object.number_vertices);
+						if (cull && walk_count)
+							++hw_run_draws;
+					};
+					const u32 first = hw_slot_base[rbase + O];
+					const u32 last = first + hw_slot_count[rbase + O];
+					u32 run_base = 0, run_count = 0;
+					walk_run = 0;
+					walk_count = (iPass == 0);
+					for (u32 s = first; s < last; s++)
+					{
+						const SlotRange& slot = hw_slot_ranges[s];
+						const float scale = slot_scale(slot);
+						if (scale >= 1.f)
+						{
+							if (!run_count)
+								run_base = slot.inst_first;
+							run_count += slot.inst_count;
+							continue;
+						}
+						if (run_count)
+							draw(run_base, run_count, 1.f);
+						run_count = 0;
+						if (scale > 0.f)
+							draw(slot.inst_first, slot.inst_count, scale);
+					}
+					if (run_count)
+						draw(run_base, run_count, 1.f);
+				}
+				vOffset += hw_BatchSize * Object.number_vertices;
+				iOffset += hw_BatchSize * Object.number_indices;
+			}
+		}
+	}
+	else
+#endif
+		Device.Statistic->RenderDUMP_DT_Count = 0;
 
 	// Matrices and offsets
 	u32 vOffset = 0;
@@ -188,8 +668,6 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 	c_ambient.set(desc.ambient.x, desc.ambient.y, desc.ambient.z);
 	c_hemi.set(desc.hemi_color.x, desc.hemi_color.y, desc.hemi_color.z);
 
-	// pip grass cull, only armed on the SVP gbuffer pass, the main pass pays one bool
-	const bool svp_grass_cull = ps_r__svp_cull_grass && CDSGraphManager::svp_cull_active();
 	// pip the main-pass drain keeps the visible set when the SVP pass draws the scope grass second
 	extern bool g_svp_defer_detail_clear;
 
@@ -198,6 +676,17 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 	{
 		CDetail& Object = *objects[O];
 		xr_vector<SlotItemVec*>& vis = list[O];
+#ifdef USE_DX11
+		// with instancing requested only the objects whose shaders draw batched come here
+		if (!hw_obj_path.empty() && hw_obj_path[O] != hw_path_batched)
+		{
+			if (!vis.empty())
+				vis.clear_not_free();
+			vOffset += hw_BatchSize * Object.number_vertices;
+			iOffset += hw_BatchSize * Object.number_indices;
+			continue;
+		}
+#endif
 		if (!vis.empty())
 		{
 			for (u32 iPass = 0; iPass < Object.shader->E[lod_id]->passes.size(); ++iPass)
@@ -297,13 +786,6 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 					{
 						SlotItem& Instance = **_iI;
 
-						if (svp_grass_cull && CDSGraphManager::svp_cull_reject_sphere(Instance.position, dm_slot_size))
-						{
-							if (ps_r__svp_stats) ++svp_stats_grass_cull_reject; // overlay proof the grass cone cull fired
-							if (!svp_ledger_grass_cull_reject) svp_ledger_grass_cull_reject = 1;
-							continue;
-						}
-
 						if (!RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector))
 							continue;
 
@@ -333,7 +815,11 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 							break;
 
 						// Build matrix ( 3x4 matrix, last row - color )
-						Fmatrix& M = Instance.mRotY_calculated;
+						Fmatrix M = Instance.mRotY;
+						const float sc = Instance.scale_calculated;
+						M._11 *= sc; M._21 *= sc; M._31 *= sc;
+						M._12 *= sc; M._22 *= sc; M._32 *= sc;
+						M._13 *= sc; M._23 *= sc; M._33 *= sc;
 						c_storage[base + 0].set(M._11 * scale, M._21 * scale, M._31 * scale, M._41);
 						c_storage[base + 1].set(M._12 * scale, M._22 * scale, M._32 * scale, M._42);
 						c_storage[base + 2].set(M._13 * scale, M._23 * scale, M._33 * scale, M._43);

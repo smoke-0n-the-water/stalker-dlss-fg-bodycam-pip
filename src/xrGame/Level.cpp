@@ -41,6 +41,7 @@
 #include "xrEngine/XR_IOConsole.h"
 #include "actor.h"
 #include "player_hud.h"
+#include "first_person_transform.h"
 #include "UI/UIGameTutorial.h"
 #include "file_transfer.h"
 #include "message_filter.h"
@@ -294,6 +295,7 @@ CLevel::~CLevel()
 {
     PROF_EVENT("CLevel::~CLevel");
     //crash_saving::save_impl = nullptr; // CLevel not available, disable crash save
+    FirstPerson::Reset();
     xr_delete(g_player_hud);
     delete_data(m_script_attachments);
     delete_data(hud_zones_list);

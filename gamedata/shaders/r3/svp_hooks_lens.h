@@ -12,4 +12,15 @@ bool svp_lens_flat_window_cull()
 	return RETICLE_TYPE == RT_FLAT_SCREEN && shader_scope_params.w < -1.5;
 }
 
+float svp_lens_ads_reflection_visibility()
+{
+	if (shader_scope_params.w >= -1.5)
+		return 1.0;
+
+	if (svp_scope_alignment.z <= 0.5 || svp_lens_deadzone.z <= 0.5)
+		return 0.0;
+
+	return saturate(svp_lens_deadzone.w);
+}
+
 #endif

@@ -474,7 +474,7 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
 #elif defined(USE_DX10)
     sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 #endif
-    sd.BufferCount = 2;
+    sd.BufferCount = clampr(ps_r__swapchain_buffers, 2, 3); // flip-discard requires >= 2
 
     // Multisample
 	sd.SampleDesc.Count = 1;
@@ -587,6 +587,14 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
 
     _RELEASE(device);
     _RELEASE(context);
+
+    if (ps_r__max_frame_latency > 0) {
+        IDXGIDevice1* dxgi_device1 = nullptr;
+        if (SUCCEEDED(pDevice->QueryInterface(&dxgi_device1)) && dxgi_device1) {
+            dxgi_device1->SetMaximumFrameLatency((UINT)ps_r__max_frame_latency);
+            _RELEASE(dxgi_device1);
+        }
+    }
 
     // create swapchain
     R_CHK(m_pFactory->CreateSwapChainForHwnd(pDevice, m_hWnd, &sd, &sd_fullscreen, NULL, &m_pSwapChain));

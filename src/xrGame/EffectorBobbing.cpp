@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "EffectorBobbing.h"
+#include "bodycam_settings.h"
 
 
 #include "actor.h"
@@ -49,6 +50,9 @@ void CEffectorBobbing::SetState(u32 mstate, bool limping, bool ZoomMode)
 extern float g_head_bob_factor;
 BOOL CEffectorBobbing::ProcessCam(SCamEffectorInfo& info)
 {
+    if(Bodycam::ReferenceActive()||(Bodycam::ClassicActive()&&Bodycam::FootstepCameraEnabled())){
+        fReminderFactor=0;return TRUE; // The Reference camera or the Classic footstep camera owns locomotion bob.
+    }
 	fTime += Device.fTimeDelta;
 	if (dwMState & ACTOR_DEFS::mcAnyMove)
 	{

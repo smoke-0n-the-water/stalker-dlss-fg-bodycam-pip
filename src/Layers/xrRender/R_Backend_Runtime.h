@@ -179,7 +179,13 @@ IC void CBackend::set_Element(ShaderElement* S, u32 pass)
         return;
 	SPass& P = *(S->passes[pass]);
 	set_States(P.state);
-	set_PS(P.ps);
+#if defined(USE_DX10) || defined(USE_DX11)
+	// the shadow raster writes no colour so the shared return zero shader can go away entirely
+	if (m_smap_null_ps && P.ps && P.ps->cName.equal(m_smap_null_ps_name))
+		set_PS((ID3DPixelShader*)nullptr, "dumb");
+	else
+#endif
+		set_PS(P.ps);
 	set_VS(P.vs);
 #if defined(USE_DX10) || defined(USE_DX11)
 	set_GS(P.gs);

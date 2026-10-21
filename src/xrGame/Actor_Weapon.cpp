@@ -271,6 +271,13 @@ void CActor::HitSector(CObject* who, CObject* weapon)
 
 void CActor::on_weapon_shot_start(CWeapon* weapon)
 {
+	if (IsFocused() && inventory().ActiveItem() == weapon && g_player_hud &&
+		g_player_hud->ReferenceFire(true, weapon->IsZoomed(), weapon))
+	{
+		Cameras().RemoveCamEffector(eCEShot);
+		return;
+	}
+
 	//CWeaponMagazined* pWM = smart_cast<CWeaponMagazined*> (weapon);
 	CameraRecoil const& camera_recoil = (IsZoomAimingMode()) ? weapon->zoom_cam_recoil : weapon->cam_recoil;
 
@@ -296,7 +303,11 @@ void CActor::on_weapon_shot_start(CWeapon* weapon)
 	effector->SetRndSeed(GetShotRndSeed());
 	effector->SetActor(this);
 	effector->Shot(weapon);
-	cam_BodycamAddFireImpulse(1.f);
+	// Classic recoil moves the gun and shares the kick with the fire impulse;
+	// the shot effector above keeps the aim recoil.
+	const bool classic_recoil = IsFocused() && inventory().ActiveItem() == weapon && g_player_hud &&
+		g_player_hud->ClassicRecoilFire(true, weapon->IsZoomed(), weapon);
+	cam_BodycamNotifyShot(classic_recoil);
 }
 
 void CActor::on_weapon_shot_update()
@@ -310,11 +321,25 @@ void CActor::on_weapon_shot_update()
 
 void CActor::on_weapon_shot_remove(CWeapon* weapon)
 {
+	if (IsFocused() && g_player_hud)
+	{
+		g_player_hud->ReferenceFire(false, false, weapon, true);
+		g_player_hud->ClassicRecoilFire(false, false, weapon);
+	}
 	Cameras().RemoveCamEffector(eCEShot);
 }
 
-void CActor::on_weapon_shot_stop()
+void CActor::on_weapon_shot_stop(CWeapon* weapon)
 {
+	const bool cancelled = weapon && (weapon->GetState() == CWeapon::eReload ||
+		weapon->GetState() == CWeapon::eHiding || weapon->GetState() == CWeapon::eHidden);
+	if (IsFocused() && g_player_hud)
+	{
+		if (g_player_hud->ReferenceFire(false, false, weapon, cancelled))
+			return;
+		g_player_hud->ClassicRecoilFire(false, false, weapon);
+	}
+
 	CCameraShotEffector* effector = smart_cast<CCameraShotEffector*>(Cameras().GetCamEffector(eCEShot));
 	if (effector && effector->IsActive())
 	{
@@ -324,6 +349,11 @@ void CActor::on_weapon_shot_stop()
 
 void CActor::on_weapon_hide(CWeapon* weapon)
 {
+	if (IsFocused() && g_player_hud)
+	{
+		g_player_hud->ReferenceFire(false, false, weapon, true);
+		g_player_hud->ClassicRecoilFire(false, false, weapon);
+	}
 	CCameraShotEffector* effector = smart_cast<CCameraShotEffector*>(Cameras().GetCamEffector(eCEShot));
 	if (effector && effector->IsActive())
 		effector->Reset();

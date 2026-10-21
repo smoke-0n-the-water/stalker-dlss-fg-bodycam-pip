@@ -6,13 +6,18 @@ local binding_by_name = {}
 local preset_file = "bodycam_user.ltx"
 local preset_index_section = "bodycam_presets"
 local preset_section_prefix = "bodycam_preset_"
-local legacy_custom_section = "bodycam_imgui_custom"
+local max_user_presets = 64
+local max_preset_name_length = 48
+local preset_name_buffer_size = 64
 local preset_save_delay_ms = 500
+local preset_apply_guard_ms = 50
 local preset_save_due_time
+local preset_apply_guard_until = 0
 local preset_ini
 local user_presets
-local selected_preset = { kind = "modified", id = "modified", name = "Modified" }
-local initial_preset_detected = false
+local preset_auto_update = false
+local modified_preset = { kind = "modified", id = "modified", name = "Modified" }
+local selected_preset = modified_preset
 local preset_message
 local preset_dialog_name = ""
 local preset_dialog_message
@@ -21,13 +26,17 @@ local rename_preset_id
 local delete_preset_id
 local selected_feature = 1
 
+-- Preset ids of bodycam.apply_preset.
+local engine_preset_disabled = 0
+local engine_preset_balanced = 1
+local engine_preset_default = 2
+
 local red_orchestra_camera = {
     hip_camera_deadzone_yaw = 8,
     hip_camera_deadzone_pitch = 6,
     hip_camera_follow_speed = 0.1,
     hip_camera_max_yaw_offset = 8,
     hip_camera_max_pitch_offset = 6,
-    hip_camera_roll_scale = 0.6,
     hip_camera_inner_zone_response = 1,
     hip_camera_follow_damping = 3,
     hip_camera_soft_follow_yaw = 0,
@@ -42,9 +51,7 @@ local red_orchestra_camera = {
     ads_camera_follow_damping = 1,
     ads_camera_soft_follow_yaw = 1.8,
     ads_camera_soft_follow_pitch = 1.2,
-    ads_camera_roll_scale = 0.6,
     ads_camera_position_scale = 0.006,
-    movement_camera_roll_scale = 3,
     movement_camera_position_scale = 0.020,
 }
 
@@ -54,16 +61,15 @@ for name, value in pairs(red_orchestra_camera) do
 end
 red_orchestra_ads_camera.hip_camera_max_yaw_offset = 0
 red_orchestra_ads_camera.hip_camera_max_pitch_offset = 0
-red_orchestra_ads_camera.hip_camera_roll_scale = 0
 
 local builtin_presets = {
-    { id = "default", name = "Default", engine_preset = 2 },
-    { id = "balanced", name = "Balanced", engine_preset = 1 },
-    { id = "disabled", name = "Disable", engine_preset = 0 },
+    { id = "default", name = "Default", engine_preset = engine_preset_default },
+    { id = "balanced", name = "Balanced", engine_preset = engine_preset_balanced },
+    { id = "disabled", name = "Disabled", engine_preset = engine_preset_disabled },
     {
         id = "no_ads",
         name = "No ADS",
-        engine_preset = 2,
+        engine_preset = engine_preset_default,
         values = {
             ads_camera_max_yaw_offset = 90,
             ads_camera_max_pitch_offset = 90,
@@ -72,111 +78,118 @@ local builtin_presets = {
     {
         id = "red_orchestra",
         name = "Red Orchestra",
-        engine_preset = 2,
+        engine_preset = engine_preset_default,
         values = red_orchestra_camera,
     },
     {
         id = "red_orchestra_ads",
         name = "Red Orchestra (ADS only)",
-        engine_preset = 2,
+        engine_preset = engine_preset_default,
         values = red_orchestra_ads_camera,
     },
 }
 
 local feature_tabs = {
     {
+        name = "Weapon Handling",
+        sections = {
+            { name = "Classic Features", settings = {
+                { "directional_weapon_inertia_enable", "Mouse-driven arm settling" },
+                { "movement_linked_handling_enable", "Movement-linked handling" },
+            } },
+        },
+    },
+    {
         name = "Camera Decoupling",
         toggle = { "camera_decoupling_enable", "Enabled" },
+        lag_model = true,
         sections = {
             {
                 name = "Hip-fire Response",
+                lag_model = "deadzone",
                 settings = {
-                    { "hip_camera_deadzone_yaw", "Horizontal Deadzone" },
-                    { "hip_camera_deadzone_pitch", "Vertical Deadzone" },
                     { "hip_camera_follow_speed", "Follow Speed" },
+                    { "hip_camera_follow_damping", "Follow Damping" },
                     { "hip_camera_max_yaw_offset", "Maximum Horizontal Offset" },
                     { "hip_camera_max_pitch_offset", "Maximum Vertical Offset" },
-                    { "hip_camera_roll_scale", "Roll Strength" },
-                },
-            },
-            {
-                name = "Hip-fire Fine Tuning",
-                settings = {
-                    { "hip_camera_inner_zone_response", "Inner-zone Response" },
-                    { "hip_camera_follow_damping", "Follow Damping" },
-                    { "hip_camera_soft_follow_yaw", "Horizontal Soft Zone" },
-                    { "hip_camera_soft_follow_pitch", "Vertical Soft Zone" },
                     { "hip_camera_position_scale", "Position Shift" },
                 },
             },
             {
+                name = "Hip-fire Fine Tuning",
+                lag_model = "deadzone",
+                settings = {
+                    { "hip_camera_deadzone_yaw", "Horizontal Deadzone" },
+                    { "hip_camera_deadzone_pitch", "Vertical Deadzone" },
+                    { "hip_camera_soft_follow_yaw", "Horizontal Soft Zone" },
+                    { "hip_camera_soft_follow_pitch", "Vertical Soft Zone" },
+                    { "hip_camera_inner_zone_response", "Inner-zone Response" },
+                },
+            },
+            {
                 name = "ADS Response",
+                lag_model = "deadzone",
+                settings = {
+                    { "ads_camera_follow_speed", "Follow Speed" },
+                    { "ads_camera_follow_damping", "Follow Damping" },
+                    { "ads_camera_max_yaw_offset", "Maximum Horizontal Offset" },
+                    { "ads_camera_max_pitch_offset", "Maximum Vertical Offset" },
+                    { "ads_camera_position_scale", "Position Shift" },
+                },
+            },
+            {
+                name = "ADS Fine Tuning",
+                lag_model = "deadzone",
                 settings = {
                     { "ads_camera_deadzone_yaw", "Horizontal Deadzone" },
                     { "ads_camera_deadzone_pitch", "Vertical Deadzone" },
-                    { "ads_camera_follow_speed", "Follow Speed" },
+                    { "ads_camera_soft_follow_yaw", "Horizontal Soft Zone" },
+                    { "ads_camera_soft_follow_pitch", "Vertical Soft Zone" },
+                    { "ads_camera_inner_zone_response", "Inner-zone Response" },
+                },
+            },
+            {
+                name = "Follow Lag",
+                lag_model = "follow",
+                settings = {
+                    { "camera_follow_lag_speed_min", "Slowest Lag Speed" },
+                    { "camera_follow_lag_speed_max", "Fastest Lag Speed" },
+                    { "camera_follow_lag_response", "Lag Speed Response" },
+                    { "camera_follow_aim_smoothing", "Aim Smoothing" },
+                },
+            },
+            {
+                name = "Hip-fire Shift",
+                lag_model = "follow",
+                settings = {
+                    { "hip_camera_position_scale", "Position Shift" },
+                    { "hip_camera_follow_speed", "Shift Follow Speed" },
+                    { "hip_camera_max_yaw_offset", "Maximum Horizontal Offset" },
+                    { "hip_camera_max_pitch_offset", "Maximum Vertical Offset" },
+                },
+            },
+            {
+                name = "ADS Shift",
+                lag_model = "follow",
+                settings = {
+                    { "ads_camera_position_scale", "Position Shift" },
+                    { "ads_camera_follow_speed", "Shift Follow Speed" },
                     { "ads_camera_max_yaw_offset", "Maximum Horizontal Offset" },
                     { "ads_camera_max_pitch_offset", "Maximum Vertical Offset" },
                 },
             },
             {
-                name = "ADS Fine Tuning",
+                name = "Head Motion",
                 settings = {
-                    { "ads_camera_inner_zone_response", "Inner-zone Response" },
-                    { "ads_camera_follow_damping", "Follow Damping" },
-                    { "ads_camera_soft_follow_yaw", "Horizontal Soft Zone" },
-                    { "ads_camera_soft_follow_pitch", "Vertical Soft Zone" },
-                    { "ads_camera_roll_scale", "Roll Strength" },
-                    { "ads_camera_position_scale", "Position Shift" },
+                    { "camera_reference_roll", "Roll Strength" },
+                    { "camera_reference_shake", "Camera Shake Strength" },
                 },
             },
             {
                 name = "Movement Response",
                 settings = {
-                    { "movement_camera_roll_scale", "Movement Roll" },
                     { "movement_camera_position_scale", "Movement Position Shift" },
-                },
-            },
-        },
-    },
-    {
-        name = "Viewmodel Spring",
-        toggle = { "vm_spring_enable", "Enabled" },
-        sections = {
-            {
-                name = "Response",
-                settings = {
-                    { "vm_mouse_position_scale", "Mouse Position Response" },
-                    { "vm_mouse_rotation_scale", "Mouse Rotation Response" },
-                    { "vm_spring_speed", "Follow and Return Speed" },
-                },
-            },
-            {
-                name = "Limits and Filtering",
-                settings = {
-                    { "vm_spring_damping", "Spring Damping" },
-                    { "vm_max_position_offset", "Maximum Position Offset" },
-                    { "vm_max_rotation_offset", "Maximum Rotation Offset" },
-                    { "vm_mouse_smoothing_speed", "Mouse Input Smoothing" },
-                    { "vm_movement_smoothing_speed", "Movement Input Smoothing" },
-                },
-            },
-            {
-                name = "ADS Behavior",
-                settings = {
-                    { "vm_ads_mouse_scale", "Mouse Response Scale" },
-                    { "vm_ads_impulse_scale", "Impulse Scale" },
-                    { "vm_ads_sight_anchor_strength", "Sight Anchor Strength" },
-                    { "vm_ads_anchor_position_scale", "Anchor Position Limit" },
-                    { "vm_ads_anchor_rotation_scale", "Anchor Rotation Limit" },
-                },
-            },
-            {
-                name = "Event Impulses",
-                settings = {
-                    { "ads_transition_impulse", "ADS Transition" },
-                    { "landing_impulse", "Landing" },
-                    { "mouse_flick_impulse", "Mouse Flick" },
+                    { "movement_smoothing_speed", "Movement Input Smoothing" },
                 },
             },
         },
@@ -235,7 +248,7 @@ local feature_tabs = {
                     { "movement_deceleration_time", "Deceleration Time" },
                     { "movement_turn_response", "Direction Change Weight" },
                     { "movement_stop_response", "Stopping Response" },
-                    { "movement_sprint_speed_scale", "Sprint Speed Scale" },
+                    { "movement_sprint_speed_scale", "Sprint Acceleration Scale" },
                 },
             },
         },
@@ -247,64 +260,9 @@ local feature_tabs = {
             {
                 name = "Transition",
                 settings = {
-                    { "sprint_transition_vm_blend_scale", "Transition Strength" },
-                    { "sprint_transition_blend_smoothing", "Transition Smoothing" },
-                    { "sprint_transition_start_stop_impulse_scale", "Start and Stop Weight" },
-                },
-            },
-            {
-                name = "Procedural Bridge",
-                settings = {
-                    { "sprint_transition_vm_pitch", "Pitch" },
-                    { "sprint_transition_vm_yaw", "Yaw" },
-                    { "sprint_transition_vm_roll", "Roll" },
-                    { "sprint_transition_vm_position", "Position Offset" },
-                    { "sprint_transition_animation_handoff_speed", "Animation Handoff Point" },
-                },
-            },
-            {
-                name = "Sprint Impulses",
-                settings = {
-                    { "sprint_transition_impulse", "Shared Transition Impulse" },
-                    { "sprint_start_impulse", "Start Impulse" },
-                    { "sprint_stop_impulse", "Stop Impulse" },
-                    { "sprint_impulse_ads_scale", "ADS Scale" },
-                    { "sprint_impulse_camera_scale", "Camera Scale" },
-                    { "sprint_impulse_fov_scale", "FOV Scale" },
-                    { "sprint_impulse_fov_return_speed", "FOV Return Speed" },
-                    { "sprint_impulse_motion_return_speed", "Motion Return Speed" },
-                },
-            },
-        },
-    },
-    {
-        name = "Bodycam Style Arm IK",
-        toggle = { "bodycam_style_arm_ik_enable", "Enabled" },
-        sections = {
-            {
-                name = "Response",
-                settings = {
-                    { "arm_compliance_strength", "Overall Strength" },
-                    { "arm_compliance_response", "Response Speed" },
-                    { "arm_compliance_ads_scale", "ADS Scale" },
-                },
-            },
-            {
-                name = "Mouse Response",
-                settings = {
-                    { "arm_compliance_mouse_pitch", "Pitch Response" },
-                    { "arm_compliance_mouse_yaw", "Yaw Response" },
-                    { "arm_compliance_mouse_roll", "Roll Response" },
-                    { "arm_compliance_secondary_roll", "Secondary Roll" },
-                },
-            },
-            {
-                name = "Arm Distribution",
-                settings = {
-                    { "arm_compliance_hand_scale", "Hand Share" },
-                    { "arm_compliance_upperarm_scale", "Upper-arm Share" },
-                    { "arm_compliance_forearm_scale", "Forearm Share" },
-                    { "arm_compliance_twist_scale", "Forearm Twist Share" },
+                    { "sprint_camera_sway_strength", "Sprint Camera Sway Strength" },
+                    { "sprint_camera_sway_smoothing", "Sprint Camera Sway Smoothing" },
+                    { "sprint_transition_gun_bob", "Gun Step Bob" },
                 },
             },
         },
@@ -325,6 +283,7 @@ local feature_tabs = {
                 settings = {
                     { "stalker2_arm_ik_mouse_strength", "Mouse Strength" },
                     { "stalker2_arm_ik_mouse_sensitivity", "Mouse Sensitivity" },
+                    { "mouse_smoothing_speed", "Mouse Input Smoothing" },
                     { "stalker2_arm_ik_mouse_pitch", "Pitch Response" },
                     { "stalker2_arm_ik_mouse_yaw", "Yaw Response" },
                     { "stalker2_arm_ik_mouse_roll", "Roll Response" },
@@ -353,22 +312,63 @@ local feature_tabs = {
         },
     },
     {
-        name = "Fire Impulses",
-        toggle = { "fire_impulse_enable", "Enabled" },
+        name = "Footstep Camera",
+        toggle = { "footstep_camera_enable", "Enabled" },
         sections = {
             {
-                name = "Weapon Kick",
+                name = "Step Motion",
                 settings = {
+                    { "footstep_camera_bob", "Step Bob Strength" },
+                    { "footstep_camera_posture", "Posture Strength" },
+                    { "footstep_camera_sprint_lunge", "Sprint Start Strength" },
+                    { "footstep_camera_ads", "ADS Scale" },
+                },
+            },
+        },
+    },
+    {
+        name = "Recoil",
+        sections = {
+            {
+                name = "Fire Impulse",
+                settings = {
+                    { "fire_impulse_enable", "Enabled" },
                     { "hip_fire_weapon_impulse", "Hip-fire Strength" },
                     { "ads_fire_weapon_impulse", "ADS Strength" },
+                    { "fire_impulse_ads_scale", "ADS Scale" },
+                    { "fire_impulse_follow_speed", "Follow and Return Speed" },
+                    { "fire_impulse_damping", "Spring Damping" },
+                    { "fire_impulse_decay_speed", "Decay Speed" },
+                    { "fire_impulse_max_position_offset", "Maximum Position Offset" },
+                    { "fire_impulse_max_rotation_offset", "Maximum Rotation Offset" },
+                    { "fire_impulse_kick_drop", "Kick Drop" },
+                    { "fire_impulse_kick_back", "Kick Back" },
+                    { "fire_impulse_kick_pitch", "Kick Pitch" },
+                    { "fire_impulse_kick_roll", "Kick Roll" },
                 },
             },
             {
-                name = "Shared Limits",
+                name = "Reference Recoil",
                 settings = {
-                    { "impulse_decay_speed", "Decay Speed" },
-                    { "impulse_max_position_offset", "Maximum Position Offset" },
-                    { "impulse_max_rotation_offset", "Maximum Rotation Offset" },
+                    { "classic_recoil_enable", "Enabled" },
+                    { "classic_recoil_hip_intensity", "Hip-fire Intensity" },
+                    { "classic_recoil_ads_intensity", "ADS Intensity" },
+                    { "classic_recoil_fire_impulse_share", "Fire Impulse Share" },
+                },
+            },
+        },
+    },
+    {
+        name = "Regrip",
+        toggle = { "classic_regrip_enable", "Enabled" },
+        sections = {
+            {
+                name = "Variations",
+                settings = {
+                    { "classic_regrip_1_intensity", "Variation 1 Intensity" },
+                    { "classic_regrip_2_intensity", "Variation 2 Intensity" },
+                    { "classic_regrip_3_intensity", "Variation 3 Intensity" },
+                    { "classic_regrip_4_intensity", "Variation 4 Intensity" },
                 },
             },
         },
@@ -379,239 +379,176 @@ local diagnostics_sections = {
     {
         name = "Layer Weights",
         settings = {
-            { "vm_spring_layer_weight", "Viewmodel Spring Weight" },
             { "vm_lowering_layer_weight", "Viewmodel Lowering Weight" },
-            { "arm_compliance_layer_weight", "Bodycam Arm IK Weight" },
+            { "stalker2_arm_ik_layer_weight", "STALKER 2 Arm IK Weight" },
         },
     },
-    {
-        name = "Debugging",
-        settings = {
-            { "impulse_debug_enable", "Impulse Debug Output" },
-        },
-    },
-}
-
-local assigned_names = {}
-for _, tab in ipairs(feature_tabs) do
-    if tab.toggle then
-        assigned_names[tab.toggle[1]] = true
-    end
-    for _, section in ipairs(tab.sections) do
-        for _, setting in ipairs(section.settings) do
-            assigned_names[setting[1]] = true
-        end
-    end
-end
-for _, section in ipairs(diagnostics_sections) do
-    for _, setting in ipairs(section.settings) do
-        assigned_names[setting[1]] = true
-    end
-end
-
-local word_names = {
-    ads = "ADS",
-    fov = "FOV",
-    ik = "IK",
-    vm = "Viewmodel",
-    stalker2 = "STALKER 2",
-    x = "X",
-    y = "Y",
-    z = "Z",
-    pos = "Position",
-    rot = "Rotation",
-    mult = "Scale",
 }
 
 local binding_descriptions = {
-    impulse_debug_enable = "Enables diagnostic impulse logging and visualization. Intended for development.",
-    vm_lowering_enable = "Enables dynamic viewmodel lowering while walking.",
-    bodycam_style_arm_ik_enable = "Enables the mouse-driven Bodycam Style arm compliance layer.",
-    stalker2_style_arm_ik_enable = "Enables the separate STALKER 2 Style wrist and authored-motion layer.",
-    movement_inertia_enable = "Enables percentage-based actor acceleration, deceleration, and stopping response.",
-    movement_inertia_disable_ads = "Disables Bodycam movement inertia while aiming down sights.",
-    sprint_transition_enable = "Enables procedural sprint acceleration, camera weight, viewmodel bridging, and start/stop response.",
-    fire_impulse_enable = "Enables Bodycam's additive viewmodel kick when a weapon fires.",
-    vm_lowering_disable_in_combat = "Suppresses dynamic viewmodel lowering during recent combat activity.",
-    stalker2_arm_ik_wrist_scale = "Amount of STALKER 2 Style output assigned to wrist motion.",
-    vm_spring_layer_weight = "Final blend weight of the complete viewmodel spring layer.",
-    vm_lowering_layer_weight = "Final blend weight of the complete viewmodel lowering layer.",
-    arm_compliance_layer_weight = "Final blend weight of the Bodycam Style arm compliance layer.",
-    camera_decoupling_enable = "Lets the weapon and aim lead while the camera follows through configurable deadzones.",
-    vm_spring_enable = "Enables mouse-driven procedural viewmodel spring motion.",
-    stalker2_arm_ik_movement_strength = "Strength of movement-driven STALKER 2 Style wrist augmentation.",
-    stalker2_arm_ik_movement_response = "How quickly movement-driven wrist augmentation follows gait changes.",
-    stalker2_arm_ik_slow_walk_scale = "Multiplier applied to movement-driven wrist augmentation during slow walk.",
-    stalker2_arm_ik_mouse_pitch = "Pitch-axis shape and direction for mouse-driven wrist response.",
-    stalker2_arm_ik_mouse_yaw = "Yaw-axis shape and direction for mouse-driven wrist response.",
-    stalker2_arm_ik_mouse_roll = "Roll-axis shape and direction for mouse-driven wrist response.",
-    stalker2_arm_ik_ads_scale = "Multiplier for STALKER 2 Style wrist motion while aiming down sights.",
-    stalker2_arm_ik_mouse_strength = "Overall multiplier for mouse-driven STALKER 2 Style wrist motion.",
-    stalker2_arm_ik_mouse_sensitivity = "How quickly mouse motion reaches the configured wrist angle limits.",
-    stalker2_arm_ik_mouse_max_yaw = "Hard yaw-angle limit for mouse-driven wrist motion.",
-    stalker2_arm_ik_mouse_max_pitch = "Hard pitch-angle limit for mouse-driven wrist motion.",
-    stalker2_arm_ik_mouse_max_roll = "Hard roll-angle limit for mouse-driven wrist motion.",
-    arm_compliance_forearm_scale = "Share of Bodycam Style compliance applied to forearms.",
-    arm_compliance_twist_scale = "Share of Bodycam Style compliance applied to forearm twist bones.",
-    stalker2_arm_ik_strength = "Overall strength of the STALKER 2 Style wrist and arm layer.",
-    stalker2_arm_ik_response = "Primary response speed of the STALKER 2 Style wrist layer.",
-    stalker2_arm_ik_follow_response = "Response speed of the secondary authored-animation arm-follow layer.",
-    stalker2_arm_ik_follow_scale = "Strength of secondary arm motion derived from authored animation.",
-    arm_compliance_mouse_pitch = "Pitch response of Bodycam Style arm compliance to mouse movement.",
-    arm_compliance_mouse_yaw = "Yaw response of Bodycam Style arm compliance to mouse movement.",
-    arm_compliance_mouse_roll = "Roll response of Bodycam Style arm compliance to mouse movement.",
-    arm_compliance_secondary_roll = "Additional counter-roll distributed through the visible arm chain.",
-    arm_compliance_hand_scale = "Share of Bodycam Style compliance applied directly to HUD hand bones.",
-    arm_compliance_upperarm_scale = "Share of Bodycam Style compliance applied to upper arms.",
-    vm_lowering_fire_suppression_time = "Time lowering remains suppressed after firing.",
-    vm_lowering_ads_release_time = "Time lowering remains suppressed after leaving ADS.",
-    vm_lowering_combat_suppression_time = "Time lowering remains suppressed after combat activity.",
-    arm_compliance_strength = "Overall strength of Bodycam Style mouse-driven arm compliance.",
-    arm_compliance_response = "How quickly Bodycam Style arm compliance follows mouse motion.",
-    arm_compliance_ads_scale = "Multiplier for Bodycam Style arm compliance while aiming down sights.",
-    vm_safemode_lowering_y_offset = "Additional vertical lowering offset used by safe or holstered weapon states.",
-    vm_lowering_slow_walk_influence = "Fraction of the lowering pose applied during slow walk.",
-    vm_lowering_walk_influence = "Fraction of the lowering pose applied during normal walk.",
-    vm_lowering_movement_influence = "Overall movement contribution to dynamic weapon lowering.",
-    vm_lowering_enter_speed = "How quickly the viewmodel enters the lowered pose.",
-    vm_lowering_return_speed = "How quickly the viewmodel returns from the lowered pose.",
-    vm_lowering_pitch = "Viewmodel pitch applied by the weapon-lowering pose.",
-    vm_lowering_yaw = "Viewmodel yaw applied by the weapon-lowering pose.",
-    vm_lowering_roll = "Viewmodel roll applied by the weapon-lowering pose.",
-    vm_lowering_x = "Weapon-lowering position along the viewmodel X axis.",
-    vm_lowering_y = "Weapon-lowering position along the viewmodel Y axis.",
-    vm_lowering_z = "Weapon-lowering position along the viewmodel Z axis.",
-    mouse_flick_impulse = "Additional impulse generated by fast mouse movement.",
-    hip_fire_weapon_impulse = "Weapon impulse strength for firing from hip-fire.",
-    ads_fire_weapon_impulse = "Weapon impulse strength for firing while aiming down sights.",
-    impulse_decay_speed = "How quickly general procedural impulses lose energy.",
-    impulse_max_position_offset = "Hard positional displacement limit for accumulated impulses.",
-    impulse_max_rotation_offset = "Hard angular displacement limit for accumulated impulses.",
-    sprint_impulse_camera_scale = "Camera motion contribution from sprint start and stop impulses.",
-    sprint_impulse_fov_scale = "FOV pulse strength produced by sprint start and stop.",
-    sprint_impulse_fov_return_speed = "How quickly the temporary sprint FOV pulse returns to normal.",
-    sprint_impulse_motion_return_speed = "How quickly sprint start and stop motion impulses settle.",
-    ads_transition_impulse = "Impulse applied when entering or leaving ADS.",
-    landing_impulse = "Impulse strength generated when the actor lands.",
-    sprint_transition_vm_position = "Viewmodel positional offset used during the sprint transition bridge.",
-    sprint_transition_animation_handoff_speed = "Normalized sprint progress at which the authored sprint animation takes over.",
-    sprint_transition_impulse = "Legacy shared sprint transition impulse strength.",
-    sprint_start_impulse = "Motion impulse applied when sprint acceleration begins.",
-    sprint_stop_impulse = "Motion impulse applied when sprint deceleration finishes.",
-    sprint_impulse_ads_scale = "Multiplier for sprint-related impulses while aiming down sights.",
-    sprint_transition_vm_blend_scale = "Strength of the procedural bridge into the authored sprint pose.",
-    sprint_transition_blend_smoothing = "Smoothness of the procedural handoff into and out of sprint animation.",
-    sprint_transition_start_stop_impulse_scale = "Strength of weight accents when sprint starts or ends.",
-    sprint_transition_vm_pitch = "Viewmodel pitch used while bridging toward the sprint animation.",
-    sprint_transition_vm_yaw = "Viewmodel yaw used while bridging toward the sprint animation.",
-    sprint_transition_vm_roll = "Viewmodel roll used while bridging toward the sprint animation.",
-    vm_movement_smoothing_speed = "Response rate of the movement-driven viewmodel input filter.",
-    movement_acceleration_time = "Time required to reach the movement speed supplied by the game or movement mods.",
-    movement_deceleration_time = "Time required to slow to a stop after movement input ends.",
-    movement_turn_response = "How strongly velocity redirects when changing movement direction.",
-    movement_stop_response = "Weight and firmness of the procedural stopping response.",
-    movement_sprint_speed_scale = "Multiplier applied to the current game-defined sprint speed target.",
-    vm_ads_sight_anchor_strength = "Strength used to keep the sight picture aligned during procedural ADS motion.",
-    vm_ads_anchor_position_scale = "Maximum positional correction used by the ADS sight anchor.",
-    vm_ads_anchor_rotation_scale = "Maximum angular correction used by the ADS sight anchor.",
-    movement_camera_roll_scale = "Camera roll generated by actor movement and strafing.",
-    movement_camera_position_scale = "Camera positional shift generated by actor movement.",
-    vm_mouse_smoothing_speed = "Response rate of the mouse-driven viewmodel input filter.",
-    vm_mouse_position_scale = "Amount of viewmodel positional motion produced by mouse movement.",
-    vm_mouse_rotation_scale = "Amount of viewmodel rotation produced by mouse movement.",
-    vm_max_position_offset = "Hard limit for procedural viewmodel positional displacement.",
-    vm_max_rotation_offset = "Hard limit for procedural viewmodel angular displacement.",
-    vm_ads_mouse_scale = "Multiplier applied to mouse-driven viewmodel motion while aiming down sights.",
-    vm_ads_impulse_scale = "Multiplier applied to procedural viewmodel impulses while aiming down sights.",
-    ads_camera_max_yaw_offset = "Maximum horizontal separation between the ADS camera and sight direction.",
-    ads_camera_max_pitch_offset = "Maximum vertical separation between the ADS camera and sight direction.",
-    ads_camera_roll_scale = "Camera roll generated by horizontal ADS sight separation.",
-    ads_camera_position_scale = "Camera positional shift generated by ADS sight separation.",
-    vm_spring_speed = "How quickly viewmodel spring displacement follows and returns toward its target.",
-    vm_spring_damping = "Controls viewmodel spring overshoot. Higher values reduce oscillation.",
-    ads_camera_follow_speed = "How quickly the ADS camera catches up to the sight direction.",
-    ads_camera_follow_damping = "Controls overshoot in ADS camera following. Higher values settle more firmly.",
-    ads_camera_deadzone_yaw = "Horizontal sight travel allowed before the ADS camera starts following.",
-    ads_camera_deadzone_pitch = "Vertical sight travel allowed before the ADS camera starts following.",
-    ads_camera_soft_follow_yaw = "Horizontal transition width between the ADS deadzone and full following.",
-    ads_camera_soft_follow_pitch = "Vertical transition width between the ADS deadzone and full following.",
-    hip_camera_soft_follow_pitch = "Vertical transition width between the deadzone and full camera following.",
-    hip_camera_max_yaw_offset = "Maximum horizontal separation between the hip-fire camera and aim direction.",
-    hip_camera_max_pitch_offset = "Maximum vertical separation between the hip-fire camera and aim direction.",
-    hip_camera_roll_scale = "Camera roll generated by horizontal hip-fire aim separation.",
-    hip_camera_position_scale = "Camera positional shift generated by hip-fire aim separation.",
-    ads_camera_inner_zone_response = "Camera response to mouse input while ADS aim remains inside the deadzone.",
-    hip_camera_inner_zone_response = "Camera response to mouse input while hip-fire aim remains inside the deadzone.",
-    hip_camera_follow_speed = "How quickly the hip-fire camera catches up to the viewmodel direction.",
-    hip_camera_follow_damping = "Controls overshoot in hip-fire camera following. Higher values settle more firmly.",
-    hip_camera_deadzone_yaw = "Horizontal mouse travel allowed before the hip-fire camera starts following.",
-    hip_camera_deadzone_pitch = "Vertical mouse travel allowed before the hip-fire camera starts following.",
-    hip_camera_soft_follow_yaw = "Horizontal transition width between the deadzone and full camera following.",
+    camera_continuous_follow_enable = "Deadzone: the camera waits until the aim leaves the deadzone, then catches up. Reference follow: the camera follows the gun continuously with the Reference camera lag, in hip fire and ADS. The model also sets the scope eye with Bodycam scope effects: Deadzone eases the eye back to the centre of the scope; Reference follow shows the current eye.",
+    camera_follow_lag_speed_min = "Reference follow: camera lag speed while the aim moves slowly. Lower trails further behind slow turns.",
+    camera_follow_lag_speed_max = "Reference follow: camera lag speed while the aim moves fast. Lower trails further behind fast turns.",
+    camera_follow_lag_response = "Reference follow: speed at which the camera lag speed moves between its slowest and fastest value.",
+    camera_follow_aim_smoothing = "Reference follow: speed of the aim smoothing the camera follows. Higher follows the aim more directly.",
+    fire_impulse_kick_drop = "Distance the weapon drops per shot at full strength, in metres.",
+    fire_impulse_kick_back = "Distance the weapon comes back per shot at full strength, in metres.",
+    fire_impulse_kick_pitch = "Angle the weapon pitches up per shot at full strength, in degrees.",
+    fire_impulse_kick_roll = "Angle the weapon rolls away from the mouse movement per shot at full strength, in degrees.",
+    camera_reference_roll = "Strength of camera roll: about 5 degrees while strafing, up to 8 in fast turns, and a small lean when sprinting. The weapon rolls with the camera. 0 removes it; 1 matches Reference.",
+    camera_reference_shake = "Strength of camera shake from movement and mouse motion, both growing with speed. The weapon stays steady. 0 removes it; 1 matches Reference.",
+    footstep_camera_enable = "Moves the head with each step, timed to the footstep sounds. Replaces the game's head bobbing and the sprint camera sway. Weapon sway is unchanged.",
+    footstep_camera_bob = "Strength of the per-step head bob and sway. 0 removes it; 1 matches Reference.",
+    footstep_camera_posture = "Strength of the head posture while moving: lower when walking, lower and forward when sprinting. 0 removes it; 1 matches Reference.",
+    footstep_camera_sprint_lunge = "Strength of the head dive at the start of a sprint. Slower acceleration stretches it. 0 removes it; 1 matches Reference.",
+    footstep_camera_ads = "Footstep camera strength while aiming. 0 removes it in ADS; 1 keeps full strength.",
+    classic_recoil_enable = "Adds the Reference gun kick: the gun and both hands recoil together. Aim recoil and camera kick are unchanged. Fire Impulses stay on, scaled by Share with Reference recoil.",
+    classic_recoil_hip_intensity = "Strength of Reference recoil at the hip. 0 removes it; 1 matches Reference. Blends with the ADS value as you aim.",
+    classic_recoil_ads_intensity = "Strength of Reference recoil while aiming. 0 removes it; 1 matches Reference. Blends with the hip value as you aim.",
+    classic_recoil_fire_impulse_share = "Share of the Fire Impulse kept while Reference recoil is on, so the two kicks do not stack. 0 leaves the whole kick to Reference recoil; 1 keeps the full Fire Impulse.",
+    classic_regrip_enable = "Shifts the gun and both hands together when you aim, switch sights or fire. Weapon animations keep control of the hands.",
+    directional_weapon_inertia_enable = "Lets the elbows settle after mouse movement without delaying the gun. Works alongside weapon inertia and STALKER 2 Style Arm IK.",
+    movement_linked_handling_enable = "Moves the weapon with your acceleration, stops and footsteps. Does not change movement speed or stamina.",
+    vm_lowering_enable = "Lowers the weapon while you walk.",
+    stalker2_style_arm_ik_enable = "Adds wrist and arm motion that follows the mouse and your walking.",
+    movement_inertia_enable = "Adds acceleration and deceleration time to player movement. Not applied while crouching, climbing, jumping or falling.",
+    movement_inertia_disable_ads = "Turns movement inertia off while aiming down sights.",
+    sprint_transition_enable = "Ties the weapon's sprint start to your real speed, so the sprint pose arrives when you reach sprint speed. Also enables the sprint camera sway below. Needs a firearm.",
+    fire_impulse_enable = "Adds a viewmodel kick when a weapon fires.",
+    vm_lowering_disable_in_combat = "Keeps the weapon raised after recent combat.",
+    stalker2_arm_ik_wrist_scale = "Share of the motion applied at the wrists.",
+    vm_lowering_layer_weight = "Overall weight of viewmodel lowering. 0 removes it; 1 applies it fully.",
+    stalker2_arm_ik_layer_weight = "Overall weight of the arm IK. 0 removes it; 1 applies it fully.",
+    camera_decoupling_enable = "Lets the weapon lead while the camera follows through deadzones.",
+    stalker2_arm_ik_movement_strength = "Strength of wrist motion from walking.",
+    stalker2_arm_ik_movement_response = "Speed at which the walking wrist motion follows gait changes.",
+    stalker2_arm_ik_slow_walk_scale = "Share of the walking wrist motion kept during slow walk.",
+    stalker2_arm_ik_mouse_pitch = "Arm pitch at full mouse speed, in degrees. Negative reverses the direction.",
+    stalker2_arm_ik_mouse_yaw = "Wrist yaw at full mouse speed, in degrees. Negative reverses the direction.",
+    stalker2_arm_ik_mouse_roll = "Wrist roll at full mouse speed, in degrees. Negative reverses the direction.",
+    stalker2_arm_ik_ads_scale = "Share of the wrist and arm motion kept while aiming down sights.",
+    stalker2_arm_ik_mouse_strength = "Strength of wrist motion from mouse movement.",
+    stalker2_arm_ik_mouse_sensitivity = "Speed at which mouse movement reaches the wrist angle limits.",
+    stalker2_arm_ik_mouse_max_yaw = "Largest wrist yaw from mouse movement, in degrees.",
+    stalker2_arm_ik_mouse_max_pitch = "Largest wrist pitch from mouse movement, in degrees.",
+    stalker2_arm_ik_mouse_max_roll = "Largest wrist roll from mouse movement, in degrees.",
+    stalker2_arm_ik_strength = "Overall strength of the wrist and arm motion.",
+    stalker2_arm_ik_response = "Speed at which the wrists follow.",
+    stalker2_arm_ik_follow_response = "Speed at which the arms follow the weapon animation.",
+    stalker2_arm_ik_follow_scale = "Strength of the arm motion taken from the weapon animation.",
+    vm_lowering_fire_suppression_time = "Seconds the weapon stays raised after firing.",
+    vm_lowering_ads_release_time = "Seconds the weapon stays raised after leaving ADS.",
+    vm_lowering_combat_suppression_time = "Seconds the weapon stays raised after combat.",
+    vm_safemode_lowering_y_offset = "Extra downward offset while the weapon is in safe mode or holstered.",
+    vm_lowering_slow_walk_influence = "Share of the lowered pose applied during slow walk.",
+    vm_lowering_walk_influence = "Share of the lowered pose applied during normal walk.",
+    vm_lowering_movement_influence = "Overall share of the lowered pose applied while moving.",
+    vm_lowering_enter_speed = "Speed at which the weapon lowers.",
+    vm_lowering_return_speed = "Speed at which the weapon returns from the lowered pose.",
+    vm_lowering_pitch = "Pitch of the lowered pose, in degrees.",
+    vm_lowering_yaw = "Yaw of the lowered pose, in degrees.",
+    vm_lowering_roll = "Roll of the lowered pose, in degrees.",
+    vm_lowering_x = "Sideways offset of the lowered pose.",
+    vm_lowering_y = "Vertical offset of the lowered pose.",
+    vm_lowering_z = "Forward offset of the lowered pose.",
+    hip_fire_weapon_impulse = "Strength of the weapon kick when firing from the hip.",
+    ads_fire_weapon_impulse = "Strength of the weapon kick when firing while aiming.",
+    fire_impulse_decay_speed = "Speed at which the kick loses energy after a shot.",
+    fire_impulse_max_position_offset = "Largest distance the accumulated kick can move the weapon.",
+    fire_impulse_max_rotation_offset = "Largest angle the accumulated kick can turn the weapon, in degrees.",
+    sprint_camera_sway_strength = "Distance the camera dips and sways while sprinting. No effect while aiming or while the Footstep Camera is on.",
+    sprint_camera_sway_smoothing = "Time the sprint camera sway takes to fade in and out; higher is slower. No effect while the Footstep Camera is on.",
+    sprint_transition_gun_bob = "How much the gun bobs with the footsteps once the sprint transition is underway (about 0.1 s after the press) until the sprint animation or lowering takes over. Weapons with their own run-to-sprint animation keep it instead. The gun sways and dips with each footfall at the step rate and more with speed; 0 turns it off, 1 is very strong.",
+    movement_smoothing_speed = "Speed of the movement input filter behind the camera movement shift and the arm IK walking response. Higher follows input sooner.",
+    movement_acceleration_time = "Time to reach the movement speed set by the game or movement mods.",
+    movement_deceleration_time = "Time to slow to a stop after you release the movement keys.",
+    movement_turn_response = "Extra time to change direction. 0 adds none; at 1 a full reversal takes twice as long.",
+    movement_stop_response = "Multiplier on Deceleration Time when you release all movement keys. Below 1 stops sooner; above 1 slides longer.",
+    movement_sprint_speed_scale = "Divisor on Acceleration Time while sprinting. Above 1 reaches sprint speed sooner; below 1 later. Does not change sprint speed.",
+    movement_camera_position_scale = "Distance the camera shifts with your movement.",
+    mouse_smoothing_speed = "Speed of the mouse filter behind the arm IK. Higher follows the mouse sooner. Reference follow bypasses it.",
+    fire_impulse_ads_scale = "Multiplier on the kick while aiming down sights.",
+    ads_camera_max_yaw_offset = "Largest horizontal angle between the ADS camera and the sight. With Reference follow, it limits only the position shift, not the camera angle.",
+    ads_camera_max_pitch_offset = "Largest vertical angle between the ADS camera and the sight. With Reference follow, it limits only the position shift, not the camera angle.",
+    ads_camera_position_scale = "Distance the camera shifts as the sight moves away from the ADS camera direction.",
+    fire_impulse_follow_speed = "Speed at which the weapon follows the kick and returns from it.",
+    fire_impulse_damping = "Damping of the kick spring. Higher reduces overshoot.",
+    ads_camera_follow_speed = "Speed at which the ADS camera catches up to the sight. With Reference follow, speed at which the camera position shift catches up.",
+    ads_camera_follow_damping = "Damping of ADS camera following. Higher settles more firmly.",
+    ads_camera_deadzone_yaw = "Horizontal sight travel allowed before the ADS camera starts to follow.",
+    ads_camera_deadzone_pitch = "Vertical sight travel allowed before the ADS camera starts to follow.",
+    ads_camera_soft_follow_yaw = "Width of the horizontal transition between the ADS deadzone and full following.",
+    ads_camera_soft_follow_pitch = "Width of the vertical transition between the ADS deadzone and full following.",
+    ads_camera_inner_zone_response = "Share of mouse movement passed to the camera while the ADS aim is inside the deadzone.",
+    hip_camera_max_yaw_offset = "Largest horizontal angle between the hip-fire camera and the aim. With Reference follow, it limits only the position shift, not the camera angle.",
+    hip_camera_max_pitch_offset = "Largest vertical angle between the hip-fire camera and the aim. With Reference follow, it limits only the position shift, not the camera angle.",
+    hip_camera_position_scale = "Distance the camera shifts as the aim moves away from the hip-fire camera direction.",
+    hip_camera_follow_speed = "Speed at which the hip-fire camera catches up to the weapon. With Reference follow, speed at which the camera position shift catches up.",
+    hip_camera_follow_damping = "Damping of hip-fire camera following. Higher settles more firmly.",
+    hip_camera_deadzone_yaw = "Horizontal mouse travel allowed before the hip-fire camera starts to follow.",
+    hip_camera_deadzone_pitch = "Vertical mouse travel allowed before the hip-fire camera starts to follow.",
+    hip_camera_soft_follow_yaw = "Width of the horizontal transition between the hip-fire deadzone and full following.",
+    hip_camera_soft_follow_pitch = "Width of the vertical transition between the hip-fire deadzone and full following.",
+    hip_camera_inner_zone_response = "Share of mouse movement passed to the camera while the hip-fire aim is inside the deadzone.",
 }
+for variation = 1, 4 do
+    binding_descriptions["classic_regrip_" .. variation .. "_intensity"] = string.format(
+        "Strength of regrip variation %d, for both gun and camera. 0 removes its motion; 1 is full strength. Does not change how often it is picked.",
+        variation)
+end
 
-local function human_name(name)
-    local words = {}
-    for word in string.gmatch(name, "[^_]+") do
-        local replacement = word_names[word]
-        if replacement then
-            table.insert(words, replacement)
-        else
-            table.insert(words, string.upper(string.sub(word, 1, 1)) .. string.sub(word, 2))
-        end
+local function get_binding(binding)
+    if binding.type == "bool" then
+        return bodycam.get_bool(binding.name, binding.default)
     end
-    return table.concat(words, " ")
+    return bodycam.get_float(binding.name, binding.default)
+end
+
+local function set_binding(binding, value)
+    if binding.type == "bool" then
+        bodycam.set_bool(binding.name, value)
+    else
+        bodycam.set_float(binding.name, value)
+    end
+end
+
+local function read_binding(ini, section, binding)
+    return ini:r_value(section, binding.name, binding.type == "bool" and 1 or 2, binding.default)
 end
 
 local function load_bindings()
     if bindings then
-        return true
-    end
-    if not bodycam or not bodycam.get_bindings then
-        return false
+        return
     end
 
-    local ok, result = pcall(bodycam.get_bindings)
-    if not ok or not result then
-        return false
+    bindings = {}
+    for _, binding in ipairs(bodycam.get_bindings()) do
+        if string.sub(binding.name, 1, 10) ~= "reference_" and binding.name ~= "scope_effects_enable" then
+            table.insert(bindings, binding)
+            binding_by_name[binding.name] = binding
+        end
     end
 
-    bindings = result
+    local matches_default = true
     for _, binding in ipairs(bindings) do
-        binding_by_name[binding.name] = binding
-    end
-
-    if not initial_preset_detected then
-        initial_preset_detected = true
-        local matches_default = true
-        for _, binding in ipairs(bindings) do
-            if binding.type == "bool" then
-                if bodycam.get_bool(binding.name, binding.default) ~= binding.default then
-                    matches_default = false
-                    break
-                end
-            elseif math.abs(bodycam.get_float(binding.name, binding.default) - binding.default) > 0.0001 then
-                matches_default = false
-                break
-            end
+        local value = get_binding(binding)
+        if binding.type == "bool" then
+            matches_default = value == binding.default
+        else
+            matches_default = math.abs(value - binding.default) <= 0.0001
         end
-        if matches_default then
-            selected_preset = { kind = "builtin", id = "default", name = "Default" }
+        if not matches_default then
+            break
         end
     end
-    return true
+    if matches_default then
+        selected_preset = { kind = "builtin", id = "default", name = "Default" }
+    end
 end
 
 local function preset_storage()
-    if preset_ini then
-        return preset_ini
-    end
-    if not ini_file_ex then
-        return nil
-    end
-
-    local ok, ini = pcall(ini_file_ex, preset_file, true)
-    if ok then
-        preset_ini = ini
+    if not preset_ini then
+        preset_ini = ini_file_ex(preset_file, true)
     end
     return preset_ini
 end
@@ -622,12 +559,12 @@ local function clean_preset_name(name)
     name = string.gsub(name, "^%s+", "")
     name = string.gsub(name, "%s+$", "")
     name = string.gsub(name, "%s%s+", " ")
-    return string.sub(name, 1, 48)
+    return string.sub(name, 1, max_preset_name_length)
 end
 
 local function read_user_presets(ini)
     local result = {}
-    if ini and ini:section_exist(preset_index_section) then
+    if ini:section_exist(preset_index_section) then
         local count = ini:line_count(preset_index_section)
         for index = 0, count - 1 do
             local exists, id, name = ini:r_line(preset_index_section, index, "", "")
@@ -648,7 +585,7 @@ local function read_user_presets(ini)
 end
 
 local function find_user_preset(id)
-    for _, preset in ipairs(user_presets or {}) do
+    for _, preset in ipairs(user_presets) do
         if preset.id == id then
             return preset
         end
@@ -657,101 +594,82 @@ end
 
 local function find_user_preset_by_name(name)
     local needle = string.lower(clean_preset_name(name))
-    for _, preset in ipairs(user_presets or {}) do
+    for _, preset in ipairs(user_presets) do
         if string.lower(preset.name) == needle then
             return preset
         end
     end
 end
 
-local function write_preset_values(ini, section, source_ini, source_section, source_values)
+local function write_preset_values(ini, section, source_values)
     for _, binding in ipairs(bindings) do
         local value
         if source_values and source_values[binding.name] ~= nil then
             value = source_values[binding.name]
-        elseif source_ini and source_ini:line_exist(source_section, binding.name) then
-            value = source_ini:r_value(
-                source_section,
-                binding.name,
-                binding.type == "bool" and 1 or 2,
-                binding.default)
-        elseif binding.type == "bool" then
-            value = bodycam.get_bool(binding.name, binding.default)
         else
-            value = bodycam.get_float(binding.name, binding.default)
+            value = get_binding(binding)
         end
         ini:w_value(section, binding.name, value)
     end
 end
 
-local function create_user_preset(name, source_ini, source_section, source_values)
+local function create_user_preset(name, source_values)
     local ini = preset_storage()
     name = clean_preset_name(name)
-    if not ini or name == "" or not load_bindings() then
+    if name == "" then
         return nil, "Enter a preset name."
     end
     if find_user_preset_by_name(name) then
         return nil, "A user preset with that name already exists."
     end
-    if #(user_presets or {}) >= 64 then
-        return nil, "The 64-preset limit has been reached."
+    if #user_presets >= max_user_presets then
+        return nil, string.format("The %d-preset limit has been reached.", max_user_presets)
     end
 
     local next_id = ini:r_value(preset_index_section, "next_id", 2, 1)
     local id = preset_section_prefix .. math.floor(next_id)
     ini:w_value(preset_index_section, "next_id", math.floor(next_id) + 1)
     ini:w_value(preset_index_section, id, name)
-    write_preset_values(ini, id, source_ini, source_section, source_values)
+    write_preset_values(ini, id, source_values)
     ini:save()
 
     user_presets = read_user_presets(ini)
     return find_user_preset(id)
 end
 
-local function migrate_legacy_custom(ini)
-    if not ini or ini:r_value(preset_index_section, "legacy_custom_migrated", 1, false) then
-        return
-    end
-
-    ini:w_value(preset_index_section, "legacy_custom_migrated", true)
-    user_presets = read_user_presets(ini)
-    local legacy = axr_main and axr_main.config
-    if legacy and legacy:section_exist(legacy_custom_section) and not find_user_preset_by_name("Custom") then
-        create_user_preset("Custom", legacy, legacy_custom_section)
-    else
-        ini:save()
-    end
-end
-
 local function load_user_presets()
     if user_presets then
-        return true
+        return
     end
     local ini = preset_storage()
-    if not ini or not load_bindings() then
-        return false
+    preset_auto_update = false
+    if ini:section_exist(preset_index_section) then
+        preset_auto_update = ini:r_value(preset_index_section, "auto_update", 1, false)
     end
     user_presets = read_user_presets(ini)
-    migrate_legacy_custom(ini)
-    user_presets = read_user_presets(ini)
-    return true
 end
 
 local function save_user_preset(preset)
-    local ini = preset_storage()
-    if not ini or not preset or preset.kind ~= "user" or not load_bindings() then
+    if not preset or preset.kind ~= "user" then
         return
     end
+    local ini = preset_storage()
     write_preset_values(ini, preset.section)
     ini:save()
     preset_save_due_time = nil
 end
 
 local function schedule_user_preset_save()
+    if time_global() < preset_apply_guard_until then
+        return
+    end
+
     if selected_preset.kind == "user" then
-        preset_save_due_time = time_global() + preset_save_delay_ms
+        if preset_auto_update then
+            preset_save_due_time = time_global() + preset_save_delay_ms
+        end
     else
-        selected_preset = { kind = "modified", id = "modified", name = "Modified" }
+        selected_preset = modified_preset
     end
 end
 
@@ -765,72 +683,46 @@ local function apply_binding_values(values)
     for name, value in pairs(values or {}) do
         local binding = binding_by_name[name]
         if binding then
-            if binding.type == "bool" then
-                bodycam.set_bool(name, value)
-            else
-                bodycam.set_float(name, value)
-            end
+            set_binding(binding, value)
         end
     end
 end
 
 local function apply_builtin_preset(preset)
     preserve_pending_user_preset()
-    bodycam.apply_preset(preset.engine_preset)
-    apply_binding_values(preset.values)
     selected_preset = { kind = "builtin", id = preset.id, name = preset.name }
     preset_save_due_time = nil
-end
-
-local function apply_user_preset(preset)
-    local ini = preset_storage()
-    if not ini or not preset or not ini:section_exist(preset.section) then
-        return
-    end
-
-    preserve_pending_user_preset()
-    bodycam.apply_preset(2)
-    for _, binding in ipairs(bindings) do
-        if ini:line_exist(preset.section, binding.name) then
-            local value = ini:r_value(
-                preset.section,
-                binding.name,
-                binding.type == "bool" and 1 or 2,
-                binding.default)
-            if binding.type == "bool" then
-                bodycam.set_bool(binding.name, value)
-            else
-                bodycam.set_float(binding.name, value)
-            end
-        end
-    end
-    selected_preset = preset
-    preset_save_due_time = nil
+    preset_apply_guard_until = time_global() + preset_apply_guard_ms
+    bodycam.apply_preset(preset.engine_preset)
+    apply_binding_values(preset.values)
 end
 
 local function delete_user_preset(preset)
-    local ini = preset_storage()
-    if not ini or not preset or preset.kind ~= "user" then
+    if not preset or preset.kind ~= "user" then
         return
     end
 
+    local ini = preset_storage()
     for _, binding in ipairs(bindings) do
         if ini:line_exist(preset.section, binding.name) then
             ini:remove_line(preset.section, binding.name)
         end
     end
+    -- Older presets carry a motion_mode line; nothing reads it.
+    if ini:line_exist(preset.section, "motion_mode") then
+        ini:remove_line(preset.section, "motion_mode")
+    end
     ini:remove_line(preset_index_section, preset.id)
     ini:save()
     user_presets = read_user_presets(ini)
-    selected_preset = { kind = "modified", id = "modified", name = "Modified" }
+    selected_preset = modified_preset
     preset_save_due_time = nil
 end
 
 local function rename_user_preset(preset, name)
-    local ini = preset_storage()
     name = clean_preset_name(name)
     local duplicate = find_user_preset_by_name(name)
-    if not ini or not preset or preset.kind ~= "user" then
+    if not preset or preset.kind ~= "user" then
         return false, "The selected preset is unavailable."
     end
     if name == "" then
@@ -840,6 +732,7 @@ local function rename_user_preset(preset, name)
         return false, "A user preset with that name already exists."
     end
 
+    local ini = preset_storage()
     ini:w_value(preset_index_section, preset.id, name)
     ini:save()
     user_presets = read_user_presets(ini)
@@ -850,30 +743,41 @@ end
 local function capture_current_values()
     local values = {}
     for _, binding in ipairs(bindings) do
-        if binding.type == "bool" then
-            values[binding.name] = bodycam.get_bool(binding.name, binding.default)
-        else
-            values[binding.name] = bodycam.get_float(binding.name, binding.default)
-        end
+        values[binding.name] = get_binding(binding)
     end
     return values
 end
 
 local function read_user_preset_values(preset)
     local ini = preset_storage()
-    if not ini or not preset or not ini:section_exist(preset.section) then
+    if not preset or not ini:section_exist(preset.section) then
         return nil
     end
 
     local values = {}
     for _, binding in ipairs(bindings) do
-        values[binding.name] = ini:r_value(
-            preset.section,
-            binding.name,
-            binding.type == "bool" and 1 or 2,
-            binding.default)
+        values[binding.name] = read_binding(ini, preset.section, binding)
     end
     return values
+end
+
+local function apply_user_preset(preset)
+    preserve_pending_user_preset()
+    local values = read_user_preset_values(preset)
+    if not values then
+        return
+    end
+
+    selected_preset = {
+        kind = "user",
+        id = preset.id,
+        name = preset.name,
+        section = preset.section,
+    }
+    preset_save_due_time = nil
+    preset_apply_guard_until = time_global() + preset_apply_guard_ms
+    bodycam.apply_preset(engine_preset_default)
+    apply_binding_values(values)
 end
 
 local function find_builtin_preset(id)
@@ -898,7 +802,7 @@ local function capture_builtin_preset_values(preset)
 end
 
 local function copy_source_values(source)
-    if not source or source.kind == "current" then
+    if source.kind == "current" then
         return capture_current_values()
     elseif source.kind == "builtin" then
         return capture_builtin_preset_values(find_builtin_preset(source.id))
@@ -911,25 +815,71 @@ local function select_copy_source(kind, id, name)
     new_preset_source = { kind = kind, id = id, name = name }
 end
 
+local shared_options_loaded = false
+local shared_options_section = "bodycam_shared_features"
+
+local function load_shared_options()
+    if shared_options_loaded then
+        return
+    end
+    shared_options_loaded = true
+
+    local ini = preset_storage()
+    if ini:line_exist(shared_options_section, "scope_effects_enable") then
+        bodycam.set_bool("scope_effects_enable",
+            ini:r_value(shared_options_section, "scope_effects_enable", 1, true))
+    end
+end
+
+-- A tooltip sizes itself to its content, so wrapped text needs a set width.
+local tooltip_wrap_width = 430
+
+local function tooltip_text(text)
+    ImGui.PushTextWrapPos(tooltip_wrap_width)
+    ImGui.TextWrapped(text)
+    ImGui.PopTextWrapPos()
+end
+
+local function show_tooltip(text)
+    if ImGui.BeginItemTooltip() then
+        tooltip_text(text)
+        ImGui.EndTooltip()
+    end
+end
+
+local function draw_scope_effects()
+    local changed, value = ImGui.Checkbox("Bodycam scope effects##scope_effects_enable",
+        bodycam.get_bool("scope_effects_enable", true))
+    show_tooltip("Draws the lens, tunnel, exit pupil, reflections and light ghosts in scopes. GAMMA still sets zoom and reticles.")
+    if changed then
+        bodycam.set_bool("scope_effects_enable", value)
+        local ini = preset_storage()
+        ini:w_value(shared_options_section, "scope_effects_enable", value)
+        ini:save()
+    end
+end
+
 local function actor_on_update()
+    load_shared_options()
     if preset_save_due_time and time_global() >= preset_save_due_time then
         save_user_preset(selected_preset)
     end
 end
 
+local function actor_on_net_destroy()
+    preserve_pending_user_preset()
+end
+
 local function show_binding_tooltip(binding)
     if ImGui.BeginItemTooltip() then
-        ImGui.PushTextWrapPos(430)
-        ImGui.TextWrapped(binding_descriptions[binding.name] or ("Adjusts " .. human_name(binding.name) .. "."))
-        ImGui.PopTextWrapPos()
+        tooltip_text(binding_descriptions[binding.name])
         ImGui.Separator()
         ImGui.TextDisabled("Console: " .. binding.console_name)
         if binding.type == "float" then
             ImGui.Text(string.format("Minimum: %g    Maximum: %g    Default: %g",
                 binding.min, binding.max, binding.default))
         else
-            ImGui.Text(string.format("Minimum: 0 (Off)    Maximum: 1 (On)    Default: %s",
-                binding.default and "On" or "Off"))
+            ImGui.Text("Default: " .. (binding.default and "On" or "Off"))
         end
         ImGui.TextDisabled("Right-click the control to reset it.")
         ImGui.EndTooltip()
@@ -946,46 +896,20 @@ local function float_format(binding)
     return "%.1f"
 end
 
-local function drag_speed(binding)
-    local span = binding.max - binding.min
-    if span <= 0.5 then
-        return 0.001
-    elseif span <= 2.0 then
-        return 0.01
-    end
-    return 0.1
-end
-
-local function draw_binding(binding, label, use_slider)
+local function draw_binding(binding, label)
     ImGui.TableNextRow(ImGuiTableRowFlags.None, 0)
     ImGui.TableSetColumnIndex(0)
     ImGui.Text(label)
     show_binding_tooltip(binding)
     ImGui.TableSetColumnIndex(1)
 
-    if binding.type == "bool" then
-        local current = bodycam.get_bool(binding.name, false)
-        local changed, value = ImGui.Checkbox("##" .. binding.name, current)
-        local reset = ImGui.IsItemClicked(ImGuiMouseButton.Right)
-        show_binding_tooltip(binding)
-        if changed or reset then
-            if reset then
-                value = binding.default
-            end
-            bodycam.set_bool(binding.name, value)
-            schedule_user_preset_save()
-        end
-        return
-    end
-
-    local current = bodycam.get_float(binding.name, 0)
+    local current = get_binding(binding)
     local changed, value
-    if use_slider then
+    if binding.type == "bool" then
+        changed, value = ImGui.Checkbox("##" .. binding.name, current)
+    else
         changed, value = ImGui.SliderFloat("##" .. binding.name, current, binding.min, binding.max,
             float_format(binding), ImGuiSliderFlags.None)
-    else
-        changed, value = ImGui.DragFloat("##" .. binding.name, current, drag_speed(binding), binding.min,
-            binding.max, float_format(binding), ImGuiSliderFlags.None)
     end
     local reset = ImGui.IsItemClicked(ImGuiMouseButton.Right)
     show_binding_tooltip(binding)
@@ -993,12 +917,12 @@ local function draw_binding(binding, label, use_slider)
         if reset then
             value = binding.default
         end
-        bodycam.set_float(binding.name, value)
+        set_binding(binding, value)
         schedule_user_preset_save()
     end
 end
 
-local function draw_settings_table(id, settings, use_slider)
+local function draw_settings_table(id, settings)
     if not ImGui.BeginTable(id, 2, ImGuiTableFlags.None, vector2():set(0, 0), 0) then
         return
     end
@@ -1008,10 +932,34 @@ local function draw_settings_table(id, settings, use_slider)
     for _, setting in ipairs(settings) do
         local binding = binding_by_name[setting[1]]
         if binding then
-            draw_binding(binding, setting[2], use_slider)
+            draw_binding(binding, setting[2])
         end
     end
     ImGui.EndTable()
+end
+
+-- Draws the built-in and user preset entries of an open combo. `selection`
+-- is the entry to highlight; on_pick(kind, preset) runs for a clicked entry.
+local function draw_preset_entries(id_prefix, selection, on_pick)
+    local function draw_group(kind, title, presets)
+        ImGui.TextDisabled(title)
+        for _, preset in ipairs(presets) do
+            local selected = selection.kind == kind and selection.id == preset.id
+            if ImGui.Selectable(preset.name .. "##" .. id_prefix .. kind .. "_" .. preset.id, selected,
+                ImGuiSelectableFlags.None, vector2():set(0, 0)) then
+                on_pick(kind, preset)
+            end
+            if selected then
+                ImGui.SetItemDefaultFocus()
+            end
+        end
+    end
+
+    draw_group("builtin", "Built-in", builtin_presets)
+    if #user_presets > 0 then
+        ImGui.Separator()
+        draw_group("user", "User", user_presets)
+    end
 end
 
 local function draw_copy_source_selector()
@@ -1036,40 +984,9 @@ local function draw_copy_source_selector()
     end
 
     ImGui.Separator()
-    ImGui.TextDisabled("Built-in")
-    for _, preset in ipairs(builtin_presets) do
-        selected = new_preset_source.kind == "builtin"
-            and new_preset_source.id == preset.id
-        if ImGui.Selectable(
-            preset.name .. "##copy_builtin_" .. preset.id,
-            selected,
-            ImGuiSelectableFlags.None,
-            vector2():set(0, 0)) then
-            select_copy_source("builtin", preset.id, preset.name)
-        end
-        if selected then
-            ImGui.SetItemDefaultFocus()
-        end
-    end
-
-    if #user_presets > 0 then
-        ImGui.Separator()
-        ImGui.TextDisabled("User")
-        for _, preset in ipairs(user_presets) do
-            selected = new_preset_source.kind == "user"
-                and new_preset_source.id == preset.id
-            if ImGui.Selectable(
-                preset.name .. "##copy_user_" .. preset.id,
-                selected,
-                ImGuiSelectableFlags.None,
-                vector2():set(0, 0)) then
-                select_copy_source("user", preset.id, preset.name)
-            end
-            if selected then
-                ImGui.SetItemDefaultFocus()
-            end
-        end
-    end
+    draw_preset_entries("copy_", new_preset_source, function(kind, preset)
+        select_copy_source(kind, preset.id, preset.name)
+    end)
     ImGui.EndCombo()
 end
 
@@ -1079,10 +996,33 @@ local function draw_preset_name_input(id, hint)
         id,
         hint,
         preset_dialog_name,
-        64,
+        preset_name_buffer_size,
         ImGuiInputTextFlags.EnterReturnsTrue)
     preset_dialog_name = name
     return submitted
+end
+
+local function draw_dialog_message()
+    if preset_dialog_message then
+        ImGui.Spacing()
+        ImGui.TextColored(
+            fcolor():set(1, 0.45, 0.35, 1),
+            preset_dialog_message)
+    end
+end
+
+local function draw_dialog_separator()
+    ImGui.Spacing()
+    ImGui.Separator()
+    ImGui.Spacing()
+end
+
+local function draw_dialog_cancel()
+    ImGui.SameLine(0, 8)
+    if ImGui.Button("Cancel", vector2():set(110, 0)) then
+        preset_dialog_message = nil
+        ImGui.CloseCurrentPopup()
+    end
 end
 
 local function draw_new_preset_dialog()
@@ -1105,25 +1045,13 @@ local function draw_new_preset_dialog()
     ImGui.Text("Copy from preset:")
     draw_copy_source_selector()
 
-    if preset_dialog_message then
-        ImGui.Spacing()
-        ImGui.TextColored(
-            fcolor():set(1, 0.45, 0.35, 1),
-            preset_dialog_message)
-    end
-
-    ImGui.Spacing()
-    ImGui.Separator()
-    ImGui.Spacing()
+    draw_dialog_message()
+    draw_dialog_separator()
     if ImGui.Button("Create", vector2():set(110, 0)) or submitted then
         preserve_pending_user_preset()
         local values = copy_source_values(new_preset_source)
         if values then
-            local preset, message = create_user_preset(
-                preset_dialog_name,
-                nil,
-                nil,
-                values)
+            local preset, message = create_user_preset(preset_dialog_name, values)
             if preset then
                 apply_user_preset(preset)
                 preset_message = "Preset created."
@@ -1136,11 +1064,7 @@ local function draw_new_preset_dialog()
             preset_dialog_message = "The source preset is unavailable."
         end
     end
-    ImGui.SameLine(0, 8)
-    if ImGui.Button("Cancel", vector2():set(110, 0)) then
-        preset_dialog_message = nil
-        ImGui.CloseCurrentPopup()
-    end
+    draw_dialog_cancel()
     ImGui.EndPopup()
 end
 
@@ -1171,16 +1095,8 @@ local function draw_rename_preset_dialog()
         "##bodycam_rename_preset_name",
         "Enter a new name")
 
-    if preset_dialog_message then
-        ImGui.Spacing()
-        ImGui.TextColored(
-            fcolor():set(1, 0.45, 0.35, 1),
-            preset_dialog_message)
-    end
-
-    ImGui.Spacing()
-    ImGui.Separator()
-    ImGui.Spacing()
+    draw_dialog_message()
+    draw_dialog_separator()
     if ImGui.Button("Rename", vector2():set(110, 0)) or submitted then
         local renamed, message = rename_user_preset(
             preset,
@@ -1193,11 +1109,7 @@ local function draw_rename_preset_dialog()
             preset_dialog_message = message
         end
     end
-    ImGui.SameLine(0, 8)
-    if ImGui.Button("Cancel", vector2():set(110, 0)) then
-        preset_dialog_message = nil
-        ImGui.CloseCurrentPopup()
-    end
+    draw_dialog_cancel()
     ImGui.EndPopup()
 end
 
@@ -1218,9 +1130,7 @@ local function draw_delete_preset_dialog()
         ImGui.TextDisabled("The selected preset is no longer available.")
     end
 
-    ImGui.Spacing()
-    ImGui.Separator()
-    ImGui.Spacing()
+    draw_dialog_separator()
     ImGui.BeginDisabled(not preset)
     if ImGui.Button("Delete", vector2():set(110, 0)) then
         delete_user_preset(preset)
@@ -1228,56 +1138,24 @@ local function draw_delete_preset_dialog()
         ImGui.CloseCurrentPopup()
     end
     ImGui.EndDisabled()
-    ImGui.SameLine(0, 8)
-    if ImGui.Button("Cancel", vector2():set(110, 0)) then
-        ImGui.CloseCurrentPopup()
-    end
+    draw_dialog_cancel()
     ImGui.EndPopup()
 end
 
-local function draw_preset_dialogs()
-    draw_new_preset_dialog()
-    draw_rename_preset_dialog()
-    draw_delete_preset_dialog()
-end
-
 local function draw_presets()
-    if not load_user_presets() then
-        ImGui.TextDisabled("Preset storage is unavailable.")
-        return
-    end
+    load_user_presets()
 
     ImGui.TextDisabled("PRESET")
     ImGui.SetNextItemWidth(320)
     if ImGui.BeginCombo("##bodycam_preset", selected_preset.name, ImGuiComboFlags.None) then
-        ImGui.TextDisabled("Built-in")
-        for _, preset in ipairs(builtin_presets) do
-            local selected = selected_preset.kind == "builtin" and selected_preset.id == preset.id
-            if ImGui.Selectable(preset.name .. "##builtin_" .. preset.id, selected,
-                ImGuiSelectableFlags.None, vector2():set(0, 0)) then
+        draw_preset_entries("", selected_preset, function(kind, preset)
+            if kind == "builtin" then
                 apply_builtin_preset(preset)
-                preset_message = nil
+            else
+                apply_user_preset(preset)
             end
-            if selected then
-                ImGui.SetItemDefaultFocus()
-            end
-        end
-
-        if #user_presets > 0 then
-            ImGui.Separator()
-            ImGui.TextDisabled("User")
-            for _, preset in ipairs(user_presets) do
-                local selected = selected_preset.kind == "user" and selected_preset.id == preset.id
-                if ImGui.Selectable(preset.name .. "##user_" .. preset.id, selected,
-                    ImGuiSelectableFlags.None, vector2():set(0, 0)) then
-                    apply_user_preset(preset)
-                    preset_message = nil
-                end
-                if selected then
-                    ImGui.SetItemDefaultFocus()
-                end
-            end
-        end
+            preset_message = nil
+        end)
         ImGui.EndCombo()
     end
 
@@ -1298,13 +1176,30 @@ local function draw_presets()
     end
 
     local is_user_preset = selected_preset.kind == "user"
+    local auto_update_changed, auto_update = ImGui.Checkbox("Auto-update", preset_auto_update)
+    if auto_update_changed then
+        preset_auto_update = auto_update
+        local ini = preset_storage()
+        ini:w_value(preset_index_section, "auto_update", auto_update)
+        ini:save()
+        if auto_update and is_user_preset then
+            preset_save_due_time = time_global() + preset_save_delay_ms
+        else
+            preset_save_due_time = nil
+        end
+    end
+    show_tooltip("Saves changes to the selected user preset as you make them. Turn off to save with the Update button.")
+
     ImGui.SameLine(0, 8)
-    ImGui.BeginDisabled(not is_user_preset)
+    ImGui.BeginDisabled(not is_user_preset or preset_auto_update)
     if ImGui.Button("Update", vector2():set(78, 0)) then
         save_user_preset(selected_preset)
         preset_message = "Preset updated."
     end
+    ImGui.EndDisabled()
+
     ImGui.SameLine(0, 8)
+    ImGui.BeginDisabled(not is_user_preset)
     if ImGui.Button("Rename", vector2():set(78, 0)) then
         rename_preset_id = selected_preset.id
         preset_dialog_name = selected_preset.name
@@ -1322,19 +1217,31 @@ local function draw_presets()
     if preset_message then
         ImGui.TextDisabled(preset_message)
     end
-    draw_preset_dialogs()
+    draw_new_preset_dialog()
+    draw_rename_preset_dialog()
+    draw_delete_preset_dialog()
 end
 
+local function selected_lag_model()
+    return bodycam.get_bool("camera_continuous_follow_enable", false) and "follow" or "deadzone"
+end
+
+-- Sections of the lag model that is not selected are not drawn.
 local function draw_sections(tab_id, sections)
-    for index, section in ipairs(sections) do
-        if index > 1 then
+    local lag_model = selected_lag_model()
+    local first = true
+    for _, section in ipairs(sections) do
+        if not section.lag_model or section.lag_model == lag_model then
+            if not first then
+                ImGui.Spacing()
+                ImGui.Separator()
+                ImGui.Spacing()
+            end
+            first = false
+            ImGui.TextDisabled(section.name)
             ImGui.Spacing()
-            ImGui.Separator()
-            ImGui.Spacing()
+            draw_settings_table("bodycam_" .. tab_id .. "_" .. section.name, section.settings)
         end
-        ImGui.TextDisabled(section.name)
-        ImGui.Spacing()
-        draw_settings_table("bodycam_" .. tab_id .. "_" .. section.name, section.settings, true)
     end
 end
 
@@ -1368,15 +1275,6 @@ end
 
 local function draw_diagnostics()
     draw_sections("Diagnostics", diagnostics_sections)
-    local unassigned = {}
-    for _, binding in ipairs(bindings) do
-        if not assigned_names[binding.name] then
-            table.insert(unassigned, { binding.name, human_name(binding.name) })
-        end
-    end
-    if #unassigned > 0 and ImGui.CollapsingHeader("Unassigned Settings", ImGuiTreeNodeFlags.None) then
-        draw_settings_table("bodycam_unassigned", unassigned, false)
-    end
 
     ImGui.Spacing()
     ImGui.Separator()
@@ -1384,6 +1282,23 @@ local function draw_diagnostics()
     if ImGui.Button("Dump Runtime State", vector2():set(160, 0)) then
         bodycam.dump()
     end
+end
+
+-- Camera Decoupling's lag model, stored as camera_continuous_follow_enable.
+local lag_models = { { id = "deadzone", name = "Deadzone" }, { id = "follow", name = "Reference follow" } }
+local function draw_lag_model()
+    local selected = selected_lag_model()
+    ImGui.SetNextItemWidth(180)
+    if ImGui.BeginCombo("Lag Model", selected == "follow" and lag_models[2].name or lag_models[1].name, ImGuiComboFlags.None) then
+        for _, model in ipairs(lag_models) do
+            if ImGui.Selectable(model.name, selected == model.id, ImGuiSelectableFlags.None, vector2():set(0, 0)) then
+                bodycam.set_bool("camera_continuous_follow_enable", model.id == "follow")
+                schedule_user_preset_save()
+            end
+        end
+        ImGui.EndCombo()
+    end
+    show_binding_tooltip(binding_by_name.camera_continuous_follow_enable)
 end
 
 local function draw_selected_feature()
@@ -1395,8 +1310,14 @@ local function draw_selected_feature()
     local feature = feature_tabs[selected_feature]
     if feature then
         if feature.toggle then
-            draw_settings_table("bodycam_toggle_" .. feature.name, { feature.toggle }, true)
+            draw_settings_table("bodycam_toggle_" .. feature.name, { feature.toggle })
             ImGui.Spacing()
+        end
+        if feature.lag_model then
+            draw_lag_model()
+            ImGui.Spacing()
+        end
+        if feature.toggle or feature.lag_model then
             ImGui.Separator()
             ImGui.Spacing()
         end
@@ -1407,6 +1328,10 @@ local function draw_selected_feature()
 end
 
 local function draw_bodycam_settings()
+    load_shared_options()
+    draw_scope_effects()
+    ImGui.Separator()
+    ImGui.Spacing()
     if not ImGui.BeginTable(
         "bodycam_settings_layout",
         2,
@@ -1432,11 +1357,8 @@ local function render_bodycam_window()
     show_bodycam_window = visible
 
     if expanded then
-        if not load_bindings() then
-            ImGui.TextColored(fcolor():set(1, 0.4, 0.4, 1), "Bodycam binding metadata is unavailable")
-        else
-            draw_bodycam_settings()
-        end
+        load_bindings()
+        draw_bodycam_settings()
     end
     ImGui.End()
 end
@@ -1455,4 +1377,5 @@ end
 
 function on_game_start()
     RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
 end

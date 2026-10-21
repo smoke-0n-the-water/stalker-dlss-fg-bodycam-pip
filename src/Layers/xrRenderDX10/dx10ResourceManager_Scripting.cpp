@@ -638,6 +638,16 @@ ShaderElement* CBlender_Compile::_lua_Compile(LPCSTR namesp, LPCSTR name)
 	if (E.flags.iScopeLense == 0 && namesp && strstr(namesp, "models_reflex_reticle") == namesp)
 		E.flags.iScopeLense = 10;
 
+	// pip 3DSS 5.x also flags non-lens meshes scopelense(3) to reach its late sorted pass (transparent
+	// ADS housings, canted cutouts, thermal-overlay reticles); only the lens shaders (models_scope_reticle
+	// vertex shader) and the PiP glue may enter the eyepiece capture, the rest keep the stock late pass
+	if (E.flags.iScopeLense == 3 && dest.vs)
+	{
+		LPCSTR vs = dest.vs->cName.c_str();
+		if (strstr(vs, "models_scope_reticle") != vs && strstr(vs, "scope_vertex") != vs)
+			E.flags.iScopeLense = 11;
+	}
+
 	r_End();
 	ShaderElement* _r = dxRenderDeviceRender::Instance().Resources->_CreateElement(E);
 	return _r;

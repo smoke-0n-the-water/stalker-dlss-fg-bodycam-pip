@@ -180,10 +180,13 @@ local function read_3dss_num_info(item, scope_sec, weap_sec, key, scope_hint)
     if item then
         local ok = pcall(function()
             item:iterate_installed_upgrades(function(upgrade_sec)
-                value = ini_sys:r_float_ex(upgrade_sec, key)
-                section = value ~= nil and upgrade_sec or nil
-                source = value ~= nil and line_source(upgrade_sec, key) or nil
-                kind = value ~= nil and "upgrade" or nil
+                local upgraded = ini_sys:r_float_ex(upgrade_sec, key)
+                if upgraded ~= nil then
+                    value = upgraded
+                    section = upgrade_sec
+                    source = line_source(upgrade_sec, key)
+                    kind = "upgrade"
+                end
             end)
         end)
         if not ok then
@@ -429,6 +432,21 @@ local function parse_offset(value)
     return numbers
 end
 
+local offset_ini
+local function read_offset_table(scope_sec, weap_sec, scope_hint)
+    offset_ini = offset_ini or ini_file("pip_objective_offsets.ltx")
+    local sections = {weap_sec, scope_sec, scope_hint}
+    for index = 1, 3 do
+        local section = sections[index]
+        if section then
+            local value = offset_ini:r_string_ex(section, "scope_objective_lens_offset")
+            if value then
+                return value, "table:pip_objective_offsets.ltx:" .. section
+            end
+        end
+    end
+end
+
 local function resolve_lens(scope_sec, weap_sec, scope_hint)
     local offset, section, source, kind =
         read_str_info(scope_sec, weap_sec, "scope_objective_lens_offset", scope_hint)
@@ -436,6 +454,9 @@ local function resolve_lens(scope_sec, weap_sec, scope_hint)
     if offset then
         offset_source = source_text(kind, section, source, "scope_objective_lens_offset")
     else
+        offset, offset_source = read_offset_table(scope_sec, weap_sec, scope_hint)
+    end
+    if not offset then
         local detected = rawget(_G, "svp_detected_offset")
         offset = type(detected) == "function" and detected() or nil
         if offset == "" then
@@ -536,7 +557,10 @@ local function aim_context()
     local item = db.actor and db.actor:active_item()
     local weapon = item and item:cast_Weapon()
     -- binoculars publish on the typed route only, the legacy route has no scopeless lane
-    if not (item and weapon and weapon:IsZoomed())
+    -- Keep the typed per-scope geometry publication current in hip fire. The
+    -- renderer uses it for the real glass material even when PiP is inactive.
+    -- Legacy console scope/zoom state still changes only while aiming.
+    if not (item and weapon) or (not weapon:IsZoomed() and select_route() ~= "typed")
         or (IsBinoc(item:section()) and select_route() ~= "typed") then
         return
     end
@@ -1082,6 +1106,8 @@ function on_game_start()
     RegisterScriptCallback("actor_on_weapon_zoom_type_changed", function()
         push_offset(false)
     end)
-    RegisterScriptCallback("actor_on_weapon_zoom_out", clear_offset)
+    RegisterScriptCallback("actor_on_weapon_zoom_out", function()
+        if select_route() == "typed" then push_offset(false) else clear_offset() end
+    end)
     RegisterScriptCallback("actor_on_update", route_update)
 end

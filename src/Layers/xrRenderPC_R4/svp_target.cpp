@@ -1,85 +1,41 @@
 #include "stdafx.h"
 #include "r4.h"
 #include "svp_target.h"
+#include "svp_target_size.h"
+#include "svp_stats.h"
+#include "../../xrEngine/igame_persistent.h"
 
-// pip SVP scene render extent, EXACT svp_height at gate 0 (byte-identical to stock, no scale and no
-// even rounding), scaled + even-rounded for the upscaler only once the DLSS scaffolding is on
-u32 svp_render_extent()
+extern int ps_r__svp_flat_window;
+extern Fvector4 ps_s3ds_param_3;
+extern float ps_r__svp_adaptive_res;
+extern int ps_r__svp_adaptive_grow;
+
+namespace
 {
-	if (ps_r__svp_dlss == 0)
-	{
-		// base SVP square = full display-derived svp_height, or (adaptive) just past the on-screen eyepiece
-		// disc so we never rasterise pixels the lens cannot show. supersample then scales the chosen base up
-		u32 base = Device.svp_height();
-		const float disc = Device.m_SecondViewport.svp_disc_applied;
-		extern int ps_r__svp_flat_window;
-		extern Fvector4 ps_s3ds_param_3;
-		extern float ps_r__svp_adaptive_res;
-		if (ps_r__svp_flat_window && (int)ps_s3ds_param_3.y == 8 && disc > 1.0f)
-		{
-			// a flat panel (binocular) fills far more screen than a round ocular disc, size the square SVP
-			// up to the panel extent so the wide window is not upscaled, capped at the main height for cost
-			u32 want = u32(disc) & ~1u;
-			const u32 cap = Device.dwHeight & ~1u;
-			if (want > cap) want = cap;
-			if (want > base) base = want;
-		}
-		else if (ps_r__svp_adaptive_res > 0.f)
-		{
-			if (disc > 1.0f)
-			{
-				u32 want = u32(disc * ps_r__svp_adaptive_res) & ~1u; // disc * margin, even side
-				if (want < 256) want = 256;                       // floor: never degenerate on a tiny/far ocular
-				extern int ps_r__svp_adaptive_grow;
-				if (ps_r__svp_adaptive_grow)
-				{
-					// the disc is the requirement in both directions, a big ocular renders 1:1
-					// instead of upscaling soft, capped at the display height for cost
-					const u32 cap = Device.dwHeight & ~1u;
-					base = (want > cap) ? cap : want;
-				}
-				else if (want < base)
-					base = want;                                  // legacy shrink-only under the half-height base
-			}
-		}
-		float ss = ps_r__svp_supersample;
-		clamp(ss, 1.0f, 2.0f);
-		if (base == Device.svp_height() && ss <= 1.0f)
-			return Device.svp_height(); // exact stock, byte-identical (off == unchanged)
-		u32 e = u32(base * ss) & ~1u;
-		return (e < 2) ? 2 : e;
-	}
-	float eff = ps_r__svp_render_scale;
-	clamp(eff, 0.5f, 1.0f);
-	if (eff >= 1.0f)
-		return Device.svp_height(); // no downscale, full res so the eval is a pass-through (CopyResource)
-	u32 e = u32(Device.svp_height() * eff) & ~1u; // even side for the upscaler
-	if (e < 2)
-		e = 2;
-	return e;
+svp::TargetSettings target_settings()
+{
+	return {ps_r__svp_dlss != 0, ps_r__svp_flat_window && (int)ps_s3ds_param_3.y == 8,
+		ps_r__svp_adaptive_grow != 0, ps_r__svp_adaptive_res,
+		ps_r__svp_supersample, ps_r__svp_render_scale};
 }
 
-// pip round a target side UP to a 32px step so a few-px disc wobble reuses the target instead of
-// reallocating the whole SVP rt chain on every ADS, quality only rounds up never below the ask
-static inline u32 svp_quant32(u32 v) { return (v + 31u) & ~31u; }
+svp::TargetFrame target_frame()
+{
+	return {Device.svp_height(), Device.dwHeight, Device.m_SecondViewport.svp_disc_applied,
+		Device.m_SecondViewport.svp_panel_aspect};
+}
+}
 
-// pip the SVP target extent, one policy for the allocation and the camera projection. a flat panel
-// shapes the square down to the lens aspect (aspect is major/minor so always >= 1), else square
+u32 svp_render_extent()
+{
+	return svp::RenderExtent(target_settings(), target_frame());
+}
+
 void svp_target_wh(u32& svp_w, u32& svp_h)
 {
-	u32 svp_side = svp_quant32(svp_render_extent());
-	if (svp_side < 64)
-		svp_side = 64;
-	svp_w = svp_h = svp_side;
-	extern int ps_r__svp_flat_window;
-	extern Fvector4 ps_s3ds_param_3;
-	const float pa = Device.m_SecondViewport.svp_panel_aspect;
-	if (ps_r__svp_flat_window && (int)ps_s3ds_param_3.y == 8 && pa > 1.01f)
-	{
-		svp_h = svp_quant32(u32(svp_side / pa));
-		if (svp_h < 64)
-			svp_h = 64;
-	}
+	const auto size = svp::Size(target_settings(), target_frame());
+	svp_w = size.width;
+	svp_h = size.height;
 }
 
 // pip allocate the square SVP target the first time an SVP pass runs, with PiP off this is never
@@ -118,4 +74,68 @@ void CRender::EnsureTargetSVP()
 	if (ps_r__svp_diag)
 		PipMsg("[SVP-ALLOC] svp=%ux%u (svp_height=%u aspect=%.2f supersample=%.2f dlss=%d)",
 			svp_w, svp_h, Device.svp_height(), Device.m_SecondViewport.svp_panel_aspect, ps_r__svp_supersample, ps_r__svp_dlss);
+}
+
+// Shared by stock PiP and the Reference optical image.
+void svp_track_disc(u32 width, u32 height)
+{
+	// latch the on-screen eyepiece disc px for adaptive SVP resolution, learn only the
+	// settled aimed disc so a raise transient or quick peek never freezes a partial value
+	if (RImplementation.TargetSVP && Device.m_SecondViewport.eyepiece.radius > EPS)
+	{
+		auto& vpd = Device.m_SecondViewport;
+		const Fmatrix& MH = Device.mFullTransformHud;
+		auto toPx = [&](const Fvector& wp, float& sx, float& sy)
+		{
+			const float x = wp.x * MH._11 + wp.y * MH._21 + wp.z * MH._31 + MH._41;
+			const float y = wp.x * MH._12 + wp.y * MH._22 + wp.z * MH._32 + MH._42;
+			const float w = wp.x * MH._14 + wp.y * MH._24 + wp.z * MH._34 + MH._44;
+			const float iw = (fabsf(w) > 1e-6f) ? 1.0f / w : 0.0f;
+			sx = (x * iw * 0.5f + 0.5f) * (float)width;
+			sy = (1.0f - (y * iw * 0.5f + 0.5f)) * (float)height;
+		};
+		Fvector ei, li;
+		li.set(vpd.eyepiece.radius, 0.f, 0.f);
+		vpd.eyepiece.m_W.transform_tiny(ei, li);
+		float cx, cy, ix, iy;
+		toPx(vpd.eyepiece.m_W.c, cx, cy);
+		toPx(ei, ix, iy);
+		const float disc = 2.0f * sqrtf((ix - cx) * (ix - cx) + (iy - cy) * (iy - cy)); // on-screen disc diameter px
+		// weapon raise factor, 1 only when fully aimed, gates learning to the settled pose
+		const float rot = (g_pGamePersistent && g_pGamePersistent->m_pGShaderConstants)
+			? g_pGamePersistent->m_pGShaderConstants->hud_params.x
+			: 0.f;
+		// subscribe to the optic epoch, a swap under the jump threshold still re-learns the
+		// new optic's disc, the epoch is consumed only after a settled re-learn
+		static u32 s_disc_px_epoch = 0;
+		const bool disc_epoch_swap = (vpd.svp_optic_epoch != s_disc_px_epoch);
+		if (disc > 1.f && disc == disc && rot > 0.999f) // settled, ignore NaN / degenerate
+		{
+			float& latched = vpd.svp_disc_px;
+			const float prev_latched = latched;
+			if (latched <= 0.f || disc > latched + 24.f || disc_epoch_swap) // first settle, a jump, or an optic swap
+				latched = disc;
+			else if (disc < latched * 0.85f) // big drop, swapped to a smaller optic
+				latched = disc;
+			if (latched != prev_latched)
+			{
+				if (ps_r__svp_stats)
+					++svp_stats_disc_latch;
+				svp_ledger_disc_latch = 1;
+			} // overlay + ledger proof the latch moved
+			s_disc_px_epoch = vpd.svp_optic_epoch;
+		}
+		extern int ps_r__svp_diag;
+		static u32 s_svpres_t = 0;
+		if (ps_r__svp_diag && disc > 1.f && Device.dwTimeGlobal - s_svpres_t > 700)
+		{
+			s_svpres_t = Device.dwTimeGlobal;
+			const u32 sres = RImplementation.TargetSVP->Width;
+			extern float g_pip_scope_magnification;
+			extern float ps_r__svp_adaptive_res;
+			const float lin = (float)sres / disc;
+			PipMsg("[SVP-RES] mag=%.1f svp=%ux%u disc=%.0fpx latch=%.0f adapt=%.2f overrender=%.2fx_linear %.2fx_area",
+				g_pip_scope_magnification, sres, sres, disc, vpd.svp_disc_px, ps_r__svp_adaptive_res, lin, lin * lin);
+		}
+	}
 }

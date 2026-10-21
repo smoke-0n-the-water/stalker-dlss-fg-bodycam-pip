@@ -7,6 +7,10 @@
 
 void CResourceManager::OnDeviceDestroy(BOOL)
 {
+#if defined(USE_DX10) || defined(USE_DX11)
+    DrainTextureLoads();
+    ReleasePrefetchedTextures();
+#endif
 	if (RDEVICE.b_is_Ready) return;
 	m_textures_description.UnLoad();
 

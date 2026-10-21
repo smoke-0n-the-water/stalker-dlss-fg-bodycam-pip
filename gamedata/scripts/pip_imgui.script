@@ -19,7 +19,6 @@ local groups = {
         { "r__svp_skip_hud_distort", "Exclude HUD Distortion", "bool" },
         { "r__svp_wpn_dof", "Weapon Depth of Field", "bool" },
         { "r__svp_emissive", "Scope Emissive Replay", "bool" },
-        { "r__svp_cull_grass", "Scope Grass Culling", "bool" },
         { "r__svp_light_cull", "Scope Light Culling", "bool" },
         { "r__svp_roll_stabilize", "Roll Stabilization", "bool" },
         { "r__svp_near_blur", "Near Field Blur", "float", 0.01 },
@@ -41,6 +40,38 @@ local groups = {
         { "r__svp_skip_grass", "Skip Grass", "bool" },
         { "r__svp_sss_sun", "SSS Sun Contact Shadows", "bool" },
     },
+    lens = {
+        { "r__svp_lens_environment", "Reflection Brightness", "float", 0.01 },
+        { "r__svp_lens_blur", "Reflection Blur", "float", 0.01 },
+        { "r__svp_lens_hue", "Coating Hue", "float", 0.005 },
+        { "r__svp_lens_saturation", "Coating Saturation", "float", 0.01 },
+        { "r__svp_lens_dirt", "Dirt", "float", 0.01 },
+        { "r__svp_lens_direct", "Glint Strength", "float", 0.01 },
+        { "r__svp_lens_shooter", "Show Player Reflection", "bool" },
+        { "r__svp_lens_shooter_hip", "Player Reflection at Hip", "bool" },
+        { "r__svp_lens_shooter_ads", "Player Silhouette over Scope", "float", 0.01 },
+        { "r__svp_lens_shooter_x", "Player Reflection X (Right)", "float", 0.002 },
+        { "r__svp_lens_shooter_y", "Player Reflection Y (Up)", "float", 0.002 },
+        { "r__svp_lens_shooter_z", "Player Reflection Z (Forward)", "float", 0.002 },
+        { "r__scope_vslr_move_interval", "Reflection Update Interval (ms)", "integer", 1.0 },
+    },
+}
+
+-- the lens look at its shipped values, restored by the Lens tab's reset button
+local lens_defaults = {
+    r__svp_lens_environment = 1.0,
+    r__svp_lens_blur = 0.09,
+    r__svp_lens_hue = 0.0,
+    r__svp_lens_saturation = 0.64,
+    r__svp_lens_dirt = 1.0,
+    r__svp_lens_direct = 1.0,
+    r__svp_lens_shooter = 1,
+    r__svp_lens_shooter_hip = 0,
+    r__svp_lens_shooter_ads = 0.0,
+    r__svp_lens_shooter_x = -0.042,
+    r__svp_lens_shooter_y = 0.004,
+    r__svp_lens_shooter_z = -0.012,
+    r__scope_vslr_move_interval = 100,
 }
 
 local descriptions = {
@@ -58,7 +89,6 @@ local descriptions = {
     r__svp_skip_hud_distort = "Keep HUD distortion out of the objective image.",
     r__svp_wpn_dof = "Supply weapon depth-of-field data to the scope pass.",
     r__svp_emissive = "Replay self-illuminated geometry in the scope image.",
-    r__svp_cull_grass = "Cull grass to the objective cone.",
     r__svp_light_cull = "Cull mirrored scope lights to the objective cone.",
     r__svp_roll_stabilize = "Keep the scope image level instead of following weapon cant.",
     r__svp_near_blur = "Defocus geometry close to the objective.",
@@ -77,6 +107,19 @@ local descriptions = {
     r__svp_skip_volumetric = "Omit volumetric lighting from the scope pass.",
     r__svp_skip_grass = "Omit grass and detail rendering from the scope pass.",
     r__svp_sss_sun = "Enable SSS sun contact shadows in the scope.",
+    r__svp_lens_environment = "Brightness of the environment reflection on the scope glass. One is the shipped look.",
+    r__svp_lens_blur = "Blur of the reflection on the scope glass. Negative is sharper, positive rougher; the default is 0.09.",
+    r__svp_lens_hue = "Shifts the colour of the lens coating around the hue circle, in turns. Zero is the shipped look.",
+    r__svp_lens_saturation = "Colour strength of the lens coating. Zero is grey, one is the full coating colour; the default is 0.64.",
+    r__svp_lens_dirt = "Amount of dirt and smudges on the scope glass. One is the shipped look.",
+    r__svp_lens_direct = "Strength of light glints on the scope glass from the sun and lamps. One is the shipped look.",
+    r__svp_lens_shooter = "Show your own head and shoulders reflected in the scope glass.",
+    r__svp_lens_shooter_hip = "Also show your reflection while not aiming down the sights.",
+    r__svp_lens_shooter_ads = "How far your silhouette darkens the scope image while aiming. Zero is physical: the faint reflection only.",
+    r__svp_lens_shooter_x = "Moves your reflected body to the right of your eye, in metres (negative: left).",
+    r__svp_lens_shooter_y = "Moves your reflected body up from your eye, in metres (negative: down).",
+    r__svp_lens_shooter_z = "Moves your reflected body forward from your eye, in metres: towards the glass, so it shows larger (negative: back).",
+    r__scope_vslr_move_interval = "Least time between reflection updates while you move, in milliseconds. Lower updates more often and costs more; 0 updates as fast as the capture can.",
 }
 
 local profile_labels = {
@@ -192,6 +235,19 @@ end
 local function draw_group(settings)
     for _, setting in ipairs(settings) do
         draw_setting(setting)
+    end
+end
+
+local function draw_lens()
+    ImGui.TextDisabled("PiP scope glass look. Changes show immediately.")
+    draw_group(groups.lens)
+    if ImGui.Button("Reset Lens Look##svp_lens_reset", vector2():set(160, 0)) then
+        for _, setting in ipairs(groups.lens) do
+            local name, kind = setting[1], setting[3]
+            if lens_defaults[name] ~= nil then
+                set_number(name, lens_defaults[name], kind ~= "float")
+            end
+        end
     end
 end
 
@@ -342,6 +398,10 @@ local function render_window()
         end
         if ImGui.BeginTabItem("Quality", true, 0) then
             draw_group(groups.quality)
+            ImGui.EndTabItem()
+        end
+        if ImGui.BeginTabItem("Lens", true, 0) then
+            draw_lens()
             ImGui.EndTabItem()
         end
         if ImGui.BeginTabItem("Current Scope Profile", true, 0) then

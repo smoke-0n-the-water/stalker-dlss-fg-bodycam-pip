@@ -12,10 +12,29 @@
 #include "script_attachment_manager.h"
 #include "../xrEngine/CameraBase.h"
 #include "bodycam_camera.h"
+#include "bodycam_settings.h"
+#include "bodycam_math.h"
+#include "bodycam_reference/script_layer_policy.h"
+#include "bodycam_reference/animation_blend.h"
+#include "first_person_transform.h"
 #include "bodycam_hud_arms.h"
 #include "../Layers/xrRender/svp_console.h"
 
+#include "bodycam_reference_optics.h"
+#include "bodycam_reference_host.h"
+#include "../xrEngine/svp_reference_optics.h"
+
 extern int g_nearwall;
+
+namespace {
+Fmatrix NativeHudLayerInfluence(const Fmatrix& transform,float weight)
+{
+    if(weight>=1.f)return transform;
+    Fmatrix result;result.identity();if(weight<=0.f)return result;
+    return Bodycam::ToEngine(BodycamReference::Compose(BodycamReference::BlendAnimationLocal(
+        BodycamReference::LocalPose{},BodycamReference::Decompose(Bodycam::ToPortable(transform)),weight)));
+}
+}
 
 player_hud* g_player_hud = NULL;
 Fvector _ancor_pos;
@@ -653,6 +672,7 @@ u32 attachable_hud_item::anim_play(const shared_str& anm_name_b, BOOL bMixIn, co
 	float speed, bool bMixIn2)
 {
 	player_hud_motion* anm = find_motion(anm_name_b);
+    anm=m_parent->ReferenceSelectActionMotion(*this,anm);
 	rnd_idx = (u8)Random.randI(anm->m_animations.size());
 	const motion_descr& M = anm->m_animations[rnd_idx];
 	if (speed == 1.f)
@@ -663,6 +683,7 @@ u32 attachable_hud_item::anim_play(const shared_str& anm_name_b, BOOL bMixIn, co
 	u32 ret = 0;
 	if (m_attach_place_idx != SCOPE_ATTACH_IDX) {
 		ret = g_player_hud->anim_play(m_attach_place_idx, M.mid, bMixIn, md, speed);
+		if(m_attach_place_idx==0)g_player_hud->ReferenceSelectPlayedAction(M.mid.val,anm->m_alias_name.c_str());
 	}
 
 	if (m_model->dcast_PKinematicsAnimated())
@@ -679,7 +700,7 @@ u32 attachable_hud_item::anim_play(const shared_str& anm_name_b, BOOL bMixIn, co
 		else
 			item_anm_name = M.name;
 
-		MotionID M2 = ka->ID_Cycle_Safe(item_anm_name);
+        MotionID M2 = ka->ID_Cycle_Safe(item_anm_name);
 		if (!M2.valid())
 			M2 = ka->ID_Cycle_Safe("idle");
 		else if (bDebug)
@@ -687,7 +708,7 @@ u32 attachable_hud_item::anim_play(const shared_str& anm_name_b, BOOL bMixIn, co
 
 		R_ASSERT3(M2.valid(), make_string("model has no motion [idle], section %s", m_sect_name.c_str()).c_str(), pSettings->r_string(m_sect_name, "item_visual"));
 
-		u16 root_id = m_model->LL_GetBoneRoot();
+        u16 root_id = m_model->LL_GetBoneRoot();
 		CBoneInstance& root_binst = m_model->LL_GetBoneInstance(root_id);
 		root_binst.set_callback_overwrite(TRUE);
 		root_binst.mTransform.identity();
@@ -751,6 +772,7 @@ player_hud::player_hud()
 	m_adjust_mode = false;
 	script_anim_part = u8(-1);
 	script_anim_offset_factor = 0.f;
+	script_anim_bodycam_lowering_influence = 1.f;
 	script_anim_item_attached = false;
 	script_anim_item_model = nullptr;
 	script_anim_lead_gun = false;
@@ -796,13 +818,9 @@ player_hud::player_hud()
 	}
 }
 
-void player_hud::DumpStalker2AuthoredMotionProfile()
-{
-	m_bodycam_hud_arms->DumpAuthoredMotionProfile();
-}
-
 player_hud::~player_hud()
 {
+	ResetReferenceHost();
 	xr_delete(m_bodycam_hud_arms);
 	if (m_model)
 	{
@@ -868,6 +886,7 @@ void player_hud::load(const shared_str& player_hud_sect, bool force)
 
 	if (script_override_arms) return;
 
+	UnbindReferenceWeapon();
 	if (m_model)
 	{
 		IRenderVisual* v = m_model->dcast_RenderVisual();
@@ -1148,9 +1167,20 @@ extern float psHUD_FOV;
 
 void player_hud::update(const Fmatrix& cam_trans)
 {
+	HudPoseFrame frame;
+	prepare_hud_pose(cam_trans, frame);
+
+	m_bodycam_hud_arms->UpdateAndApply(Actor()->BodycamArmPose(), Device.fTimeDelta);
+
+	finalize_hud_pose(frame);
+}
+
+void player_hud::prepare_hud_pose(const Fmatrix& cam_trans, HudPoseFrame& frame)
+{
 	Fmatrix trans = cam_trans;
 	Fmatrix trans_b = cam_trans;
 	CWeapon* wep = smart_cast<CWeapon*>(Actor()->inventory().ActiveItem());
+	frame.weapon = wep;
 
 	float& control_factor = Actor()->freelook_cam_control;
 	u8 cam_freelook = Actor()->cam_freelook;
@@ -1265,8 +1295,10 @@ void player_hud::update(const Fmatrix& cam_trans)
 		}
 	}
 
+
 	Fvector bodycam_hud_pos, bodycam_hud_rot;
-	if (Actor()->cam_BodycamGetHudOffset(bodycam_hud_pos, bodycam_hud_rot) && script_anim_part != 2)
+	const float lowering_weight = BodycamLoweringInfluence();
+	if (!frame.reference && Actor()->cam_BodycamGetHudOffset(bodycam_hud_pos, bodycam_hud_rot, lowering_weight))
 	{
 		m1pos.add(bodycam_hud_pos);
 		m2pos.add(bodycam_hud_pos);
@@ -1293,8 +1325,8 @@ void player_hud::update(const Fmatrix& cam_trans)
 	m_model_2->dcast_PKinematics()->CalculateBones_Invalidate();
 	m_model_2->dcast_PKinematics()->CalculateBones(TRUE);
 
-	Fmatrix left_item_hand_relative;
-	bool left_item_follows_hand = false;
+	Fmatrix& left_item_hand_relative = frame.left_item_hand_relative;
+	bool& left_item_follows_hand = frame.left_item_follows_hand;
 	if (m_attached_items[1])
 	{
 		m_attached_items[1]->update_attach_offset();
@@ -1304,8 +1336,8 @@ void player_hud::update(const Fmatrix& cam_trans)
 			left_item_hand_relative);
 	}
 
-	Fmatrix script_item_hand_relative;
-	bool script_item_follows_hand = false;
+	Fmatrix& script_item_hand_relative = frame.script_item_hand_relative;
+	bool& script_item_follows_hand = frame.script_item_follows_hand;
 	if (script_anim_item_attached && script_anim_item_model && m_attach_idx == 1)
 	{
 		Fmatrix script_item_offset;
@@ -1318,10 +1350,15 @@ void player_hud::update(const Fmatrix& cam_trans)
 			script_item_offset, script_anim_lead_gun, script_item_hand_relative);
 	}
 
-	Bodycam::ArmPose bodycam_arm_pose;
-	Actor()->cam_BodycamGetArmPose(bodycam_arm_pose);
-	m_bodycam_hud_arms->UpdateAndApply(bodycam_arm_pose, Device.fTimeDelta);
+}
 
+void player_hud::finalize_hud_pose(const HudPoseFrame& frame)
+{
+	CWeapon* wep = frame.weapon;
+	const Fmatrix& left_item_hand_relative = frame.left_item_hand_relative;
+	const bool left_item_follows_hand = frame.left_item_follows_hand;
+	const Fmatrix& script_item_hand_relative = frame.script_item_hand_relative;
+	const bool script_item_follows_hand = frame.script_item_follows_hand;
 	for (script_layer* anm : m_script_layers)
 	{
 		if (!anm || !anm->anm || (!anm->active && anm->blend_amount == 0.f))
@@ -1348,6 +1385,14 @@ void player_hud::update(const Fmatrix& cam_trans)
 		}
 
 		Fmatrix blend = anm->XFORM();
+        const bool applyLayer=BodycamReference::ApplyScriptLayer(frame.reference,anm->m_name.c_str());
+        if(!applyLayer){
+            // Reference replaces this layer; it keeps only the share that the
+            // motion influence leaves to the engine's own animation.
+            const float nativeInfluence=1.f-frame.reference_motion_influence;
+            if(nativeInfluence<=0.f)continue;
+            blend=NativeHudLayerInfluence(blend,nativeInfluence);
+        }
 
 		if (anm->m_part == 0 || anm->m_part == 2)
         {
@@ -1386,6 +1431,7 @@ void player_hud::update(const Fmatrix& cam_trans)
 	need_blend[0] = ((script_anim_part == 0 || script_anim_part == 2) || (m_attached_items[0] && m_attached_items[0]->m_parent_hud_item->NeedBlendAnm()));
 	need_blend[1] = ((script_anim_part == 1 || script_anim_part == 2) || (m_attached_items[1] && m_attached_items[1]->m_parent_hud_item->NeedBlendAnm()));
 
+	const float nativeMovementInfluence=frame.reference?1.f-frame.reference_motion_influence:1.f;
 	for (movement_layer* anm : m_movement_layers)
 	{
 		if (!anm || !anm->anm || (!anm->active && anm->blend_amount[0] == 0.f && anm->blend_amount[1] == 0.f))
@@ -1429,25 +1475,35 @@ void player_hud::update(const Fmatrix& cam_trans)
 		}
 
 		anm->anm->Update(Device.fTimeDelta);
+		if(nativeMovementInfluence<=0.f)continue;
 
 		if (anm->blend_amount[0] == anm->blend_amount[1])
 		{
-			Fmatrix blend = anm->XFORM(0);
+			Fmatrix blend = NativeHudLayerInfluence(anm->XFORM(0),nativeMovementInfluence);
 			m_transform.mulB_43(blend);
 			m_transform_2.mulB_43(blend);
 		}
 		else
 		{
 			if (anm->blend_amount[0] > 0.f)
-				m_transform.mulB_43(anm->XFORM(0));
+				m_transform.mulB_43(NativeHudLayerInfluence(anm->XFORM(0),nativeMovementInfluence));
 
 			if (anm->blend_amount[1] > 0.f)
-				m_transform_2.mulB_43(anm->XFORM(1));
+				m_transform_2.mulB_43(NativeHudLayerInfluence(anm->XFORM(1),nativeMovementInfluence));
 		}
 	}
 
 	if (m_attached_items[0])
 		m_attached_items[0]->update(true);
+
+    if (frame.reference_weapon_pose && m_attached_items[0])
+    {
+        // The weapon follows the right hand as the Reference host posed it,
+        // script layers included; the optic then attaches to this transform.
+        Fmatrix hand;
+        hand.mul_43(m_transform,m_model->dcast_PKinematics()->LL_GetTransform(frame.reference_hand_bone));
+        m_attached_items[0]->m_item_transform.mul_43(hand,frame.reference_hand_grip);
+    }
 
 	if (m_attached_items[1])
 	{
@@ -1561,6 +1617,8 @@ void player_hud::update(const Fmatrix& cam_trans)
 
 	if (wep && m_attached_items[0])
 		wep->UpdateSvpWeaponPose();
+
+	FirstPerson::PublishHud(*this);
 }
 
 void player_hud::updateMovementLayerState()
@@ -1602,7 +1660,7 @@ void player_hud::updateMovementLayerState()
 			else if (state.bCrouch) {
 				m_movement_layers[eCrouch]->Play();
 			}
-			else if (state.bSprint && pActor->cam_BodycamSprintAnimReady()) {
+			else if (state.bSprint && pActor->BodycamSprintAnimReady()) {
 				m_movement_layers[eSprint]->Play();
 			}
 			else if (!isActorAccelerated(pActor->MovingState(), false)) {
@@ -1615,7 +1673,8 @@ void player_hud::updateMovementLayerState()
 	}
 }
 
-void player_hud::PlayBlendAnm(LPCSTR name, u8 part, float speed, float power, bool bLooped, bool no_restart, LPCSTR pivot_bone)
+void player_hud::PlayBlendAnm(LPCSTR name, u8 part, float speed, float power, bool bLooped, bool no_restart,
+	LPCSTR pivot_bone, float bodycam_lowering_influence)
 {
 	for (script_layer* anm : m_script_layers)
 	{
@@ -1635,13 +1694,14 @@ void player_hud::PlayBlendAnm(LPCSTR name, u8 part, float speed, float power, bo
 			anm->m_part = part;
 			anm->anm->Speed() = speed;
 			anm->m_power = power;
+			anm->m_bodycam_lowering_influence = clampr(bodycam_lowering_influence, 0.f, 1.f);
 			anm->active = true;
             anm->m_pivot_bone = pivot_bone;
 			return;
 		}
 	}
 
-	script_layer* anm = xr_new<script_layer>(name, part, speed, power, bLooped, pivot_bone);
+	script_layer* anm = xr_new<script_layer>(name, part, speed, power, bLooped, pivot_bone, bodycam_lowering_influence);
 	m_script_layers.push_back(anm);
 }
 
@@ -1695,12 +1755,14 @@ CBlend* play_blend(player_hud* hud, u8 pid, const MotionID& M, BOOL bMixIn, floa
 		return play_blend(hud, 2, M, bMixIn, speed);
 	}
 	case 1:
+	{
 		if (!script_anim && hud->script_anim_part == 1) return nullptr;
-		hud->m_model_2->PlayCycle(0, M, bMixIn, 0, 0, 0, speed);
+		CBlend* active_blend = hud->m_model_2->PlayCycle(0, M, bMixIn, 0, 0, 0, speed);
 		hud->m_model_2->PlayCycle(1, M, bMixIn, 0, 0, 0, speed);
 		hud->m_model_2->PlayCycle(2, M, bMixIn, 0, 0, 0, speed);
 		hud->m_model_2->dcast_PKinematics()->CalculateBones_Invalidate();
-		return nullptr;
+		return active_blend;
+	}
 	case 2:
 		if (!script_anim && hud->script_anim_part == 0) return nullptr;
 		CBlend* active_blend = hud->m_model->PlayCycle(0, M, bMixIn, 0, 0, 0, speed);
@@ -1769,6 +1831,12 @@ u32 player_hud::anim_play(u16 part, const MotionID& M, BOOL bMixIn, const CMotio
 	if (override_part != u16(-1))
 		part_id = override_part;
 
+	// A new clip starts at its authored rate.
+	if (part == 0)
+	{
+		BodycamReleaseOneShot();
+		m_bodycam_loop_pace = 1.f;
+	}
 	CBlend* active_blend = play_blend(this, part_id, M, bMixIn, speed);
 	if (part < 2 && m_attached_items[part])
 	{
@@ -1814,7 +1882,8 @@ void player_hud::update_script_item()
 }
 
 // 0 = right arm + hand, 1 = left arm + hand, 2 = both
-u32 player_hud::script_anim_play(u8 hand, LPCSTR section, LPCSTR anm_name, bool bMixIn, float speed)
+u32 player_hud::script_anim_play(u8 hand, LPCSTR section, LPCSTR anm_name, bool bMixIn, float speed,
+	float bodycam_lowering_influence)
 {
 	if (!pSettings->section_exist(section))
 	{
@@ -1863,6 +1932,7 @@ u32 player_hud::script_anim_play(u8 hand, LPCSTR section, LPCSTR anm_name, bool 
 	script_anim_offset[0] = offs;
 	script_anim_offset[1] = rrot;
 	script_anim_part = hand;
+	script_anim_bodycam_lowering_influence = clampr(bodycam_lowering_influence, 0.f, 1.f);
 
 	player_hud_motion_container* pm = get_hand_motions(section);
 	player_hud_motion* phm = pm->find_motion(anm_name);
@@ -1941,6 +2011,7 @@ void player_hud::attach_item(CHudItem* item)
 
 	if (m_attached_items[item_idx] != pi)
 	{
+		if (item_idx == 0) UnbindReferenceWeapon();
 		if (m_attached_items[item_idx])
 		{
 			m_attached_items[item_idx]->m_active_hand_motion.invalidate();
@@ -2043,6 +2114,7 @@ void player_hud::detach_item_idx(u16 idx)
 {
 	if (NULL == m_attached_items[idx]) return;
 
+	if (idx == 0) UnbindReferenceWeapon();
 	m_attached_items[idx]->m_parent_hud_item->on_b_hud_detach();
 	m_attached_items[idx]->m_active_hand_motion.invalidate();
 	m_attached_items[idx]->m_active_hand_blend = nullptr;
@@ -2197,11 +2269,7 @@ void player_hud::OnMovementChanged(ACTOR_DEFS::EMoveCommand cmd)
 			m_attached_items[SCOPE_ATTACH_IDX]->m_parent_hud_item->OnMovementChanged(cmd);
 	}
 
-	::luabind::functor<void> func;
-	if (ai().script_engine().functor("_g.player_hud__OnMovementChanged", func))
-	{
-		func(cmd);
-	}
+	BodycamNotifyScriptMovement(cmd);
 
 	updateMovementLayerState();
 }
@@ -2326,6 +2394,12 @@ void player_hud::OnFrame()
 			m_attached_items[SCOPE_ATTACH_IDX]->m_item_transform.mulB_43(nearwall_0);
 		}
 	}
+    // Publish after every near-wall mode and attached-optic adjustment, not
+    // from the earlier weapon-ray snapshot in finalize_hud_pose.
+    if(!Bodycam::GetConfig().scope_effects_enable)m_reference_optics_failed_request.reset();
+    auto* weapon=m_attached_items[0]?smart_cast<CWeapon*>(m_attached_items[0]->m_parent_hud_item):nullptr;
+    if(weapon)BodycamReference::PublishOptics(*weapon,m_reference_optics_failed_request);
+    else svp_reference_optics_clear();
 }
 
 void player_hud::net_Relcase(CObject* obj)

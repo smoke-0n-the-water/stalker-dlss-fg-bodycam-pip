@@ -48,6 +48,15 @@ void CRenderTarget::phase_nightvision()
 
 	//Set pass
 	RCache.set_Element(s_nightvision->E[ps_r2_nightvision]);
+#if defined(USE_DX11)
+
+	// Optical focus is admitted only after this frame's actual lens and image.
+	RCache.set_c("scope_glass_nvg_focus", (this == RImplementation.TargetMain
+		&& !RImplementation.o.dx10_msaa && scope_glass_deferred_current()
+		&& scope_reference_current() && scope_reference_composited_frame == Device.dwFrame) ? 1.f : 0.f,
+		0.f, 0.f, 0.f);
+#endif
+
 
 	//Set geometry
 	RCache.set_Geometry(g_combine);

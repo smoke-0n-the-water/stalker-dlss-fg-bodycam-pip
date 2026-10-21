@@ -3,6 +3,7 @@
 //////////////////////////////////////////////////////////////////////
 
 #include "stdafx.h"
+#include "bodycam_reference_projection.h"
 #include "igame_level.h"
 #include "igame_persistent.h"
 
@@ -380,6 +381,19 @@ void CCameraManager::ApplyDeviceOverride(const Fvector& P, const Fvector& D, con
 void CCameraManager::Update(const Fvector& P, const Fvector& D, const Fvector& N, float fFOV_Dest, float fASPECT_Dest,
                             float fFAR_Dest, u32 flags)
 {
+	UpdateInternal(P, D, N, fFOV_Dest, fASPECT_Dest, fFAR_Dest, flags, false);
+}
+
+void CCameraManager::UpdateReference(const Fmatrix& cameraWorld, float fFOV, float fASPECT, float fFAR)
+{
+	VERIFY(_valid(cameraWorld));
+	UpdateInternal(cameraWorld.c, cameraWorld.k, cameraWorld.j, fFOV, fASPECT, fFAR,
+		CCameraBase::flPositionRigid | CCameraBase::flDirectionRigid, true);
+}
+
+void CCameraManager::UpdateInternal(const Fvector& P, const Fvector& D, const Fvector& N,
+	float fFOV_Dest, float fASPECT_Dest, float fFAR_Dest, u32 flags, bool reference)
+{
 #ifdef DEBUG
     if (!Device.Paused())
     {
@@ -413,14 +427,24 @@ void CCameraManager::Update(const Fvector& P, const Fvector& D, const Fvector& N
 	m_cam_info.n.crossproduct(m_cam_info.d, m_cam_info.r);
 
 	float aspect = Device.fHeight_2 / Device.fWidth_2;
-	float src = 10 * Device.fTimeDelta;
-	clamp(src, 0.f, 1.f);
-	float dst = 1 - src;
-	m_cam_info.fFov = m_cam_info.fFov * dst + fFOV_Dest * src;
-	m_cam_info.fFar = m_cam_info.fFar * dst + fFAR_Dest * src;
-	m_cam_info.fAspect = m_cam_info.fAspect * dst + (fASPECT_Dest * aspect) * src;
+	if (reference)
+	{
+		m_cam_info.fFov = fFOV_Dest;
+		m_cam_info.fFar = fFAR_Dest;
+		m_cam_info.fAspect = fASPECT_Dest * aspect;
+	}
+	else
+	{
+		float src = 10 * Device.fTimeDelta;
+		clamp(src, 0.f, 1.f);
+		float dst = 1 - src;
+		m_cam_info.fFov = m_cam_info.fFov * dst + fFOV_Dest * src;
+		m_cam_info.fFar = m_cam_info.fFar * dst + fFAR_Dest * src;
+		m_cam_info.fAspect = m_cam_info.fAspect * dst + (fASPECT_Dest * aspect) * src;
+	}
 	m_cam_info.dont_apply = false;
 
+	// Native action and stance effectors layer over the solved Reference base.
 	UpdateCamEffectors();
 
 	UpdatePPEffectors();
@@ -428,7 +452,7 @@ void CCameraManager::Update(const Fvector& P, const Fvector& D, const Fvector& N
 	m_base_cam_info = m_cam_info;
 	m_base_cam_info_valid = true;
 
-	if (false == m_cam_info.dont_apply && m_bAutoApply)
+	if (false == m_cam_info.dont_apply && m_bAutoApply && !reference)
 		ApplyDevice(VIEWPORT_NEAR);
 
 	UpdateDeffered();
@@ -555,10 +579,17 @@ void CCameraManager::ApplyDevice(float _viewport_near)
 	Device.mProject.build_projection(deg2rad(Device.fFOV), m_cam_info.fAspect, _viewport_near, m_cam_info.fFar);
 	// pip true hud fov renders the weapon at the scene perspective while fully aimed through a PiP scope
 	extern int g_svp_hud_true_fov;
-	const float hud_fov_deg = (g_svp_hud_true_fov && Device.true_pip_on && Device.m_SecondViewport.IsSVPActive()
-		&& g_pGamePersistent && g_pGamePersistent->m_pGShaderConstants->hud_params.x > 0.999f)
-		? Device.fFOV : psHUD_FOV * 83.f;
+	const float hud_fov_deg = BodycamReference::HudProjectionFov(
+		Device.dwFrame, Device.reference_hud_projection_frame, Device.fFOV, psHUD_FOV * 83.f,
+		g_svp_hud_true_fov && Device.true_pip_on && Device.m_SecondViewport.IsSVPActive()
+		&& g_pGamePersistent && g_pGamePersistent->m_pGShaderConstants->hud_params.x > 0.999f,
+		Device.reference_hud_nearwall_scale);
 	Device.mProjectHud.build_projection(deg2rad(hud_fov_deg), Device.fASPECT, R_VIEWPORT_NEAR, m_cam_info.fFar);
+
+    const float referenceClipScale=BodycamReference::HudProjectionClipScale(
+        Device.dwFrame,Device.reference_hud_projection_frame,Device.reference_hud_clip_scale);
+    Device.mProjectHud._11*=referenceClipScale;
+    Device.mProjectHud._22*=referenceClipScale;
 
 	Device.mInvProject.invert(Device.mProject);
 	Device.mInvProjectHud.invert(Device.mProjectHud);

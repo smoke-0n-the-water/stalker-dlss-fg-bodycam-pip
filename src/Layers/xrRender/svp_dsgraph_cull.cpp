@@ -33,16 +33,6 @@ bool CDSGraphManager::svp_cull_active()
 	return s_svp_cull_on;
 }
 
-// grass cull, the detail manager replays the main frustum field on the SVP pass, reject instances off
-// the scope cone, the radius covers a blade so the root can sit a little outside without popping
-bool CDSGraphManager::svp_cull_reject_sphere(const Fvector& c, float r)
-{
-	if (!s_svp_cull_on)
-		return false;
-	Fvector wc = c;
-	return !s_svp_cull_frustum.testSphere_dirty(wc, r);
-}
-
 bool CDSGraphManager::svp_cull_reject(dxRender_Visual* V, Fmatrix* M)
 {
 	if (!s_svp_cull_on || !s_svp_cull_world || !V)

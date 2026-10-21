@@ -27,6 +27,10 @@ float svp_magnification_fraction()
 	return smoothstep(0.0, 1.0, saturate((svp_aperture.y - svp_aperture.z) / range));
 }
 
+#ifndef SVP_TUNNEL_RADIAL_FWIDTH
+#define SVP_TUNNEL_RADIAL_FWIDTH(value) fwidth(value)
+#endif
+
 float4 svp_profiled_tunneling_shadow(float2 lens_tc, bool authored_inside)
 {
 	if (svp_physical_optics_active() && authored_inside)
@@ -41,7 +45,7 @@ float4 svp_profiled_tunneling_shadow(float2 lens_tc, bool authored_inside)
 
 	const float inner_radius = 0.5 - tube_width;
 	const float radial_distance = distance(lens_tc, float2(0.5, 0.5));
-	const float pixel_feather = max(fwidth(radial_distance) * 1.5, 0.0005);
+	const float pixel_feather = max(SVP_TUNNEL_RADIAL_FWIDTH(radial_distance) * 1.5, 0.0005);
 	const float feather = max(svp_pupil_model.w, pixel_feather);
 	const float alpha = smoothstep(
 		inner_radius - feather, inner_radius, radial_distance);

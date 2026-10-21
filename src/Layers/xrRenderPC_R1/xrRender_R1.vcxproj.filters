@@ -285,6 +285,9 @@
     <ClInclude Include="..\xrRender\HOM.h">
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClInclude>
+    <ClInclude Include="..\xrRender\occ_engine.h">
+      <Filter>Visibility\HOM Occlusion</Filter>
+    </ClInclude>
     <ClInclude Include="..\xrRender\occRasterizer.h">
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClInclude>
@@ -793,6 +796,12 @@
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\occRasterizer.cpp">
+      <Filter>Visibility\HOM Occlusion</Filter>
+    </ClCompile>
+    <ClCompile Include="..\xrRender\occ_engine_legacy.cpp">
+      <Filter>Visibility\HOM Occlusion</Filter>
+    </ClCompile>
+    <ClCompile Include="..\xrRender\occ_engine_moc.cpp">
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\occRasterizer_core.cpp">

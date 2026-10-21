@@ -16,7 +16,6 @@
 #include "actoreffector.h"
 #include "static_cast_checked.hpp"
 #include "player_hud.h"
-#include "bodycam_movement_response.h"
 #include "bodycam_settings.h"
 
 #ifdef DEBUG
@@ -31,41 +30,6 @@ static const float s_fLandingTime2 = 0.3f; // через сколько снят
 static const float s_fJumpTime = 0.3f;
 static const float s_fJumpGroundTime = 0.1f; // для снятия флажка Jump если на земле
 const float s_fFallTime = 0.2f;
-
-namespace
-{
-constexpr u8 kBodycamBrakeStepCount = 2;
-constexpr float kBodycamFirstBrakeStepDelay = 0.10f;
-constexpr float kBodycamBrakeStepSpacing = 0.20f;
-constexpr float kBodycamBrakeStepPower = 0.85f;
-}
-
-void CActor::BodycamScheduleBrakeSteps()
-{
-	m_bodycam_brake_steps_pending = kBodycamBrakeStepCount;
-	m_bodycam_brake_step_timer = kBodycamFirstBrakeStepDelay;
-}
-
-void CActor::BodycamUpdateBrakeSteps(float dt)
-{
-	if (!m_bodycam_brake_steps_pending)
-		return;
-
-	if (!Local() || !g_Alive() || !is_on_ground() || (mstate_real & mcSprint))
-	{
-		m_bodycam_brake_steps_pending = 0;
-		m_bodycam_brake_step_timer = 0.f;
-		return;
-	}
-
-	m_bodycam_brake_step_timer -= dt;
-	if (m_bodycam_brake_step_timer > 0.f)
-		return;
-
-	CStepManager::play_forced_step(kBodycamBrakeStepPower, this == Level().CurrentViewEntity());
-	--m_bodycam_brake_steps_pending;
-	m_bodycam_brake_step_timer = kBodycamBrakeStepSpacing;
-}
 
 IC static void generate_orthonormal_basis1(const Fvector& dir, Fvector& updir, Fvector& right)
 {
@@ -201,6 +165,7 @@ void CActor::g_cl_ValidateMState(float dt, u32 mstate_wf)
 
 void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Jump, float dt)
 {
+	const bool bodycam_reference = BodycamReferenceMovement();
 	float cam_eff_factor = 0.0f;
 	mstate_old = mstate_real;
 	vControlAccel.set(0, 0, 0);
@@ -226,11 +191,12 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
 			mstate_wf &= ~mcJump;
 		}
 	}
+	if (bodycam_reference) BodycamReferenceGait(mstate_wf);
 	// update player accel
 	if (mstate_wf & mcFwd) vControlAccel.z += 1;
 	if (mstate_wf & mcBack) vControlAccel.z += -1;
-	if (mstate_wf & mcLStrafe) mstate_wf & mcSprint ? vControlAccel.x += -0.5 : vControlAccel.x += -1;
-	if (mstate_wf & mcRStrafe) mstate_wf & mcSprint ? vControlAccel.x += 0.5 : vControlAccel.x += 1;
+	if (mstate_wf & mcLStrafe) !bodycam_reference && (mstate_wf & mcSprint) ? vControlAccel.x += -0.5 : vControlAccel.x += -1;
+	if (mstate_wf & mcRStrafe) !bodycam_reference && (mstate_wf & mcSprint) ? vControlAccel.x += 0.5 : vControlAccel.x += 1;
 
 	CPHMovementControl::EEnvironment curr_env = character_physics_support()->movement()->Environment();
 	if (curr_env == CPHMovementControl::peOnGround || curr_env == CPHMovementControl::peAtWall)
@@ -304,13 +270,15 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
 			mstate_real |= mcSprint;
 		else
 			mstate_real &= ~mcSprint;
-		if (!(mstate_real & (mcFwd)) || mstate_real & (mcCrouch | mcClimb) || !isActorAccelerated(
+		if ((bodycam_reference ? !BodycamReferenceSprintDirection() : !(mstate_real & mcFwd)) || mstate_real & (mcCrouch | mcClimb) || !isActorAccelerated(
 			mstate_wf, IsZoomAimingMode()))
 		{
 			mstate_real &= ~mcSprint;
 			if (!(mstate_real & (mcCrouch) && !(mstate_wf & mcCrouch)))
 				mstate_wishful &= ~mcSprint;
 		}
+
+		if (bodycam_reference) BodycamReferenceFallbackGait();
 
 		// check player move state
 		if (mstate_real & mcAnyMove)
@@ -349,56 +317,22 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
 						scale *= m_fWalk_StrafeFactor;
 				}
 
+				if (bodycam_reference) scale = BodycamReferenceMoveScale(scale, vControlAccel, !!bAccelerated);
 				vControlAccel.mul(scale);
 				cam_eff_factor = scale;
 			} //scale>EPS
 		} //(mstate_real&mcAnyMove)
 	} //peOnGround || peAtWall
 
-	if (Local() && g_Alive())
-	{
-		m_bodycam_sprint_hud_changed = false;
-		Bodycam::MovementResponseInput response_input;
-		response_input.dt = dt;
-		response_input.move_flags = mstate_real;
-		response_input.ads = IsZoomAimingMode();
-		response_input.target_accel.set(vControlAccel);
-
-		const Bodycam::MovementResponseOutput response =
-			Bodycam::UpdateMovementResponse(Bodycam::GetConfig().movement, m_bodycam_movement_response, response_input);
-		vControlAccel.set(response.accel);
-		cam_eff_factor = vControlAccel.magnitude();
-		m_bodycam.SetMovementDebug(response.target_speed, response.actual_speed, response.speed_fraction);
-
-		const Bodycam::RuntimeConfig& config = Bodycam::GetConfig();
-		const bool sprint_transition_owned = cam_BodycamOwnsSprintTransition();
-		const Bodycam::SprintHudState sprint_hud = Bodycam::ResolveSprintHudState(
-			m_bodycam_sprint_hud_active, !!(mstate_real & mcSprint), sprint_transition_owned,
-			IsZoomAimingMode(), !!(mstate_real & mcAnyMove), response.speed_fraction,
-			Bodycam::ClampSprintBridgeHandoffSpeed(config.sprint.bridge_handoff_speed));
-		m_bodycam_sprint_anim_ready = sprint_hud.ready;
-		m_bodycam_sprint_hud_active = sprint_hud.active;
-		if (sprint_hud.notify && g_player_hud)
-		{
-			m_bodycam_sprint_hud_changed = true;
-			g_player_hud->OnMovementChanged(mcSprint);
-		}
-		if ((mstate_old & mcSprint) && !(mstate_real & mcSprint) && response.actual_speed > 0.25f)
-			BodycamScheduleBrakeSteps();
-		BodycamUpdateBrakeSteps(dt);
-	}
+	const bool classic = Local() && Bodycam::ClassicActive();
+	if (classic && g_Alive())
+		BodycamUpdateMovement(vControlAccel, cam_eff_factor, dt);
 	else
-	{
-		Bodycam::ResetMovementResponse(m_bodycam_movement_response);
-		m_bodycam.SetMovementDebug(0.f, 0.f, 0.f);
-		m_bodycam_sprint_anim_ready = true;
-		m_bodycam_sprint_hud_active = false;
-		m_bodycam_sprint_hud_changed = false;
-		m_bodycam_brake_steps_pending = 0;
-		m_bodycam_brake_step_timer = 0.f;
-	}
+		BodycamResetMovement();
 
-	if (IsGameTypeSingle() && cam_eff_factor > EPS)
+	// The Classic footstep camera replaces the movement-entry camera effectors.
+	const bool footstep_camera = classic && IsFocused() && Bodycam::FootstepCameraEnabled();
+	if (!bodycam_reference && !footstep_camera && IsGameTypeSingle() && cam_eff_factor > EPS)
 	{
 		LPCSTR state_anm = NULL;
 
@@ -709,7 +643,7 @@ bool CActor::CanSprint()
 		/*&& !(mstate_real&mcLStrafe || mstate_real&mcRStrafe)*/
 		&& InventoryAllowSprint();
 
-	if ((mstate_real & mcLStrafe || mstate_real & mcRStrafe) && !(mstate_real & mcFwd))
+	if (!Bodycam::ReferenceMovementActive() && (mstate_real & mcLStrafe || mstate_real & mcRStrafe) && !(mstate_real & mcFwd))
 		can_Sprint = false;
 
 	return can_Sprint && (m_block_sprint_counter <= 0);

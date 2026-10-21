@@ -85,12 +85,17 @@ extern ECORE_API float ps_r__Detail_l_ambient;
 extern ECORE_API float ps_r__Detail_l_aniso;
 extern ECORE_API float ps_r__Detail_density;
 extern ECORE_API float ps_r__Detail_height;
+extern ECORE_API float ps_r__Detail_density_knee;
+extern ECORE_API float ps_r__Detail_density_curve;
+extern ECORE_API int ps_r__detail_instancing;
 
 extern ECORE_API float ps_r__Tree_w_rot;
 extern ECORE_API float ps_r__Tree_w_speed;
 extern ECORE_API float ps_r__Tree_w_amp;
 extern ECORE_API float ps_r__Tree_SBC; // scale bias correct
 extern ECORE_API Fvector ps_r__Tree_Wave;
+// vertex cache plus overdraw reorder of the tree index ranges, read once at level load
+extern ECORE_API int ps_r__tree_ib_reorder;
 
 extern ECORE_API float ps_r__WallmarkTTL;
 extern ECORE_API float ps_r__WallmarkSHIFT;
@@ -302,6 +307,7 @@ extern ECORE_API int ps_r3_dyn_wet_surf_sm_res; // 256
 extern ECORE_API int opt_static;
 extern ECORE_API int opt_dynamic;
 extern ECORE_API int ps_pfx_volumetric_mode;
+extern ECORE_API int ps_pfx_volumetric_debug;
 extern ECORE_API int ps_r__portal_traverse_stats;
 
 enum : u64
@@ -348,8 +354,7 @@ enum : u64
 	R3FLAG_MSAA_OPT = (1ull << 28),
 	R2FLAG_TERRAIN_PREPASS = (1ull << 29),
 	R3FLAG_USE_DX10_1 = (1ull << 30),
-	R2FLAG_LIGHTS_DETAILS	= (1ull<<31),
-	R2FLAG_FAST_DETAILS_UPDATE = (1ull<<32)
+	R2FLAG_LIGHTS_DETAILS	= (1ull<<31)
 	//R3FLAG_MSAA_ALPHATEST		= (1ull<<31),
 };
 
@@ -365,6 +370,7 @@ enum: u64
 	R_FLAGEXT_HOM_DEPTH_DRAW = (1ull << 7),
 	R2FLAGEXT_SUN_ZCULLING = (1ull << 8),
 	R2FLAGEXT_SUN_OLD = (1ull << 9),
+	R2FLAGEXT_FAST_DETAILS_UPDATE = (1ull << 10),
 };
 
 enum
@@ -402,6 +408,36 @@ extern ECORE_API int ps_r__tex_evict_enabled;
 extern ECORE_API int ps_r__tex_evict_age_frames;
 extern ECORE_API int ps_r__tex_evict_batch_size;
 extern ECORE_API int ps_r__tex_evict_interval;
+
+// dxgi swapchain depth, needs vid_restart to apply, flip-discard requires >= 2
+extern ECORE_API int ps_r__swapchain_buffers;
+// IDXGIDevice1::SetMaximumFrameLatency cap, 0 leaves the driver default
+extern ECORE_API int ps_r__max_frame_latency;
+// 0 generates the sun minmax shadow map on every cascade like today, 1 skips the cascades no consumer reads
+extern ECORE_API int ps_r__sun_minmax_lean;
+// 0 binds the shared return zero shader in the sun shadow raster like today, 1 binds none at all
+extern ECORE_API int ps_r__smap_null_ps;
+// 0 records lod imposters in the shadow graphs like today, 1 skips a push no shadow pass ever draws
+extern ECORE_API int ps_r__sun_lod_skip;
+// 0 draws cascade grass with no accounting like today, 1 tallies slot sphere runs against the cascade frustum
+extern ECORE_API int ps_r__sun_grass_runs;
+// 0 draws every cascade grass instance like today, 1 draws only the slot ranges the cascade frustum keeps
+extern ECORE_API int ps_r__sun_grass_cull;
+// 0 draws cascade grass with the gbuffer element like today, 1 prefers the shadow element when the shader carries one
+extern ECORE_API int ps_r__grass_smap_element;
+// 0 sorts every render queue on every pass like today, 1 skips a queue that nothing appended to since its last sort
+extern ECORE_API int ps_r__dsgraph_sort_memo;
+// 0 walks the declaration layout map on every draw like today, 1 reuses the layout while the decl and signature hold
+extern ECORE_API int ps_r__dx11_layout_memo;
+// 0 draws every non-sun light over the whole frame like today, 1 clips its draws to the projected volume rect
+extern ECORE_API int ps_r__light_scissor;
+// 0 rebinds the volumetric smap texture and rebuilds the accum_direct_cascade RT every call like today,
+// 1 caches the smap resolve after the first hit and skips a provably redundant phase_accumulator rebind
+extern ECORE_API int ps_r__light_lean;
+// test-Present device loss poll interval in frames, 1 polls every frame like today
+extern ECORE_API int ps_r__device_state_interval;
+// 0 scans every constant buffer slot on every draw like today, 1 walks only the bound slots, 2 also runs the full scan and reports misses
+extern ECORE_API int ps_r__cb_dirty_list;
 
 extern void xrRender_initconsole();
 extern BOOL xrRender_test_hw();

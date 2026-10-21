@@ -7,6 +7,9 @@
 #pragma once
 
 #include	"shader.h"
+#if defined(USE_DX10) || defined(USE_DX11)
+#include "texture_load_lifetime.h"
+#endif
 #include	"tss_def.h"
 #include	"TextureDescrManager.h"
 // refs
@@ -87,6 +90,10 @@ private:
 	xr_vector<Shader*> v_shaders;
 
 	xr_vector<ref_texture> m_necessary;
+#if defined(USE_DX10) || defined(USE_DX11)
+    TextureLoadLifetime::Queue<ref_texture> pendingTextureLoads;
+    xr_vector<ref_texture> prefetchedTextures;
+#endif
 	// misc
 	xrCriticalSection creationGuard;
 
@@ -120,7 +127,16 @@ public:
 #endif
 
 	// Low level resource creation
-	CTexture* _CreateTexture(LPCSTR Name);
+#if defined(USE_DX10) || defined(USE_DX11)
+    ref_texture _CreateTexture(LPCSTR Name);
+    void QueueTextureLoad(const ref_texture& texture);
+    void CollectTextureLoads();
+    void PrefetchTexture(LPCSTR name);
+    void ReleasePrefetchedTextures();
+    void DrainTextureLoads(bool close=false);
+#else
+    CTexture* _CreateTexture(LPCSTR Name);
+#endif
 	CTexture* _FindTexture(LPCSTR Name);
 	void _DeleteTexture(const CTexture* T);
 

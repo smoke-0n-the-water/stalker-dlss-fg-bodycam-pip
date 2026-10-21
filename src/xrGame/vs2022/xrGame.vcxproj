@@ -479,6 +479,7 @@
     <ClInclude Include="..\ActivatingCharCollisionDelay.h" />
     <ClInclude Include="..\Actor.h" />
     <ClInclude Include="..\bodycam_camera.h" />
+    <ClInclude Include="..\first_person_transform.h" />
     <ClInclude Include="..\bodycam_hud_arms.h" />
     <ClInclude Include="..\bodycam_math.h" />
     <ClInclude Include="..\bodycam_mouse_input.h" />
@@ -2205,6 +2206,9 @@
     <ClCompile Include="..\ActorBackpack.cpp" />
     <ClCompile Include="..\ActorCameras.cpp" />
     <ClCompile Include="..\bodycam_camera.cpp" />
+    <ClCompile Include="..\first_person_transform.cpp">
+      <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
+    </ClCompile>
     <ClCompile Include="..\bodycam_hud_arms.cpp" />
     <ClCompile Include="..\bodycam_console.cpp" />
     <ClCompile Include="..\bodycam_math.cpp" />

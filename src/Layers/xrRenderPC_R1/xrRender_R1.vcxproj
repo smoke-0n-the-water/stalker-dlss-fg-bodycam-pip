@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="ProfiledDX11|x64">
@@ -328,7 +328,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release-AVX|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>.;$(SolutionDir)3rd party\imgui\;$(SolutionDir)3rd party\luajit-2\src\;$(SolutionDir)3rd party\luabind\;$(SolutionDir)xrCore;$(xrSdkDir)include;$(XRAY_16X_LIBS)OpenAutomate\inc;$(XRAY_16X_LIBS)nvapi;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;XRRENDER_R1_EXPORTS;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>$(XrProfilerDefines);WIN32;NDEBUG;_WINDOWS;_USRDLL;XRRENDER_R1_EXPORTS;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <UndefinePreprocessorDefinitions>USE_LUAJIT_ONE</UndefinePreprocessorDefinitions>
@@ -462,6 +462,7 @@
     <ClInclude Include="..\xrRender\ModelPool.h" />
     <ClInclude Include="..\xrRender\NvTriStrip.h" />
     <ClInclude Include="..\xrRender\NvTriStripObjects.h" />
+    <ClInclude Include="..\xrRender\occ_engine.h" />
     <ClInclude Include="..\xrRender\occRasterizer.h" />
     <ClInclude Include="..\xrRender\ParticleEffect.h" />
     <ClInclude Include="..\xrRender\ParticleEffectActions.h" />
@@ -596,6 +597,8 @@
     <ClCompile Include="..\xrRender\NvTriStrip.cpp" />
     <ClCompile Include="..\xrRender\NvTriStripObjects.cpp" />
     <ClCompile Include="..\xrRender\occRasterizer.cpp" />
+    <ClCompile Include="..\xrRender\occ_engine_legacy.cpp" />
+    <ClCompile Include="..\xrRender\occ_engine_moc.cpp" />
     <ClCompile Include="..\xrRender\occRasterizer_core.cpp" />
     <ClCompile Include="..\xrRender\ParticleEffect.cpp" />
     <ClCompile Include="..\xrRender\ParticleEffectActions.cpp" />

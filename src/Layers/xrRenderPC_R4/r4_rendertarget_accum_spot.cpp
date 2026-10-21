@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "../../xrEngine/peak_volumetric_debug.h"
 #include "../xrRender/du_cone.h"
 #include "..\xrRender\CHudInitializer.h"
 
@@ -35,14 +36,20 @@ void CRenderTarget::accum_spot(light* L)
 		}
 	}
 
-	BOOL bIntersect = FALSE; //enable_scissor(L);
+	Irect scissor_rect;
+	BOOL scissored = FALSE;
 	{
 		// setup xform
 		RCache.set_xform_world(L->m_xform);
 		RCache.set_xform_view(Device.mView);
 		RCache.set_xform_project(Device.mProject);
-		bIntersect = enable_scissor(L);
-		enable_dbt_bounds(L);
+		const BOOL near_intersect = enable_scissor(L);
+		// built per call so the svp replay of this light clips to its own viewport
+		if (ps_r__light_scissor && compute_light_scissor(L, near_intersect, scissor_rect))
+		{
+			RCache.set_Scissor(&scissor_rect);
+			scissored = TRUE;
+		}
 
 		// *** similar to "Carmack's reverse", but assumes convex, non intersecting objects,
 		// *** thus can cope without stencil clear with 127 lights
@@ -266,19 +273,25 @@ void CRenderTarget::accum_spot(light* L)
 		}
 	}
 
-	RCache.set_Scissor(0);
 	//CHK_DX		(HW.pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE,FALSE));
+	// later passes must not inherit this light's rect
+	if (scissored)
+		RCache.set_Scissor(nullptr);
+
 	//dwLightMarkerID					+=	2;	// keep lowest bit always setted up
 	increment_light_marker();
-
-	u_DBT_disable();
 }
 
 void CRenderTarget::accum_volumetric_lv(light* L)
 {
+    using PeakVolumetricDebug::Skip;
+    auto* debug=ps_pfx_volumetric_debug?&g_peak_volumetric_debug.For(Device.dwFrame,Device.m_SecondViewport.IsSVPFrame()):nullptr;
+    if(debug)++debug->entries;
 	//LV: Point lights will be fixed later... I hope
-	if (L == nullptr)
-		return;
+	if (L == nullptr){
+        if(debug)++debug->skipped[unsigned(Skip::NullLight)];
+        return;
+    }
 
 	// [ SSS ] Fade through distance volumetric lights.
 	if (ps_ssfx_volumetric.x > 0)
@@ -288,8 +301,10 @@ void CRenderTarget::accum_volumetric_lv(light* L)
 		L->flags.bVolumetric = Falloff <= 0 ? false : true;
 	}
 
-	if (!L->flags.bVolumetric)
-		return;
+	if (!L->flags.bVolumetric){
+        if(debug)++debug->skipped[unsigned(ps_ssfx_volumetric.x>0?Skip::DistanceFade:Skip::DisabledInAccumulator)];
+        return;
+    }
 
 	if (!RImplementation.o.ssfx_volumetric)
 	{
@@ -379,7 +394,14 @@ void CRenderTarget::accum_volumetric_lv(light* L)
 	RCache.set_c("m_shadow", m_Shadow);
 
 	//Render, no IB/VB - geometry in VS
+    // Backend calls counts DrawIndexed submissions, not entries or setup.
+    const auto before=debug?RCache.stat.calls:0;
 	draw_volume(L);
+    if(debug){
+        const auto submitted=RCache.stat.calls-before;
+        debug->submissions+=submitted;
+        if(!submitted)++debug->skipped[unsigned(Skip::NoDraw)];
+    }
 }
 
 void CRenderTarget::accum_volumetric(light* L)
@@ -429,13 +451,12 @@ void CRenderTarget::accum_volumetric(light* L)
 	*/
 	// *** assume accumulator setted up ***
 	// *****************************	Mask by stencil		*************************************
-	BOOL bIntersect = FALSE; //enable_scissor(L);
 	{
 		// setup xform
 		RCache.set_xform_world(L->m_xform);
 		RCache.set_xform_view(Device.mView);
 		RCache.set_xform_project(Device.mProject);
-		bIntersect = enable_scissor(L);
+		enable_scissor(L);
 
 		//enable_dbt_bounds				(L);
 	}
@@ -618,30 +639,35 @@ void CRenderTarget::accum_volumetric(light* L)
 		//	Set correct depth surface
 		//	It's slow. Make this when shader is created
 		{
-			char* pszSMapName;
-			BOOL b_HW_smap = RImplementation.o.HW_smap;
-			BOOL b_HW_PCF = RImplementation.o.HW_smap_PCF;
-			if (b_HW_smap)
+			static bool b_resolved = false;
+			if (!ps_r__light_lean || !b_resolved)
 			{
-				if (b_HW_PCF) pszSMapName = r2_RT_smap_depth;
-				else pszSMapName = r2_RT_smap_depth;
-			}
-			else pszSMapName = r2_RT_smap_surf;
-			//s_smap
-			STextureList* _T = &*s_accum_volume->E[0]->passes[0]->T;
-
-			STextureList::iterator _it = _T->begin();
-			STextureList::iterator _end = _T->end();
-			for (; _it != _end; _it++)
-			{
-				std::pair<u32, ref_texture>& loader = *_it;
-				u32 load_id = loader.first;
-				//	Shadowmap texture always uses 0 texture unit
-				if (load_id == 0)
+				char* pszSMapName;
+				BOOL b_HW_smap = RImplementation.o.HW_smap;
+				BOOL b_HW_PCF = RImplementation.o.HW_smap_PCF;
+				if (b_HW_smap)
 				{
-					//	Assign correct texture
-					loader.second.create(pszSMapName);
+					if (b_HW_PCF) pszSMapName = r2_RT_smap_depth;
+					else pszSMapName = r2_RT_smap_depth;
 				}
+				else pszSMapName = r2_RT_smap_surf;
+				//s_smap
+				STextureList* _T = &*s_accum_volume->E[0]->passes[0]->T;
+
+				STextureList::iterator _it = _T->begin();
+				STextureList::iterator _end = _T->end();
+				for (; _it != _end; _it++)
+				{
+					std::pair<u32, ref_texture>& loader = *_it;
+					u32 load_id = loader.first;
+					//	Shadowmap texture always uses 0 texture unit
+					if (load_id == 0)
+					{
+						//	Assign correct texture
+						loader.second.create(pszSMapName);
+					}
+				}
+				b_resolved = true;
 			}
 		}
 
@@ -788,7 +814,6 @@ void CRenderTarget::accum_volumetric(light* L)
 		}
 	*/
 	//CHK_DX		(HW.pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE,FALSE));
-	RCache.set_Scissor(0);
 
 	/*if (RImplementation.o.ssfx_volumetric)
 		set_viewport_size(HW.pContext, w, h);*/

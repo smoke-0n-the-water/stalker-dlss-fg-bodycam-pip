@@ -43,12 +43,16 @@ float svp_reticle_pip_pin()
 	return (shader_scope_params.w < -1.5) ? 0.0 : 1.0;
 }
 
+#ifndef SVP_RETICLE_FLIP_TEST
+#define SVP_RETICLE_FLIP_TEST(S) (ddy(S.tc0.y) < 0.0)
+#endif
+
 // mirror the sample V around the reticle center under true PiP so it matches the auto-flipped world
 // same raw mesh UV test as the image chunk so the two can never disagree
 void svp_reticle_flip(inout float2 reticle_tc, inout float2 reticle_lens_tc, Scope S)
 {
 	if (RETICLE_TYPE != RT_SCREEN && RETICLE_TYPE != RT_FLAT_SCREEN
-		&& shader_scope_params.w < -1.5 && svp_glass.w > 0.5 && ddy(S.tc0.y) < 0.0)
+		&& shader_scope_params.w < -1.5 && svp_glass.w > 0.5 && SVP_RETICLE_FLIP_TEST(S))
 	{
 		reticle_tc.y = 1.0 - reticle_tc.y;
 		reticle_lens_tc.y = 1.0 - reticle_lens_tc.y;

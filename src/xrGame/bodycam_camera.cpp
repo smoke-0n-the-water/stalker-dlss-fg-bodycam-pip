@@ -4,95 +4,64 @@
 #include "Actor.h"
 #include "level.h"
 #include "../xrEngine/CameraBase.h"
+#include "bodycam_diagnostics.h"
 
 namespace Bodycam
 {
 namespace
 {
-DebugSnapshot g_debug_snapshot;
-std::uint32_t ConvertMoveFlags(u32 mstate)
-{
-	std::uint32_t flags = 0;
-	if (mstate & mcFwd)
-		flags |= smfForward;
-	if (mstate & mcBack)
-		flags |= smfBack;
-	if (mstate & mcLStrafe)
-		flags |= smfLeft;
-	if (mstate & mcRStrafe)
-		flags |= smfRight;
-	if (mstate & mcCrouch)
-		flags |= smfCrouch;
-	if (mstate & mcSprint)
-		flags |= smfSprint;
-	if (mstate & mcFall)
-		flags |= smfFall;
-	if (mstate & mcJump)
-		flags |= smfJump;
-	if (mstate & (mcLanding | mcLanding2))
-		flags |= smfLanding;
-	return flags;
-}
-
 Fvector ToFvector(const SVec3& value)
 {
 	Fvector result;
 	result.set(value.x, value.y, value.z);
 	return result;
 }
-
-ArmPose BuildArmPose(const SimulationOutput& output)
-{
-	ArmPose pose;
-	pose.active = output.arm_active;
-	pose.stalker2_active = output.stalker2_arm_active;
-	pose.clavicle = ToFvector(output.arm_clavicle);
-	pose.upperarm = ToFvector(output.arm_upperarm);
-	pose.forearm = ToFvector(output.arm_forearm);
-	pose.twist = ToFvector(output.arm_twist);
-	pose.hand = ToFvector(output.arm_hand);
-	pose.left_clavicle = ToFvector(output.arm_left_clavicle);
-	pose.left_upperarm = ToFvector(output.arm_left_upperarm);
-	pose.left_forearm = ToFvector(output.arm_left_forearm);
-	pose.left_twist = ToFvector(output.arm_left_twist);
-	pose.left_hand = ToFvector(output.arm_left_hand);
-	pose.stalker2_wrist_rot = ToFvector(output.stalker2_wrist_rot);
-	pose.stalker2_arm_follow_rot = ToFvector(output.stalker2_arm_follow_rot);
-	pose.stalker2_movement_weight = output.stalker2_movement_weight;
-	pose.stalker2_movement_response = output.stalker2_movement_response;
-	return pose;
-}
 } // namespace
+
+CActor* CurrentActor()
+{
+	return g_pGameLevel ? smart_cast<CActor*>(Level().CurrentEntity()) : nullptr;
+}
+
+void DumpState()
+{
+	if (CActor* actor = CurrentActor())
+		actor->cam_BodycamDumpState();
+	else
+		Msg("! bodycam dump: no active actor");
+}
 
 void CBodycam::ClearViewmodelOutput()
 {
-	m_viewmodel_active = FALSE;
+	m_viewmodel_active = false;
 	m_viewmodel_pos.set(0.f, 0.f, 0.f);
 	m_viewmodel_rot.set(0.f, 0.f, 0.f);
+	m_lowering_pos.set(0.f, 0.f, 0.f);
+	m_lowering_rot.set(0.f, 0.f, 0.f);
 }
 
 void CBodycam::ClearHudOutput()
 {
 	ClearViewmodelOutput();
 	m_arm_pose = ArmPose();
-	g_debug_snapshot.active = false;
 }
 
-void CBodycam::SetMovementDebug(float target_speed, float actual_speed, float speed_fraction)
+void CBodycam::SetMovementSpeed(float target_speed, float actual_speed, float speed_fraction)
 {
 	m_movement_target_speed = target_speed;
 	m_movement_actual_speed = actual_speed;
 	m_movement_speed_fraction = speed_fraction;
 }
 
-void CBodycam::Reset(const CCameraBase* camera, u32 mstate, float ads_blend)
+void CBodycam::Reset(const CCameraBase* camera, float ads_blend)
 {
-	m_mouse_aim = MouseAimState();
-
+	ClearHudOutput();
+	m_sprint_bob.Reset();
 	if (!camera)
 	{
+		m_mouse_aim = MouseAimState();
 		m_state = SimulationState();
-		ClearHudOutput();
+		m_camera_rig.Reset();
 		return;
 	}
 
@@ -100,8 +69,8 @@ void CBodycam::Reset(const CCameraBase* camera, u32 mstate, float ads_blend)
 	float pitch = 0.f;
 	camera->vDirection.getHP(yaw, pitch);
 	ResetMouseAim(m_mouse_aim, yaw, pitch);
-	ResetSimulation(m_state, yaw, pitch, ConvertMoveFlags(mstate), ads_blend);
-	ClearHudOutput();
+	ResetSimulation(m_state, yaw, pitch, ads_blend);
+	m_camera_rig.Reset(yaw, pitch);
 }
 
 void CBodycam::AddMouseLookDelta(float yaw_delta, float pitch_delta)
@@ -113,15 +82,12 @@ void CBodycam::RebaseLookDelta(float yaw_delta, float pitch_delta)
 {
 	RebaseMouseAim(m_mouse_aim, yaw_delta, pitch_delta);
 	RebaseSimulationLook(m_state, yaw_delta, pitch_delta);
+	m_camera_rig.Rebase(yaw_delta, pitch_delta);
 }
 
 void CBodycam::SetViewmodelProfile(const Fvector& pos, const Fvector& rot, float blend_speed)
 {
-	SVec3 profile_pos;
-	profile_pos.Set(pos.x, pos.y, pos.z);
-	SVec3 profile_rot;
-	profile_rot.Set(rot.x, rot.y, rot.z);
-	Bodycam::SetViewmodelProfile(m_viewmodel_profile, profile_pos, profile_rot, blend_speed);
+	Bodycam::SetViewmodelProfile(m_viewmodel_profile, { pos.x, pos.y, pos.z }, { rot.x, rot.y, rot.z }, blend_speed);
 }
 
 void CBodycam::ClearViewmodelProfile(float blend_speed)
@@ -135,180 +101,180 @@ void CBodycam::ApplyViewmodelProfile(float dt, float ads_blend)
 	if (!profile.active)
 		return;
 
-	m_viewmodel_active = TRUE;
+	m_viewmodel_active = true;
 	m_viewmodel_pos.add(ToFvector(profile.pos));
 	m_viewmodel_rot.add(ToFvector(profile.rot));
 }
 
-PipView CBodycam::UpdatePipView(const PipInput& input)
+// The grip in the HUD offset's space (metres right, up, forward of the hands'
+// origin): the gun step bob sways the gun about it.
+const Fvector kSprintBobPivot = { 0.f, -0.12f, 0.35f };
+
+// Sprint Transition: through the sprint start the gun takes the step bob,
+// added to the viewmodel offset like the fire impulse.
+void CBodycam::ApplySprintBob(BodycamReference::SprintBobInput input)
 {
-	return m_pip_adapter.Update(input);
+	const RuntimeConfig& config = GetConfig();
+	if (!config.sim.sprint.enable || config.sprint_start.gun_bob <= 0.f)
+	{
+		m_sprint_bob.Reset();
+		return;
+	}
+	if (!input.starting && !m_sprint_bob.Output().active)
+		return;
+	input.scale = config.sprint_start.gun_bob;
+	const BodycamReference::SprintBobOutput& bob = m_sprint_bob.Update(input);
+	if (!bob.active)
+		return;
+	m_viewmodel_active = true;
+	m_viewmodel_pos.add(Fvector().set(float(bob.offset[0]), float(bob.offset[1]), float(bob.offset[2])));
+	// The HUD turns its offset about the hands' origin; this keeps the grip in
+	// place so the gun sways about it instead of orbiting the camera.
+	const Fvector rotation = Fvector().set(float(bob.rotation[1]), float(bob.rotation[0]), float(bob.rotation[2]));
+	Fmatrix turn;
+	turn.setHPB(DegToRad(rotation.x), DegToRad(rotation.y), DegToRad(rotation.z));
+	Fvector turned;
+	turn.transform_dir(turned, kSprintBobPivot);
+	m_viewmodel_pos.add(kSprintBobPivot).sub(turned);
+	m_viewmodel_rot.add(rotation);
+	if (DiagnosticsEnabled(2))
+		Msg("[BODYCAM-SPRINT-BOB] frame=%u time=%u starting=%u weight=%.4f phase=%.4f footPhase=%.4f stride=%.4f speed=%.3f x=%.5f y=%.5f z=%.5f pitch=%.3f yaw=%.3f roll=%.3f",
+			Device.dwFrame, Device.dwTimeGlobal, unsigned(input.starting), bob.weight, bob.phase, input.footPhase ? *input.footPhase : -1.,
+			input.strideSeconds, input.speed, bob.offset[0], bob.offset[1], bob.offset[2], bob.rotation[0], bob.rotation[1],
+			bob.rotation[2]);
 }
 
-void CBodycam::Update(const UpdateInput& input, VisualOutput& output)
+PipView CBodycam::UpdatePipView(const PipInput& input)
 {
-	const SimulationSettings settings = GetSimulationSettings();
-	const MouseAimOutput mouse_aim = ResolveMouseAim(m_mouse_aim, input.target_yaw, input.target_pitch);
+	return m_pip_adapter.Update(input, ReadPipRuntime());
+}
 
-	SimulationInput sim_input;
-	sim_input.target_yaw = input.target_yaw;
-	sim_input.target_pitch = input.target_pitch;
-	sim_input.dt = input.dt;
-	sim_input.move_flags = ConvertMoveFlags(input.mstate);
-	sim_input.ads = input.ads;
-	sim_input.ads_blend = input.ads_blend;
-	sim_input.weapon_lowered = input.weapon_lowered;
-	sim_input.combat = input.combat;
-	sim_input.firearm_equipped = input.firearm_equipped;
-	sim_input.actor_speed_fraction = input.actor_speed_fraction;
-	sim_input.accelerated = isActorAccelerated(input.mstate, input.ads);
-	sim_input.visual_aim_available = mouse_aim.available;
-	sim_input.visual_aim_yaw = mouse_aim.yaw;
-	sim_input.visual_aim_pitch = mouse_aim.pitch;
+const CameraComposition& CBodycam::Update(const ActorFrame& frame, CameraRigHost& host)
+{
+	const RuntimeConfig& config = GetConfig();
+	const CameraRigSettings camera_settings{ config.camera, config.head, config.footstep, config.sim.sprint.enable };
+	const bool follow_lag = camera_settings.FollowLag();
+	CameraRigInput camera = frame.camera;
+	camera.inertia_speed = m_movement_actual_speed;
+	const MouseAim mouse_aim = ResolveMouseAim(m_mouse_aim, camera.aim_yaw, camera.aim_pitch);
+
+	SimulationInput input;
+	input.dt = camera.dt;
+	input.move_flags = frame.move_flags;
+	input.ads = camera.ads.active;
+	input.ads_blend = camera.ads.blend;
+	input.weapon_lowered = frame.weapon_lowered;
+	input.combat = frame.combat;
+	input.accelerated = frame.accelerated;
+	input.firearm_equipped = frame.firearm_equipped;
+	input.actor_speed_fraction = m_movement_speed_fraction;
+	input.gun_first_follow = follow_lag;
+	input.sprint_camera_owned_elsewhere = config.footstep.enable;
+	input.mouse_aim_yaw = mouse_aim.yaw;
+	input.mouse_aim_pitch = mouse_aim.pitch;
 
 	SimulationOutput sim_output;
-	UpdateSimulation(settings, m_state, sim_input, sim_output);
-	if (settings.features.impulse_debug && (sim_output.impulse_pos_clamped || sim_output.impulse_rot_clamped))
-	{
-		Msg("* bodycam impulse clamped pos[%0.4f %0.4f %0.4f] rot[%0.3f %0.3f %0.3f]",
-			m_state.viewmodel.impulse_pos.x, m_state.viewmodel.impulse_pos.y, m_state.viewmodel.impulse_pos.z,
-			m_state.viewmodel.impulse_rot.x, m_state.viewmodel.impulse_rot.y, m_state.viewmodel.impulse_rot.z);
-	}
+	UpdateSimulation(config.sim, m_state, input, sim_output);
 
 	if (sim_output.viewmodel_active)
 	{
-		m_viewmodel_active = TRUE;
+		m_viewmodel_active = true;
 		m_viewmodel_pos = ToFvector(sim_output.viewmodel_pos);
 		m_viewmodel_rot = ToFvector(sim_output.viewmodel_rot);
+		m_lowering_pos = ToFvector(sim_output.lowering_pos);
+		m_lowering_rot = ToFvector(sim_output.lowering_rot);
 	}
 	else
 	{
 		ClearViewmodelOutput();
 	}
 	ApplyViewmodelProfile(input.dt, input.ads_blend);
+	ApplySprintBob(frame.sprint_bob);
 
-	m_arm_pose = BuildArmPose(sim_output);
+	m_arm_pose.active = sim_output.stalker2_arm_active;
+	m_arm_pose.wrist_rot = ToFvector(sim_output.stalker2_wrist_rot);
+	m_arm_pose.arm_follow_rot = ToFvector(sim_output.stalker2_arm_follow_rot);
+	m_arm_pose.movement_weight = sim_output.stalker2_movement_weight;
+	m_arm_pose.movement_response = sim_output.stalker2_movement_response;
 
-	output.yaw = sim_output.yaw;
-	output.pitch = sim_output.pitch;
-	output.roll = sim_output.roll;
-	output.pos = ToFvector(sim_output.camera_pos);
-	output.fov_offset = sim_output.fov_offset;
-	CaptureDebugSnapshot(input.ads, input.ads_blend, input.mstate);
+	const CameraComposition& composition = m_camera_rig.Compose(camera_settings, camera, m_state.signals, sim_output.sprint_sway, host);
+	const VisualOutput& output = composition.lag;
+
+	if (DiagnosticsEnabled(2))
+	{
+		Msg("[BODYCAM-CAMERA] frame=%u time=%u yaw=%.8f pitch=%.8f outYaw=%.8f outPitch=%.8f posX=%.9f posY=%.9f posZ=%.9f sprintPitch=%.8f follow=%u",
+			Device.dwFrame, Device.dwTimeGlobal, camera.aim_yaw, camera.aim_pitch, output.yaw, output.pitch, output.pos.x, output.pos.y,
+			output.pos.z, output.sprint_pitch, unsigned(follow_lag));
+		Msg("[BODYCAM-VIEWMODEL] frame=%u time=%u active=%u lower=%.6f kick=%.6f", Device.dwFrame, Device.dwTimeGlobal,
+			unsigned(sim_output.viewmodel_active), sim_output.lower_amount,
+			m_state.fire.pos.Magnitude() + DegToRad(m_state.fire.rot.Magnitude()));
+		Msg("[BODYCAM-ARM] frame=%u time=%u active=%u wristX=%.8f wristY=%.8f wristZ=%.8f walk=%.6f mouseX=%.6f mouseY=%.6f",
+			Device.dwFrame, Device.dwTimeGlobal, unsigned(m_arm_pose.active), m_arm_pose.wrist_rot.x, m_arm_pose.wrist_rot.y,
+			m_arm_pose.wrist_rot.z, m_arm_pose.movement_weight, m_state.signals.mouse_speed.x, m_state.signals.mouse_speed.y);
+	}
+	return composition;
 }
 
-void CBodycam::AddFireImpulse(float power, bool ads)
+void CBodycam::NotifyShot(float power, bool ads)
 {
-	Bodycam::AddFireImpulse(GetSimulationSettings(), m_state, power, ads);
-}
-
-void CBodycam::AddImpulse(LPCSTR kind, float power, bool ads)
-{
-	if (!AddNamedImpulse(GetSimulationSettings(), m_state, kind, power, ads))
-		Msg("! bodycam.add_impulse: unknown impulse kind '%s'", kind ? kind : "<null>");
-}
-
-void CBodycam::CaptureDebugSnapshot(bool ads, float ads_blend, u32 mstate) const
-{
-	const RuntimeConfig& config = GetConfig();
-	g_debug_snapshot.active = true;
-	g_debug_snapshot.camera_enabled = !!config.features.camera_enable;
-	g_debug_snapshot.vm_enabled = !!config.features.vm_enable;
-	g_debug_snapshot.lower_enabled = !!config.features.lower_enable;
-	g_debug_snapshot.arm_enabled = !!config.features.bodycam_arm_enable || !!config.features.stalker2_arm_enable;
-	g_debug_snapshot.ads = ads || ads_blend > 0.f;
-	g_debug_snapshot.mstate = mstate;
-	g_debug_snapshot.camera_yaw = RadToDeg(m_state.camera.yaw);
-	g_debug_snapshot.camera_pitch = RadToDeg(m_state.camera.pitch);
-	g_debug_snapshot.camera_roll = RadToDeg(m_state.camera.roll);
-	g_debug_snapshot.camera_pos = ToFvector(m_state.camera.pos);
-	g_debug_snapshot.vm_pos.set(m_viewmodel_pos);
-	g_debug_snapshot.vm_rot.set(m_viewmodel_rot);
-	g_debug_snapshot.movement_target_speed = m_movement_target_speed;
-	g_debug_snapshot.movement_actual_speed = m_movement_actual_speed;
-	g_debug_snapshot.movement_speed_fraction = m_movement_speed_fraction;
-	g_debug_snapshot.lower_target = m_state.lowering.target;
-	g_debug_snapshot.lower_amount = m_state.lowering.amount;
-	g_debug_snapshot.lower_holster = m_state.lowering.holster;
-	g_debug_snapshot.arm_clavicle = m_arm_pose.clavicle;
-	g_debug_snapshot.arm_upperarm = m_arm_pose.upperarm;
-	g_debug_snapshot.arm_forearm = m_arm_pose.forearm;
-	g_debug_snapshot.arm_twist = m_arm_pose.twist;
-	g_debug_snapshot.arm_hand = m_arm_pose.hand;
-}
-
-bool GetDebugSnapshot(DebugSnapshot& snapshot)
-{
-	snapshot = g_debug_snapshot;
-	return snapshot.active;
+	Bodycam::NotifyShot(GetConfig().sim, m_state, power, ads);
 }
 
 void CBodycam::Dump(bool ads, u32 mstate) const
 {
 	const RuntimeConfig& config = GetConfig();
-	const float ads_blend = m_state.ads_blend;
-	CaptureDebugSnapshot(ads, ads_blend, mstate);
-	Msg("* bodycam dump enabled=%d viewmodel=%d active=%d ads=%d ads_blend=%0.3f mstate=0x%08x", config.features.camera_enable, config.features.vm_enable, m_viewmodel_active, ads, ads_blend, mstate);
-	Msg("* bodycam camera yaw=%0.3f pitch=%0.3f roll=%0.3f pos[%0.4f %0.4f %0.4f]", RadToDeg(m_state.camera.yaw), RadToDeg(m_state.camera.pitch), RadToDeg(m_state.camera.roll), m_state.camera.pos.x, m_state.camera.pos.y, m_state.camera.pos.z);
-	Msg("* bodycam mouse speed[%0.3f %0.3f] accel[%0.3f %0.3f] move[%0.3f %0.3f %0.3f]", RadToDeg(m_state.viewmodel.mouse_speed.x), RadToDeg(m_state.viewmodel.mouse_speed.y), RadToDeg(m_state.viewmodel.mouse_accel.x), RadToDeg(m_state.viewmodel.mouse_accel.y), m_state.viewmodel.move_intent.x, m_state.viewmodel.move_intent.y, m_state.viewmodel.move_intent.z);
-	Msg("* bodycam impulse pos[%0.4f %0.4f %0.4f] rot[%0.3f %0.3f %0.3f] airborne=%0.3f caps pos=%0.3f rot=%0.3f", m_state.viewmodel.impulse_pos.x, m_state.viewmodel.impulse_pos.y, m_state.viewmodel.impulse_pos.z, m_state.viewmodel.impulse_rot.x, m_state.viewmodel.impulse_rot.y, m_state.viewmodel.impulse_rot.z, m_state.viewmodel.airborne_time, config.impulse.impulse_pos_cap, config.impulse.impulse_rot_cap);
-	Msg("* bodycam viewmodel pos[%0.4f %0.4f %0.4f] rot[%0.3f %0.3f %0.3f] ads_mult mouse=%0.3f impulse=%0.3f", m_state.viewmodel.pos.x, m_state.viewmodel.pos.y, m_state.viewmodel.pos.z, m_state.viewmodel.rot.x, m_state.viewmodel.rot.y, m_state.viewmodel.rot.z, config.viewmodel.ads_mouse_mult, config.viewmodel.ads_impulse_mult);
+	const SimulationState& state = m_state;
+	const CameraState& camera = m_camera_rig.Camera();
+	Msg("* bodycam dump camera=%d viewmodel_active=%d ads=%d mstate=0x%08x", config.camera.enable, m_viewmodel_active, ads, mstate);
+	Msg("* bodycam camera yaw=%0.3f pitch=%0.3f pos[%0.4f %0.4f %0.4f]", RadToDeg(camera.yaw), RadToDeg(camera.pitch), camera.pos.x,
+		camera.pos.y, camera.pos.z);
+	Msg("* bodycam signals mouse[%0.3f %0.3f] move[%0.3f %0.3f %0.3f]", RadToDeg(state.signals.mouse_speed.x),
+		RadToDeg(state.signals.mouse_speed.y), state.signals.move_intent.x, state.signals.move_intent.y, state.signals.move_intent.z);
+	Msg("* bodycam fire impulse enabled=%d target pos[%0.4f %0.4f %0.4f] rot[%0.3f %0.3f %0.3f] offset pos[%0.4f %0.4f %0.4f] rot[%0.3f %0.3f %0.3f]",
+		config.sim.fire.enable, state.fire.impulse_pos.x, state.fire.impulse_pos.y, state.fire.impulse_pos.z, state.fire.impulse_rot.x,
+		state.fire.impulse_rot.y, state.fire.impulse_rot.z, state.fire.pos.x, state.fire.pos.y, state.fire.pos.z, state.fire.rot.x,
+		state.fire.rot.y, state.fire.rot.z);
 	Msg("* bodycam weapon profile enabled=%d target_pos[%0.4f %0.4f %0.4f] target_rot[%0.3f %0.3f %0.3f] blend=%0.2f",
-		m_viewmodel_profile.enabled, m_viewmodel_profile.target_pos.x, m_viewmodel_profile.target_pos.y,
-		m_viewmodel_profile.target_pos.z, m_viewmodel_profile.target_rot.x, m_viewmodel_profile.target_rot.y,
-		m_viewmodel_profile.target_rot.z, m_viewmodel_profile.blend_speed);
-	Msg("* bodycam movement target=%0.3f actual=%0.3f fraction=%0.3f accel enabled=%d ads_disable=%d accel=%0.3f decel=%0.3f",
-		m_movement_target_speed, m_movement_actual_speed, m_movement_speed_fraction, config.movement.enable, config.movement.ads_disable,
-		config.movement.accel_time, config.movement.decel_time);
-	Msg("* bodycam lowering enabled=%d target=%0.3f droop=%0.3f holster=%0.3f timers fire=%0.3f ads=%0.3f combat=%0.3f lower=%0.3f return=%0.3f pos[%0.4f %0.4f %0.4f] rot[%0.3f %0.3f %0.3f]",
-		config.features.lower_enable, m_state.lowering.target, m_state.lowering.amount, m_state.lowering.holster, m_state.lowering.fire_recovery, m_state.lowering.ads_recovery, m_state.lowering.combat_timer,
-		config.lowering.speed, config.lowering.return_speed, m_state.lowering.pos.x, m_state.lowering.pos.y, m_state.lowering.pos.z, m_state.lowering.rot.x, m_state.lowering.rot.y, m_state.lowering.rot.z);
-	Msg("* bodycam arm bodycam_style=%d stalker2_style=%d active=%d clavicle[%0.3f %0.3f %0.3f] upper[%0.3f %0.3f %0.3f] forearm[%0.3f %0.3f %0.3f] twist[%0.3f %0.3f %0.3f] hand[%0.3f %0.3f %0.3f]",
-		config.features.bodycam_arm_enable, config.features.stalker2_arm_enable, m_arm_pose.active,
-		RadToDeg(m_arm_pose.clavicle.x), RadToDeg(m_arm_pose.clavicle.y), RadToDeg(m_arm_pose.clavicle.z),
-		RadToDeg(m_arm_pose.upperarm.x), RadToDeg(m_arm_pose.upperarm.y), RadToDeg(m_arm_pose.upperarm.z),
-		RadToDeg(m_arm_pose.forearm.x), RadToDeg(m_arm_pose.forearm.y), RadToDeg(m_arm_pose.forearm.z),
-		RadToDeg(m_arm_pose.twist.x), RadToDeg(m_arm_pose.twist.y), RadToDeg(m_arm_pose.twist.z),
-		RadToDeg(m_arm_pose.hand.x), RadToDeg(m_arm_pose.hand.y), RadToDeg(m_arm_pose.hand.z));
-	Msg("* bodycam stalker2 active=%d wrist_rot_deg[%0.3f %0.3f %0.3f] arm_follow_deg[%0.3f %0.3f %0.3f] authored_move[%0.3f response=%0.2f]",
-		m_arm_pose.stalker2_active,
-		RadToDeg(m_arm_pose.stalker2_wrist_rot.x), RadToDeg(m_arm_pose.stalker2_wrist_rot.y), RadToDeg(m_arm_pose.stalker2_wrist_rot.z),
-		RadToDeg(m_arm_pose.stalker2_arm_follow_rot.x), RadToDeg(m_arm_pose.stalker2_arm_follow_rot.y), RadToDeg(m_arm_pose.stalker2_arm_follow_rot.z),
-		m_arm_pose.stalker2_movement_weight, m_arm_pose.stalker2_movement_response);
+		m_viewmodel_profile.enabled, m_viewmodel_profile.target_pos.x, m_viewmodel_profile.target_pos.y, m_viewmodel_profile.target_pos.z,
+		m_viewmodel_profile.target_rot.x, m_viewmodel_profile.target_rot.y, m_viewmodel_profile.target_rot.z,
+		m_viewmodel_profile.blend_speed);
+	Msg("* bodycam movement target=%0.3f actual=%0.3f fraction=%0.3f inertia=%d ads_disable=%d accel=%0.3f decel=%0.3f",
+		m_movement_target_speed, m_movement_actual_speed, m_movement_speed_fraction, config.movement_inertia.enable,
+		config.movement_inertia.disable_ads, config.movement_inertia.accel_time, config.movement_inertia.decel_time);
+	Msg("* bodycam lowering enabled=%d target=%0.3f amount=%0.3f holster=%0.3f timers fire=%0.3f ads=%0.3f combat=%0.3f pos[%0.4f %0.4f %0.4f] rot[%0.3f %0.3f %0.3f]",
+		config.sim.lowering.enable, state.lowering.target, state.lowering.amount, state.lowering.holster, state.lowering.fire_recovery,
+		state.lowering.ads_recovery, state.lowering.combat_timer, state.lowering.pos.x, state.lowering.pos.y, state.lowering.pos.z,
+		state.lowering.rot.x, state.lowering.rot.y, state.lowering.rot.z);
+	Msg("* bodycam stalker2 arm enabled=%d active=%d wrist_deg[%0.3f %0.3f %0.3f] arm_follow_deg[%0.3f %0.3f %0.3f] walk[%0.3f response=%0.2f]",
+		config.sim.stalker2_arm.enable, m_arm_pose.active, RadToDeg(m_arm_pose.wrist_rot.x), RadToDeg(m_arm_pose.wrist_rot.y),
+		RadToDeg(m_arm_pose.wrist_rot.z), RadToDeg(m_arm_pose.arm_follow_rot.x), RadToDeg(m_arm_pose.arm_follow_rot.y),
+		RadToDeg(m_arm_pose.arm_follow_rot.z), m_arm_pose.movement_weight, m_arm_pose.movement_response);
 	DumpConfigBindings();
 }
 
-bool CBodycam::GetHudOffset(Fvector& pos, Fvector& rot) const
+bool CBodycam::GetHudOffset(Fvector& pos, Fvector& rot, float lowering_weight) const
 {
 	if (!m_viewmodel_active)
 		return false;
 
 	pos.set(m_viewmodel_pos);
 	rot.set(m_viewmodel_rot);
+	pos.mad(m_lowering_pos, lowering_weight - 1.f);
+	rot.mad(m_lowering_rot, lowering_weight - 1.f);
 	return true;
 }
 
 bool CBodycam::GetArmPose(ArmPose& pose) const
 {
-	if (!m_arm_pose.active && !m_arm_pose.stalker2_active)
+	if (!m_arm_pose.active)
 		return false;
 
 	pose = m_arm_pose;
 	return true;
 }
 
-bool CBodycam::CameraEnabled() const
-{
-	return Bodycam::CameraEnabled();
-}
-
-bool CBodycam::HudEnabled() const
-{
-	return HudEffectsEnabled() || Bodycam::ViewmodelProfileActive(m_viewmodel_profile);
-}
-
 bool CBodycam::AnyFeatureEnabled() const
 {
-	return AnyEffectEnabled() || Bodycam::ViewmodelProfileActive(m_viewmodel_profile);
+	return AnyEffectEnabled() || ViewmodelProfileActive(m_viewmodel_profile);
 }
 } // namespace Bodycam
