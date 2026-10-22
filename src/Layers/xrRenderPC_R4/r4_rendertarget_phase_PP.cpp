@@ -170,7 +170,12 @@ ref_rt& CRenderTarget::phase_upscaler_camera_mv()
 void CRenderTarget::phase_dlss_postprocess()
 {
 #ifdef XR_DX12_BRIDGE
-    fg::CaptureScene();
+    // Main target only. fg::CaptureScene guards with IsSVPFrame(), but upstream
+    // reaches this function for the main target alone, while our base also runs
+    // it for the SVP/scope target - and that is a different test from the
+    // m_render_pass_is_svp one phase_combine uses to gate phase_pp.
+    if (m_is_main_target)
+        fg::CaptureScene();
 #endif
 	const auto sceneJitter = dlss::RasterJitter();
 	// The stock TAA path excludes the already-composited PiP lens. Keep that
@@ -275,8 +280,11 @@ void CRenderTarget::phase_dlss_postprocess()
 			uiQuad[2].set(w, h, EPS_S, 1, 0xffffffff, 1, 1);
 			uiQuad[3].set(w, 0, EPS_S, 1, 0xffffffff, 1, 0);
 			RCache.Vertex.Unlock(4, g_combine->vb_stride);
+			// Upstream added this bind for the fresh quad; pre-merge this block
+			// relied on the geometry already bound, which is what the SVP path
+			// still needs here.
+			RCache.set_Geometry(g_combine);
 		}
-		RCache.set_Geometry(g_combine);
 		RCache.set_Element(s_dlss_ui_depth->E[0]);
 		RCache.set_c("dlss_ui_depth_params", float(dlss::RenderWidth()) / w,
 			float(dlss::RenderHeight()) / h, sceneJitter.x, sceneJitter.y);
