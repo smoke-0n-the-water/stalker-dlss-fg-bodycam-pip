@@ -1047,18 +1047,7 @@ void CRenderTarget::phase_combine()
 
 	//	PP-if required
 	// pip the svp pass skips phase_pp, it writes the real backbuffer
-#ifdef XR_DX12_BRIDGE
-	// With the DX12 bridge that "real backbuffer" is the bridge's shared
-	// presentation target, published per frame by CHW::AcquirePresentationFrame
-	// and valid only for the main presentation pass. Binding it from any scope
-	// pass hands D3D11 a null target: 0xC0000005 at d3d11.dll+0x15ba63, read of
-	// 0x8, from phase_pp <- phase_combine <- renderViewports. Verified by build:
-	// the identical renderer without the bridge does not fault.
-	const bool svpSkipsPP = Device.m_SecondViewport.m_render_pass_is_svp;
-#else
-	const bool svpSkipsPP = Device.true_pip_on && Device.m_SecondViewport.m_render_pass_is_svp;
-#endif
-	if (PP_Complex && !svpSkipsPP)
+	if (PP_Complex && !(Device.true_pip_on && Device.m_SecondViewport.m_render_pass_is_svp))
 	{
 		PIX_EVENT_C(phase_pp, dx10_marker_post);
 		tm_beg(svp_stats::SEC_C_COMBINE2);
