@@ -260,14 +260,22 @@ void CRenderTarget::phase_dlss_postprocess()
 		// Reproject the render-sized scene depth into the native depth buffer
 		// before drawing the unjittered HUD screens.
 		u_setrt(rt_dlss_post_source, nullptr, nullptr, HW.pBaseZB);
-		// The flares above replace the geometry; draw from a fresh fullscreen quad.
-		u32 uiOffset;
-		FVF::TL* uiQuad = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, uiOffset);
-		uiQuad[0].set(0, h, EPS_S, 1, 0xffffffff, 0, 1);
-		uiQuad[1].set(0, 0, EPS_S, 1, 0xffffffff, 0, 0);
-		uiQuad[2].set(w, h, EPS_S, 1, 0xffffffff, 1, 1);
-		uiQuad[3].set(w, 0, EPS_S, 1, 0xffffffff, 1, 0);
-		RCache.Vertex.Unlock(4, g_combine->vb_stride);
+		// The flares above replace the geometry, so re-make the fullscreen quad --
+		// but only where the flares actually ran. Upstream reaches this path for the
+		// main target alone; our base also runs it for the SVP/scope target, where
+		// the quad from the resolve draw above is still bound, as it was before this
+		// merge. Taking a second lock there is new behaviour on a path upstream
+		// never exercises, and that path is where phase_pp faults.
+		u32 uiOffset = offset;
+		if (m_is_main_target)
+		{
+			FVF::TL* uiQuad = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, uiOffset);
+			uiQuad[0].set(0, h, EPS_S, 1, 0xffffffff, 0, 1);
+			uiQuad[1].set(0, 0, EPS_S, 1, 0xffffffff, 0, 0);
+			uiQuad[2].set(w, h, EPS_S, 1, 0xffffffff, 1, 1);
+			uiQuad[3].set(w, 0, EPS_S, 1, 0xffffffff, 1, 0);
+			RCache.Vertex.Unlock(4, g_combine->vb_stride);
+		}
 		RCache.set_Geometry(g_combine);
 		RCache.set_Element(s_dlss_ui_depth->E[0]);
 		RCache.set_c("dlss_ui_depth_params", float(dlss::RenderWidth()) / w,
