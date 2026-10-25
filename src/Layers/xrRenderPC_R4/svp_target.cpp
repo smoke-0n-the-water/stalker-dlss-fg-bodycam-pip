@@ -93,12 +93,15 @@ void CRender::EnsureTargetSVP()
 		return;
 	}
 	Device.m_SecondViewport.dlss_reset_next = true; // pip DLSS history reset, SVP surface (re)created incl. res change
-	extern int ps_r__svp_diag; extern float ps_r__svp_supersample;
 	if (ps_r__svp_diag)
 		PipMsg("[SVP-ALLOC] svp=%ux%u (base=%u composite_h=%u display_h=%u aspect=%.2f supersample=%.2f dlss=%d)",
 			svp_w, svp_h, svp_composite_height() >> 1, svp_composite_height(), Device.dwHeight,
 			Device.m_SecondViewport.svp_panel_aspect, ps_r__svp_supersample, ps_r__svp_dlss);
 }
+
+// optic epoch of the last settled disc learn, svp_disc_px belongs to this optic
+static u32 s_disc_px_epoch = 0;
+u32 svp_disc_epoch() { return s_disc_px_epoch; }
 
 // Shared by stock PiP and the Reference optical image.
 void svp_track_disc(u32 width, u32 height)
@@ -131,7 +134,6 @@ void svp_track_disc(u32 width, u32 height)
 			: 0.f;
 		// subscribe to the optic epoch, a swap under the jump threshold still re-learns the
 		// new optic's disc, the epoch is consumed only after a settled re-learn
-		static u32 s_disc_px_epoch = 0;
 		const bool disc_epoch_swap = (vpd.svp_optic_epoch != s_disc_px_epoch);
 		if (disc > 1.f && disc == disc && rot > 0.999f) // settled, ignore NaN / degenerate
 		{
@@ -149,7 +151,6 @@ void svp_track_disc(u32 width, u32 height)
 			} // overlay + ledger proof the latch moved
 			s_disc_px_epoch = vpd.svp_optic_epoch;
 		}
-		extern int ps_r__svp_diag;
 		static u32 s_svpres_t = 0;
 		if (ps_r__svp_diag && disc > 1.f && Device.dwTimeGlobal - s_svpres_t > 700)
 		{
