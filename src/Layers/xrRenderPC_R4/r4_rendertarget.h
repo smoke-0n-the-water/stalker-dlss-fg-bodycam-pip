@@ -10,7 +10,8 @@
 class light;
 class dxRender_Visual;
 
-// pip SVP scene render extent for the color/depth/MV targets, full display-res (svp_height) at gate 0
+// pip SVP scene render extent for the color/depth/MV targets, half the composite height at gate 0
+// (the upscaler's render extent, which is what rt_Color - and so the lens composite - is sized to)
 // so r__svp_render_scale is inert until the DLSS scaffolding is active (r__svp_dlss != 0)
 u32 svp_render_extent();
 

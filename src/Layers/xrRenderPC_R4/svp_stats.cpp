@@ -932,6 +932,7 @@ namespace svp_stats
 				{ "dof",      SEC_C_DOF,      false },
 				{ "lut",      SEC_C_LUT,      false },
 				{ "combine2", SEC_C_COMBINE2, true  },
+				{ "phasepp",  SEC_C_PHASE_PP, true  },
 			};
 			const u32 brk_n = sizeof(brk) / sizeof(brk[0]);
 

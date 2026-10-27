@@ -19,9 +19,31 @@ svp::TargetSettings target_settings()
 		ps_r__svp_supersample, ps_r__svp_render_scale};
 }
 
+// pip the lens composite lands in the MAIN target's rt_Color, and with an upscaler that target
+// is created at dlss::RenderHeight() (r4_rendertarget.cpp), not at the display height. Size the
+// SVP against the extent that actually carries it, or the scope renders pixels the composite
+// throws away (2x linear / ~4x area at DLSS Performance).
+u32 svp_composite_height()
+{
+	return dlss::RenderHeight(); // == Device.dwHeight with no upscaler, so this stays a no-op there
+}
+
+// pip svp_disc_px is measured against TargetMain->Width/Height, i.e. DISPLAY px (svp_optics.cpp),
+// so it must be brought into composite space before r__svp_adaptive_res multiplies it - otherwise
+// the margin asks for a disc the composite cannot show and the shrink never fires.
+float svp_composite_scale()
+{
+	const u32 display_h = Device.dwHeight;
+	if (!display_h)
+		return 1.f;
+	return float(svp_composite_height()) / float(display_h);
+}
+
 svp::TargetFrame target_frame()
 {
-	return {Device.svp_height(), Device.dwHeight, Device.m_SecondViewport.svp_disc_applied,
+	const u32 composite_h = svp_composite_height();
+	return {composite_h >> 1, composite_h,
+		Device.m_SecondViewport.svp_disc_applied * svp_composite_scale(),
 		Device.m_SecondViewport.svp_panel_aspect};
 }
 }
@@ -39,7 +61,8 @@ void svp_target_wh(u32& svp_w, u32& svp_h)
 }
 
 // pip allocate the square SVP target the first time an SVP pass runs, with PiP off this is never
-// called so the SVP RTs cost nothing, the scene render uses svp_render_extent (display-res at gate 0)
+// called so the SVP RTs cost nothing, the scene render uses svp_render_extent (half the composite
+// height at gate 0, i.e. the upscaler's render extent, or the display height with no upscaler)
 void CRender::EnsureTargetSVP()
 {
 	if (TargetMain)
@@ -72,8 +95,9 @@ void CRender::EnsureTargetSVP()
 	Device.m_SecondViewport.dlss_reset_next = true; // pip DLSS history reset, SVP surface (re)created incl. res change
 	extern int ps_r__svp_diag; extern float ps_r__svp_supersample;
 	if (ps_r__svp_diag)
-		PipMsg("[SVP-ALLOC] svp=%ux%u (svp_height=%u aspect=%.2f supersample=%.2f dlss=%d)",
-			svp_w, svp_h, Device.svp_height(), Device.m_SecondViewport.svp_panel_aspect, ps_r__svp_supersample, ps_r__svp_dlss);
+		PipMsg("[SVP-ALLOC] svp=%ux%u (base=%u composite_h=%u display_h=%u aspect=%.2f supersample=%.2f dlss=%d)",
+			svp_w, svp_h, svp_composite_height() >> 1, svp_composite_height(), Device.dwHeight,
+			Device.m_SecondViewport.svp_panel_aspect, ps_r__svp_supersample, ps_r__svp_dlss);
 }
 
 // Shared by stock PiP and the Reference optical image.
@@ -133,9 +157,12 @@ void svp_track_disc(u32 width, u32 height)
 			const u32 sres = RImplementation.TargetSVP->Width;
 			extern float g_pip_scope_magnification;
 			extern float ps_r__svp_adaptive_res;
-			const float lin = (float)sres / disc;
-			PipMsg("[SVP-RES] mag=%.1f svp=%ux%u disc=%.0fpx latch=%.0f adapt=%.2f overrender=%.2fx_linear %.2fx_area",
-				g_pip_scope_magnification, sres, sres, disc, vpd.svp_disc_px, ps_r__svp_adaptive_res, lin, lin * lin);
+			// the disc is measured in display px, but the lens composites at the upscaler's render
+			// extent, so overrender has to be judged against the disc the composite can carry
+			const float disc_c = disc * svp_composite_scale();
+			const float lin = (float)sres / disc_c;
+			PipMsg("[SVP-RES] mag=%.1f svp=%ux%u disc=%.0fpx composite_disc=%.0fpx latch=%.0f adapt=%.2f overrender=%.2fx_linear %.2fx_area",
+				g_pip_scope_magnification, sres, sres, disc, disc_c, vpd.svp_disc_px, ps_r__svp_adaptive_res, lin, lin * lin);
 		}
 	}
 }

@@ -2,7 +2,7 @@
 #define svp_targetH
 #pragma once
 
-// pip SVP scene render extent for the color/depth/MV targets, exact svp_height at gate 0
+// pip SVP scene render extent for the color/depth/MV targets, half the composite height at gate 0
 u32 svp_render_extent();
 
 // pip the SVP target extent, one policy for the allocation and the camera projection

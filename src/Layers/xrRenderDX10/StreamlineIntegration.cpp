@@ -29,6 +29,26 @@ void StreamlineIntegration::Log(const char* message) const
 bool StreamlineIntegration::Check(sl::Result result, const char* stage)
 {
     if (result == sl::Result::eOk) return true;
+    // eWarnOutOfVRAM is the only eWarn* value in sl::Result and it is a WARNING:
+    // the call did what it could under memory pressure. Treating it as failure is
+    // what killed the game on 2026-10-23 - slDLSSGSetOptions returned it when
+    // DLSS-G could not fit (15497 MB allocated against a 14535 MB budget), the
+    // recovery SetEnabled(false) returned it again, so FailGeneration escalated
+    // to SubmitFrame -> HW.Present -> R_CHK -> FATAL. Degrade, never die: log it
+    // once and carry on, so frame generation simply declines to turn on.
+    if (result == sl::Result::eWarnOutOfVRAM)
+    {
+        if (!m_vramWarned)
+        {
+            m_vramWarned = true;
+            char warning[256]{};
+            snprintf(warning, sizeof(warning),
+                "! [DLSS FG] %s: out of VRAM. Frame generation may not engage; "
+                "lower the upscaler quality or free texture memory. Not fatal.", stage);
+            Log(warning);
+        }
+        return true;
+    }
     m_failureStage = stage;
     char message[256]{};
     snprintf(message, sizeof(message), "[DLSS FG] %s failed: Streamline result %u", stage, unsigned(result));
@@ -206,6 +226,16 @@ bool StreamlineIntegration::Tag(const sl::Constants& constants, ID3D12Resource* 
     ID3D12Resource* hudless)
 {
     if (!m_frame || !depth || !motion || !hudless) return false;
+    // BeginFrame is skipped on SVP/scope frames (FrameGeneration.cpp: scopeFrame),
+    // so neither m_frameNumber nor the token m_frame advanced - yet the frame still
+    // renders and submits. Tagging again with a token Streamline has already seen is
+    // eErrorDuplicatedConstants (27), which trips the recoverable-error path and
+    // switches frame generation off the moment a PiP scope comes up. Reuse the
+    // previous tag for that frame instead: the scope view has its own camera, so its
+    // constants were never wanted in the main view's history anyway.
+    // Returns true, NOT false - false reaches FailGeneration, i.e. the very disable
+    // this is preventing.
+    if (m_tagFrame == m_frameNumber) return true;
     m_tagFrame = m_frameNumber;
     if (m_diagnosticPresents == 120 || m_diagnosticPresents == 61)
     {

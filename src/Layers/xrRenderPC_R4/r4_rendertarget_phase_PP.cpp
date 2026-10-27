@@ -311,13 +311,15 @@ void CRenderTarget::phase_pp()
 	phase_dlss_postprocess();
 	// combination/postprocess
 #ifdef XR_DX12_BRIDGE
-	// The bridge publishes pBaseRT from m_slots[m_currentSlot].view11. On the
-	// reset/resize path (loading a save) CHW::Reset releases pBaseRT and
-	// UpdateViews re-fetches it WITHOUT acquiring a frame first, so a stale slot
-	// yields E_UNEXPECTED with *view = nullptr - and R_CHK only logs. Binding
-	// that null target is the observed crash: 0xC0000005 inside d3d11.dll from
-	// this function. Drop the frame instead; the next AcquirePresentationFrame
-	// in dxRenderDeviceRender::Begin republishes a valid view.
+	// Backstop only. The real crash here was NOT a null RTV: HW.secret_pBaseRT
+	// held a one-time UpdateViews snapshot of m_slots[...].view11 while the
+	// bridge rotates and releases that view every frame, so SetActive restored
+	// a FREED pointer into HW.pBaseRT and d3d11.dll faulted reading it (read of
+	// 0x16D; the log's teardown line read refCount:pBaseRT 0xF999999A, i.e.
+	// dangling, not null - which is why this test never fired). Fixed by having
+	// AcquirePresentationFrame track the snapshot, and by nulling it at the
+	// release sites. Keep this guard for the window where it is legitimately
+	// null; the next AcquirePresentationFrame republishes a valid view.
 	if (!HW.pBaseRT)
 	{
 		static bool reported = false;

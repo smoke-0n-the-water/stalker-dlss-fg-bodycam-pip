@@ -82,8 +82,17 @@ void BeginSimulation()
     // dwFrame advances in FrameMove, after this call. A 3D-scope (SVP) frame renders
     // the scope view without presenting; it belongs to the next presented frame and
     // must neither sleep in Reflex nor consume a frame token.
+    // TRUE PIP HAS NO SUCH FRAME: renderViewports draws the main and SVP gbuffers in
+    // one frame and every frame presents (IsSVPFrame() is m_render_pass_is_svp, not a
+    // frame-parity test). Applying the legacy parity rule there stripped the frame
+    // token and the Reflex/PCL markers from half of the PRESENTED frames, and
+    // StreamlineIntegration::Tag then silently reused the previous frame's constants
+    // (m_tagFrame == m_frameNumber), so DLSS-G interpolated from stale data and paced
+    // against a frame count that never advanced - presenting ~4.7x the real rate from
+    // a 2x generator, measured 2026-10-23.
     auto& svp = Device.m_SecondViewport;
-    scopeFrame = svp.IsSVPActive() && (Device.dwFrame + 1) % svp.GetSVPFrameDelay() == 0;
+    scopeFrame = !Device.true_pip_on && svp.IsSVPActive() &&
+        (Device.dwFrame + 1) % svp.GetSVPFrameDelay() == 0;
     if (scopeFrame) return;
     UINT limitUs = 0;
     if (ReflexLimitsFrames())
@@ -148,7 +157,10 @@ void CaptureScene()
     if (Device.m_SecondViewport.IsSVPFrame()) return;
     if (!bridge || !Eligible() || !bridge->NeedsFGInputs()) { havePrevious = false; return; }
     // Main frames are not consecutive while a 3D scope renders on alternate frames.
-    const u32 maxGap = Device.m_SecondViewport.IsSVPActive() ? Device.m_SecondViewport.GetSVPFrameDelay() : 1;
+    // Under true PiP they are consecutive again (the SVP pass is in-frame), so keep the
+    // tight gap there or a genuine discontinuity goes undetected and the history is not cut.
+    const u32 maxGap = (!Device.true_pip_on && Device.m_SecondViewport.IsSVPActive())
+        ? Device.m_SecondViewport.GetSVPFrameDelay() : 1;
     const bool cut = !havePrevious || Device.dwFrame <= previousFrame || Device.dwFrame - previousFrame > maxGap ||
         previousPosition.distance_to_sqr(Device.vCameraPosition) > 64.f ||
         previousDirection.dotproduct(Device.vCameraDirection) < .25f || _abs(previousFov - Device.fFOV) > 10.f;

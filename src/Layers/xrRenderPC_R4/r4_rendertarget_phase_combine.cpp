@@ -1050,9 +1050,9 @@ void CRenderTarget::phase_combine()
 	if (PP_Complex && !(Device.true_pip_on && Device.m_SecondViewport.m_render_pass_is_svp))
 	{
 		PIX_EVENT_C(phase_pp, dx10_marker_post);
-		tm_beg(svp_stats::SEC_C_COMBINE2);
+		tm_beg(svp_stats::SEC_C_PHASE_PP);
 		phase_pp();
-		tm_end(svp_stats::SEC_C_COMBINE2);
+		tm_end(svp_stats::SEC_C_PHASE_PP);
 	}
 
 #ifdef XR_DX12_BRIDGE

@@ -35,6 +35,12 @@ namespace svp_stats
 		SEC_C_DOF,
 		SEC_C_LUT,
 		SEC_C_COMBINE2,
+		// phase_pp: the DLSS/upscaler postprocess plus the postprocess chain, at DISPLAY
+		// resolution. phase_combine used to time this inside SEC_C_COMBINE2, which made
+		// "combine2" read as the frame's biggest cost when most of it was never the
+		// combine_2 shader at all. PP_Complex is hardcoded TRUE above the call site, so
+		// this always runs.
+		SEC_C_PHASE_PP,
 		// tracked copy cost by category, each accumulates across every copy site of its kind
 		SEC_CP_HIST,
 		SEC_CP_TAIL,

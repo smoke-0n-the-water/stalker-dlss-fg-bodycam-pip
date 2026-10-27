@@ -1631,6 +1631,11 @@ void CHW::RecreatePresentationBridgeIfNeeded()
     RCache.OnFrameEnd();
     _RELEASE(pBaseRT);
     _RELEASE(pBaseZB);
+    // Leave nothing dangling for SetActive to restore into HW.pBaseRT between
+    // here and the next AcquirePresentationFrame / UpdateViews, so the null
+    // guard in phase_pp can actually do its job.
+    secret_pBaseRT = nullptr;
+    secret_pBaseZB = nullptr;
     fg::Reset();
     m_presentBridge->WaitIdle();
     // DXGI allows one swapchain per window: release the old one completely first.
@@ -1646,6 +1651,15 @@ void CHW::AcquirePresentationFrame()
     R_CHK(m_presentBridge->AcquireFrame());
     _RELEASE(pBaseRT);
     R_CHK(m_presentBridge->GetRenderTargetView(&pBaseRT));
+    // The bridge hands back m_slots[m_currentSlot].view11, so pBaseRT is a
+    // DIFFERENT object every frame and the line above released the previous
+    // one. UpdateViews' one-time snapshot therefore goes stale as soon as a
+    // slot is recycled (Reset/Resize = loading a save), and CRenderTarget::
+    // SetActive restores the main target from that snapshot into HW.pBaseRT -
+    // so phase_pp bound a freed RTV and d3d11.dll faulted reading it.
+    // Non-owning by contract, exactly like the UpdateViews assignment; it just
+    // has to track pBaseRT rather than outlive it.
+    secret_pBaseRT = pBaseRT;
 }
 
 HRESULT CHW::Present(UINT interval, UINT flags)
@@ -1667,6 +1681,11 @@ HRESULT CHW::ResizePresentation(UINT width, UINT height, DXGI_FORMAT format, UIN
     RCache.OnFrameEnd();
     _RELEASE(pBaseRT);
     _RELEASE(pBaseZB);
+    // Leave nothing dangling for SetActive to restore into HW.pBaseRT between
+    // here and the next AcquirePresentationFrame / UpdateViews, so the null
+    // guard in phase_pp can actually do its job.
+    secret_pBaseRT = nullptr;
+    secret_pBaseZB = nullptr;
     fg::Reset();
     return m_presentBridge->Resize(width, height, format, flags);
 }

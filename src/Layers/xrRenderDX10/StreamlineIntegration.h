@@ -62,6 +62,7 @@ private:
     sl::FrameToken* m_frame{};
     UINT m_frameLimitUs{~0u}, m_presentedFrames{};
     UINT m_markerMask{}, m_frameNumber{}, m_tagFrame{}, m_presentNumber{};
+    bool m_vramWarned{}; // log the out-of-VRAM warning once, not every frame
     UINT m_diagnosticPresents{}; // Bounded snapshots of existing GetState results after mode changes.
     UINT m_missingFenceWarnings{}, m_markerGaps{};
     std::wstring m_directory;

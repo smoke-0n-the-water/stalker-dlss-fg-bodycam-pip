@@ -294,7 +294,11 @@ public:
 
 	CSecondVPParams m_SecondViewport;	//--#SM+#-- +SecondVP+
 
-	// SVP target is square, half the main height per side
+	// SVP target is square, half the main height per side.
+	// NOT the SVP sizing policy any more and no longer called: these are DISPLAY-relative, and
+	// the lens composites into the main rt_Color at the upscaler's render extent, so sizing the
+	// scope from dwHeight over-renders by the upscale factor. Use svp_composite_height() /
+	// svp_target_wh() in svp_target.cpp instead.
 	u32 svp_width() { return svp_height(); }
 	u32 svp_height() { return dwHeight >> 1; }
 
