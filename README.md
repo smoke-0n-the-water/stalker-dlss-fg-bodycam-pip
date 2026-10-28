@@ -1,3 +1,52 @@
+# S.T.A.L.K.E.R. Bodycam + PiP + DLSS + Frame Gen
+
+One engine that puts bodycam, true PiP scopes, native DLSS/FSR upscaling and DX12 frame generation
+together. Built and tested on G.A.M.M.A. (RTX 5080, 4K).
+
+## Versions
+
+| Tag | What it is |
+| --- | --- |
+| `v0.3` | Bodycam 0.3 + PiP + DLSS/FSR merge, DX12 bridge + DLSS-G / FSR frame generation, plus fixes for crashes and FG drop-outs |
+| `v0.3.1` | The same merge updated to Bodycam v0.3.1 (vector reticles, faster grass, weapon feel). Needs Bodycam GAMMA Patch 2.0.x + Grass Optimisation 5.0.0 |
+
+## What this merge adds on top of upstream
+
+- **One exe with everything.** The `DX12` configuration builds `AnomalyDX12.exe` (bodycam + PiP + DLSS + frame gen).
+  `DX11-AVX` builds `AnomalyDX11AVX.exe` (bodycam + PiP + DLSS, no frame gen).
+- **Save-load crash under the DX12 bridge fixed.** `secret_pBaseRT` was a stale snapshot of a per-frame
+  presentation view, so `phase_pp` bound a freed RTV.
+- **Frame gen no longer switches itself off when a PiP scope comes up.** A duplicate frame token gave
+  `eErrorDuplicatedConstants`.
+- **Out-of-VRAM no longer kills the game.** `eWarnOutOfVRAM` from Streamline is now handled as a warning
+  instead of a fatal error.
+- **Lens flares and the UI quad** are gated to the main render target so the scope pass can't corrupt them.
+- **Agility SDK path literal fixed** (`.\\D3D12\\`).
+- **PiP scope renders under DLSS** (the render-size vs display-size fix for the ocular and capture targets).
+- **Separate `phasepp` timer** in `r__svp_stats`. COMBINE2 used to time all of `phase_pp`.
+
+## Building
+
+VS 2022 Build Tools, then `git submodule update --init`:
+
+```powershell
+MSBuild src\engine-vs2022.sln -p:Configuration=DX12 -p:Platform=x64      # AnomalyDX12.exe
+MSBuild src\engine-vs2022.sln -p:Configuration=DX11-AVX -p:Platform=x64  # AnomalyDX11AVX.exe
+```
+
+Frame gen needs the runtime DLLs next to the exe: `bin\D3D12\D3D12Core.dll`, `bin\streamline\`,
+`amd_fidelityfx_*_dx12.dll` and `nvngx_dlss.dll`. They are not in this repo.
+
+## Built from
+
+- [asuparabekon/xray-monolith-bodycam](https://github.com/asuparabekon/xray-monolith-bodycam): bodycam, PiP scopes, v0.3 / v0.3.1
+- [m1RAGE5/xray-monolith-pip-dlss](https://github.com/m1RAGE5/xray-monolith-pip-dlss): PiP + DLSS/FSR3 merge
+- [themrdemonized/xray-monolith](https://github.com/themrdemonized/xray-monolith): base engine
+
+The original upstream README follows.
+
+---
+
 # X-Ray Monolith Bodycam
 
 A fork of the [X-Ray Monolith](https://github.com/themrdemonized/xray-monolith) MT engine for
