@@ -29,4 +29,4 @@ or `DX11-AVX|x64`. Frame gen needs `bin\D3D12\D3D12Core.dll`, `bin\streamline\`,
 - m1RAGE5/xray-monolith-pip-dlss: PiP + DLSS merge
 - themrdemonized/xray-monolith: base engine
 
-Below is the original bodycam README (it says DX11 only; this fork adds the DX12 build).
+
