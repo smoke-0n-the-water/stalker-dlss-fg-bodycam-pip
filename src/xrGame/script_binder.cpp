@@ -10,6 +10,7 @@
 #include "ai_space.h"
 #include "script_engine.h"
 #include "script_binder.h"
+#include "../xrCore/spawn_cost.h"
 #include "xrServer_Objects_ALife.h"
 #include "script_binder_object.h"
 #include "script_game_object.h"
@@ -146,6 +147,7 @@ BOOL CScriptBinder::net_Spawn(CSE_Abstract* DC)
 	{
 		try
 		{
+			spawn_cost::Scope cost(spawn_cost::Lua);
 			return ((BOOL)m_object->net_Spawn(object));
 		}
 		catch (...)
