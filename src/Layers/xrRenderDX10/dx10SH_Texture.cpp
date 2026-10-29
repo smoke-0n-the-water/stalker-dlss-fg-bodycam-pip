@@ -67,14 +67,15 @@ void wait_timed(const CTexture* T)
 	DEV->NoteTextureWait(T, (u64)std::chrono::duration_cast<std::chrono::microseconds>(held).count());
 }
 
-// Textures whose missing frames would show: sky and weather, engine lookup tables, UI, render targets.
+// Textures whose missing frames would show: sky and weather, engine lookup tables, render targets.
+// UI is not in the list: a weapon icon stalled the frame 40 ms on a weapon swap, a blank icon for a
+// frame is the better trade.
 bool must_wait(const shared_str& name)
 {
 	LPCSTR n = name.c_str();
 	if (!n)
 		return true;
-	return strncmp(n, "sky", 3) == 0 || strncmp(n, "shaders", 7) == 0 || strncmp(n, "ui\\", 3) == 0 ||
-		strncmp(n, "ui/", 3) == 0 || strchr(n, '$') != nullptr;
+	return strncmp(n, "sky", 3) == 0 || strncmp(n, "shaders", 7) == 0 || strchr(n, '$') != nullptr;
 }
 }
 
