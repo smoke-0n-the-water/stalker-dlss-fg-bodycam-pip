@@ -1,0 +1,58 @@
+; NOTE on placement: weapon sections are patched through the SYSTEM namespace,
+; so this file must be gamedata/configs/mod_system_*.ltx. A DLTX file named after
+; the weapon ltx (mod_w_ar15_viper2_custom_hud_*.ltx) is never read and silently
+; does nothing - that was the first attempt at this fix. 3DSS does the same thing
+; the right way in mod_system_zz_3dss_ak104_alfa.ltx with ![wpn_ak104_alfa_hud].
+;
+; Viper 2 SuperCustom: the six "_off" HUD sections point at .ogf files that the
+; mod does not ship. Flipping a magnifier or an offset sight switches the weapon
+; to its _off section, the engine tries to load that model, and it is a hard
+; FATAL in CModelPool::Instance_Load:
+;
+;   Can't find model file
+;   'anomaly_weapons\wpn_ar15_viper2_custom\wpn_ar15_viper2_custom_e0t2_magd_off_hud.ogf'
+;
+; Confirmed 2026-10-29 by flipping the EOTech magnifier with the scroll wheel
+; while aimed. All six are the same defect, so every flip on this weapon crashes,
+; not just the EOTech one:
+;
+;   aim_t2_magd_off        Aimpoint T2 + magnifier
+;   atacr_voodoo_off       ATACR + Voodoo offset mount
+;   e0t2_magd_off          EOTech EXPS + FTC magnifier     <- the reported crash
+;   e0t2_magd_unity_off    EOTech EXPS + magnifier, Unity mount
+;   narcos_kit_off         Narcos kit
+;   uh1_voodoo_off         UH-1 + Voodoo offset mount
+;
+; Every one is repointed at its own non-off model, which the mod DOES ship. The
+; flip then plays its animation and changes the weapon's behaviour as normal,
+; but the model does not visibly change: the magnifier stays drawn in line
+; rather than folding aside. That is cosmetic. The alternative for the two
+; EOTech rows is e0t2_hud.ogf, which drops the magnifier from view entirely but
+; also drops its mount, so it pops worse. Swap them if you prefer that.
+;
+; The real fix is for the weapon pack to ship the six missing models.
+;
+; Unrelated and NOT fixed here: this pack also sets
+;   custom_ui_func = magnifier_switch.on_hud_attach
+; on three sections, and the magnifier_switch.script in 3DSS defines no such
+; function. That is the
+;   [wpn_...]: Script UI functor [magnifier_switch.on_hud_attach] does not exist!
+; spam in the log. It is noisy, not fatal, and it is not what crashed the game.
+
+![wpn_ar15_viper2_custom_aim_t2_magd_off_hud]
+item_visual = anomaly_weapons\wpn_ar15_viper2_custom\wpn_ar15_viper2_custom_aim_t2_magd_hud.ogf
+
+![wpn_ar15_viper2_custom_atacr_voodoo_off_hud]
+item_visual = anomaly_weapons\wpn_ar15_viper2_custom\wpn_ar15_viper2_custom_atacr_voodoo_hud.ogf
+
+![wpn_ar15_viper2_custom_e0t2_magd_off_hud]
+item_visual = anomaly_weapons\wpn_ar15_viper2_custom\wpn_ar15_viper2_custom_e0t2_magd_hud.ogf
+
+![wpn_ar15_viper2_custom_e0t2_magd_unity_off_hud]
+item_visual = anomaly_weapons\wpn_ar15_viper2_custom\wpn_ar15_viper2_custom_e0t2_magd_unity_hud.ogf
+
+![wpn_ar15_viper2_custom_narcos_kit_off_hud]
+item_visual = anomaly_weapons\wpn_ar15_viper2_custom\wpn_ar15_viper2_custom_narcos_kit_hud.ogf
+
+![wpn_ar15_viper2_custom_uh1_voodoo_off_hud]
+item_visual = anomaly_weapons\wpn_ar15_viper2_custom\wpn_ar15_viper2_custom_uh1_voodoo_hud.ogf

@@ -1,0 +1,84 @@
+; Optics whose lens the bodycam reference glass blanks. While one of these is
+; aimed, zzz_bodycam_scope_effects_guard turns bodycam scope effects off, and
+; turns them back on when you lower the weapon or switch to any other optic.
+;
+; Why these: the reference image is only presented on the deferred-glass path,
+; and NV / thermal / digital-display optics are excluded from deferred glass by
+; design (svp_optics.cpp: !(scope_glass_deferred_current() && ps_r2_nightvision)).
+; Confirmed broken by measurement on 1pn93 and echo1; pn23 reported by Walter.
+; The rest are every other runtime section in pip_optic_physical_specs.ltx bound
+; to a spec whose optic_class is display or night_vision_display - the same
+; family, rather than a guess per weapon.
+;
+; Names match CWeapon:GetScopeName() first, then the weapon's own section,
+; either exactly, as an underscore-separated token, or as a trailing _<name>.
+; That last form is what catches integrated optics, which report no scope name
+; at all (measured: "scope= diagnostic_scope=1pn93" for wpn_ak101_1pn93).
+;
+; This list is MINIMAL: 10 further entries were dropped because the names below
+; already matched every section they did - wpn_m98b_pn23 is caught by pn23,
+; wpn_k98_mod_skeet by skeet, and so on. Verified over all 7030 weapon and
+; up_sect sections in this install: 431/431 of the listed-optic variants match,
+; with zero false positives. Re-check after adding one, since a short name can
+; catch more than you intend.
+;
+; Add or remove freely - one name per line, value ignored. If an optic in here
+; turns out to render fine, delete it and you keep the bodycam glass on it.
+
+; MAGNIFIER HYBRIDS, added 2026-10-29. These are NOT display optics - they bind
+; geometric specs (optic_eotech_g33_3x, optic_sig_juliet6_6x24) and are the
+; hybrid reflex-plus-magnifier class from pip_hybrid_optics.ltx. They show the
+; same blank lens, so the breakage is wider than the display class alone.
+;
+; Confirmed on the EOTech EXPS + FTC magnifier (e0t2_magd) on the AR15 Viper 2.
+; uh1_magd is the same class and is included on that basis, not tested.
+;
+; The _off rows cover the flipped-away state, where the optic is an unmagnified
+; reflex. If that state renders FINE for you with scope effects on, delete the
+; two _off lines and you keep the bodycam glass on the reflex, which is where it
+; looks best. Left in because a blank lens is worse than a missing effect.
+;
+; Twelve more hybrid sections exist in pip_hybrid_optics.ltx (exps3_mag,
+; exps3_magd, romeo8_magd, romeo4_magd, he510_magd and their variants) and are
+; deliberately NOT listed: they match no weapon section in this install, so they
+; would be dead entries. Add them if a weapon pack later brings them in.
+
+; mode decides what the hold keys off.
+;
+;   pip    Hold bodycam scope effects off whenever PiP scopes are ON
+;          (r__svpscope is 1 or 2), for every optic. This is the default.
+;          The cvar is re-read as you aim, so r__svpscope 0 gives the bodycam
+;          glass back live and setting it to 1 or 2 takes it away again, with
+;          no restart.
+;
+;   list   Hold them off only for the optics in [broken_optics] below.
+;          That is the targeted behaviour, for when you want the bodycam glass
+;          on everything that renders it correctly.
+;
+; Either way the setting is restored the moment you lower the weapon, so the
+; Modded Exes menu still shows scope effects enabled and nothing else in
+; bodycam sees it change. A value you set to off yourself is left alone.
+[settings]
+mode = pip
+
+[broken_optics]
+e0t2_magd
+e0t2_magd_off
+e0t2_magd_unity
+e0t2_magd_unity_off
+uh1_magd
+uh1_magd_off
+1pn93
+1pn93n2_1gs
+echo1
+gauss_sight
+pn23
+skeet
+t12
+up_sect_firsta_binoc
+up_sect_firstc_binoc
+up_sect_firste_binoc
+vulcan
+wpn_g36c_rwap
+wpn_gauss
+wpn_gauss_quest
