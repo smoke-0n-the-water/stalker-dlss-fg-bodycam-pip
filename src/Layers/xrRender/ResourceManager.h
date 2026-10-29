@@ -251,6 +251,10 @@ public:
 	void UnloadAllTexturesOnLevelUnload();
 	void Evict();
     void EvictStalledTextures();
+    // Render-thread texture wait telemetry; ResidencyFrame() runs once per frame.
+    void NoteTextureWait(const CTexture* T, u64 us);
+    void NoteTextureDeferred();
+    void ResidencyFrame();
 	void StoreNecessaryTextures();
 	void DestroyNecessaryTextures();
 	void Dump(bool bBrief);

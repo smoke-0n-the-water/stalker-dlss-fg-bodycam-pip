@@ -15,6 +15,8 @@
 
 #include "StateManager/dx10ShaderResourceStateCache.h"
 
+#include <chrono>
+
 #if RENDER == R_R4
 #include "../xrRenderPC_R4/r4_reticle_vector.h"
 #endif
@@ -29,6 +31,52 @@
 // ready. apply_load() below reuses the same queue for evicted textures instead of
 // calling Load() inline.
 extern xr_task_group textures_load_tasks;
+
+namespace
+{
+// Binds a view at an engine stage index (see CTexture::ResourceShaderType).
+void bind_srv(u32 dwStage, ID3DShaderResourceView* view)
+{
+	if (dwStage < CTexture::rstVertex)
+		SRVSManager.SetPSResource(dwStage, view);
+	else if (dwStage < CTexture::rstGeometry)
+		SRVSManager.SetVSResource(dwStage - CTexture::rstVertex, view);
+	else if (dwStage < CTexture::rstHull)
+		SRVSManager.SetGSResource(dwStage - CTexture::rstGeometry, view);
+#ifdef USE_DX11
+	else if (dwStage < CTexture::rstDomain)
+		SRVSManager.SetHSResource(dwStage - CTexture::rstHull, view);
+	else if (dwStage < CTexture::rstCompute)
+		SRVSManager.SetDSResource(dwStage - CTexture::rstDomain, view);
+	else if (dwStage < CTexture::rstInvalid)
+		SRVSManager.SetCSResource(dwStage - CTexture::rstCompute, view);
+#endif
+	else
+		VERIFY("Invalid stage");
+}
+
+// Waits out an in-flight load and reports how long the calling thread was held.
+void wait_timed(const CTexture* T)
+{
+	if (!T->IsLoading())
+		return;
+	const auto start = std::chrono::steady_clock::now();
+	while (T->IsLoading())
+		SwitchToThread();
+	const auto held = std::chrono::steady_clock::now() - start;
+	DEV->NoteTextureWait(T, (u64)std::chrono::duration_cast<std::chrono::microseconds>(held).count());
+}
+
+// Textures whose missing frames would show: sky and weather, engine lookup tables, UI, render targets.
+bool must_wait(const shared_str& name)
+{
+	LPCSTR n = name.c_str();
+	if (!n)
+		return true;
+	return strncmp(n, "sky", 3) == 0 || strncmp(n, "shaders", 7) == 0 || strncmp(n, "ui\\", 3) == 0 ||
+		strncmp(n, "ui/", 3) == 0 || strchr(n, '$') != nullptr;
+}
+}
 
 void resptrcode_texture::create(LPCSTR _name)
 {
@@ -141,10 +189,7 @@ void CTexture::surface_set(ID3DBaseTexture* surf)
 
 ID3DBaseTexture* CTexture::surface_get()
 {
-	while (IsLoading())
-	{
-		SwitchToThread();
-	}
+	wait_timed(this);
 	if (flags.bLoadedAsStaging)
 		ProcessStaging();
 
@@ -178,9 +223,8 @@ void CTexture::apply_load(u32 dwStage)
 #endif // DEBUG
             DEV->QueueTextureLoad(ref_texture(this));
         }
-        // Bind nothing (or whatever is already there, e.g. mid-flight from an
-        // in-flight Load()) for this call. apply_normal() waits out any in-flight
-        // load, so this never touches D3D resources that are being created
+        // apply_normal() either binds nothing for this call (r__tex_nowait) or waits
+        // out the load, so this never touches D3D resources that are being created
         // concurrently. Once the queued Load() completes, PostLoad() re-points
         // `bind` at the real apply_* handler and subsequent calls stop landing here.
         apply_normal(dwStage);
@@ -285,10 +329,7 @@ void CTexture::ProcessStaging()
 
 void CTexture::Apply(u32 dwStage)
 {
-	while (IsLoading())
-	{
-		SwitchToThread();
-	}
+	wait_timed(this);
 	dwLastUsedFrame = RDEVICE.dwFrame;
 
 	if (flags.bLoadedAsStaging)
@@ -302,37 +343,7 @@ void CTexture::Apply(u32 dwStage)
 	//   return;
 	//}
 
-	if (dwStage < rstVertex) //	Pixel shader stage resources
-	{
-		//HW.pDevice->PSSetShaderResources(dwStage, 1, &m_pSRView);
-		SRVSManager.SetPSResource(dwStage, m_pSRView);
-	}
-	else if (dwStage < rstGeometry) //	Vertex shader stage resources
-	{
-		//HW.pDevice->VSSetShaderResources(dwStage-rstVertex, 1, &m_pSRView);
-		SRVSManager.SetVSResource(dwStage - rstVertex, m_pSRView);
-	}
-	else if (dwStage < rstHull) //	Geometry shader stage resources
-	{
-		//HW.pDevice->GSSetShaderResources(dwStage-rstGeometry, 1, &m_pSRView);
-		SRVSManager.SetGSResource(dwStage - rstGeometry, m_pSRView);
-	}
-#ifdef USE_DX11
-	else if (dwStage < rstDomain) //	Geometry shader stage resources
-	{
-		SRVSManager.SetHSResource(dwStage - rstHull, m_pSRView);
-	}
-	else if (dwStage < rstCompute) //	Geometry shader stage resources
-	{
-		SRVSManager.SetDSResource(dwStage - rstDomain, m_pSRView);
-	}
-	else if (dwStage < rstInvalid) //	Geometry shader stage resources
-	{
-		SRVSManager.SetCSResource(dwStage - rstCompute, m_pSRView);
-	}
-#endif
-	else
-		VERIFY("Invalid stage");
+	bind_srv(dwStage, m_pSRView);
 }
 
 void CTexture::apply_theora(u32 dwStage)
@@ -459,9 +470,12 @@ void CTexture::apply_gif(u32 dwStage)
 
 void CTexture::apply_normal(u32 dwStage)
 {
-	while (IsLoading())
+	if (ps_r__tex_nowait && IsLoading() && !must_wait(cName))
 	{
-		SwitchToThread();
+		// Still loading on a worker: draw this frame without it rather than stall the render thread.
+		bind_srv(dwStage, nullptr);
+		DEV->NoteTextureDeferred();
+		return;
 	}
 	//CHK_DX(HW.pDevice->SetTexture(dwStage,pSurface));
 	Apply(dwStage);

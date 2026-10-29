@@ -704,6 +704,109 @@ void CResourceManager::DrainTextureLoads(bool close) {
   CollectTextureLoads();
 }
 
+namespace
+{
+std::atomic<u64> s_wait_us{0};
+std::atomic<u32> s_wait_count{0};
+std::atomic<u32> s_deferred{0};
+xrCriticalSection s_worst_lock;
+u64 s_worst_us = 0;
+shared_str s_worst_name;
+
+u32 s_residency_frame = u32(-1);
+u32 s_deferred_window = 0;
+u32 s_deferred_next_ms = 0;
+#ifdef USE_DX11
+u32 s_vram_next_ms = 0;
+IDXGIAdapter3* s_adapter3 = nullptr;
+bool s_adapter3_tried = false;
+#endif
+}
+
+void CResourceManager::NoteTextureWait(const CTexture* T, u64 us)
+{
+	s_wait_us.fetch_add(us, std::memory_order_relaxed);
+	s_wait_count.fetch_add(1, std::memory_order_relaxed);
+	xrCriticalSectionGuard guard(s_worst_lock);
+	if (us > s_worst_us)
+	{
+		s_worst_us = us;
+		s_worst_name = T->cName;
+	}
+}
+
+void CResourceManager::NoteTextureDeferred()
+{
+	s_deferred.fetch_add(1, std::memory_order_relaxed);
+}
+
+void CResourceManager::ResidencyFrame()
+{
+	// Render() can run more than once per frame (scope viewport); report once.
+	if (s_residency_frame == Device.dwFrame)
+		return;
+	s_residency_frame = Device.dwFrame;
+
+	const u64 waited = s_wait_us.exchange(0, std::memory_order_relaxed);
+	const u32 waits = s_wait_count.exchange(0, std::memory_order_relaxed);
+	u64 worst;
+	shared_str worst_name;
+	{
+		xrCriticalSectionGuard guard(s_worst_lock);
+		worst = s_worst_us;
+		worst_name = s_worst_name;
+		s_worst_us = 0;
+		s_worst_name = nullptr;
+	}
+	if (ps_r__tex_wait_log && waited >= u64(ps_r__tex_wait_log) * 1000)
+		Msg("! [TexWait] frame %u: render thread waited %.1f ms on %u texture load(s), longest %.1f ms: %s",
+			Device.dwFrame, float(waited) / 1000.f, waits, float(worst) / 1000.f,
+			worst_name.size() ? worst_name.c_str() : "?");
+
+	// Deferred binds are expected while new textures stream in; summarise once a second.
+	s_deferred_window += s_deferred.exchange(0, std::memory_order_relaxed);
+	if (Device.dwTimeGlobal >= s_deferred_next_ms)
+	{
+		if (s_deferred_window)
+			Msg("* [TexWait] last second: %u bind(s) drew without a still-loading texture instead of waiting",
+				s_deferred_window);
+		s_deferred_window = 0;
+		s_deferred_next_ms = Device.dwTimeGlobal + 1000;
+	}
+
+#ifdef USE_DX11
+	if (!ps_r__tex_vram_log || Device.dwTimeGlobal < s_vram_next_ms)
+		return;
+	s_vram_next_ms = Device.dwTimeGlobal + u32(ps_r__tex_vram_log) * 1000;
+	if (!s_adapter3_tried)
+	{
+		s_adapter3_tried = true;
+		if (HW.m_pAdapter)
+			HW.m_pAdapter->QueryInterface(__uuidof(IDXGIAdapter3), (void**)&s_adapter3);
+	}
+	DXGI_QUERY_VIDEO_MEMORY_INFO local = {};
+	if (!s_adapter3 || FAILED(s_adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local)))
+		return;
+	u64 tex_bytes = 0;
+	u32 tex_count = 0;
+	{
+		xrCriticalSectionGuard guard(creationGuard);
+		for (const auto& entry : m_textures)
+		{
+			if (!entry.second->flags.bLoaded)
+				continue;
+			tex_bytes += entry.second->flags.MemoryUsage;
+			++tex_count;
+		}
+	}
+	const u64 mb = 1024 * 1024;
+	// Usage above budget means the driver is paging video memory out to system RAM, a stutter source.
+	Msg("%s [TexVRAM] usage %llu MB of budget %llu MB (%.0f%%), %u loaded textures %llu MB",
+		local.CurrentUsage > local.Budget ? "!" : "*", local.CurrentUsage / mb, local.Budget / mb,
+		local.Budget ? 100.0 * double(local.CurrentUsage) / double(local.Budget) : 0.0, tex_count, tex_bytes / mb);
+#endif
+}
+
 void CResourceManager::_DeleteTexture(const CTexture* T)
 {
 	// DBG_VerifyTextures	();
