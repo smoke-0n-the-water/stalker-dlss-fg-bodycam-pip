@@ -1,4 +1,4 @@
-# S.T.A.L.K.E.R. Bodycam + PiP + DLSS + Frame Gen
+# S.T.A.L.K.E.R. GAMMA Bodycam + PiP + DLSS + Frame Gen
 
 My merge of bodycam, true PiP scopes, DLSS/FSR and DX12 frame gen into one engine for G.A.M.M.A.
 I play on it daily (RTX 5080, 4K).
