@@ -67,14 +67,28 @@ bool CRenderTarget::phase_scope_reference_composite(
 	const ref_rt& destination, ID3DDepthStencilView* depth, const Fvector4 (&constants)[SvpReferenceOpticsFrame::ConstantCount])
 {
 	const auto& ocular = Device.m_SecondViewport.eyepiece;
-	if (!(ocular.radius > EPS))
+	// pip [SVP-REF] composite diagnostics, throttled to one line per second under r__svp_diag.
+	// The bail reasons matter as much as the success line: an optic whose lens never composites
+	// falls out here, and the stock PiP image is kept instead (see phase_3DSSReticle).
+	static u32 s_ref_ms = 0;
+	const bool ref_diag = ps_r__svp_diag && Device.dwTimeGlobal - s_ref_ms > 1000;
+	auto ref_bail = [&](const char* why)
+	{
+		if (ref_diag)
+		{
+			s_ref_ms = Device.dwTimeGlobal;
+			PipMsg("[SVP-REF] bail=%s r=%.4fm", why, ocular.radius);
+		}
 		return false;
+	};
+	if (!(ocular.radius > EPS))
+		return ref_bail("radius");
 	// The shader scales lengths by the radius alone, which holds for a rigid lens transform only.
 	const auto& lensBasis = ocular.m_W;
 	if (_abs(lensBasis.i.square_magnitude() - 1.f) > 0.001f || _abs(lensBasis.j.square_magnitude() - 1.f) > 0.001f ||
 		_abs(lensBasis.k.square_magnitude() - 1.f) > 0.001f || _abs(lensBasis.i.dotproduct(lensBasis.j)) > 0.001f ||
 		_abs(lensBasis.i.dotproduct(lensBasis.k)) > 0.001f || _abs(lensBasis.j.dotproduct(lensBasis.k)) > 0.001f)
-		return false;
+		return ref_bail("basis");
 
 	static const char* names[] = { "$user$svp_reference_capture", "$user$svp_reference_translucent", "$user$svp_reference_opaque" };
 	for (unsigned i = 0; i < 3; ++i)
@@ -135,7 +149,28 @@ bool CRenderTarget::phase_scope_reference_composite(
 				RCache.set_Z(FALSE);
 		});
 	HW.pContext->RSSetViewports(count, saved);
-	return RCache.stat.calls != callsBefore;
+	const bool drew = RCache.stat.calls != callsBefore;
+	if (ref_diag)
+	{
+		s_ref_ms = Device.dwTimeGlobal;
+		const auto& p = scope_reference_packet;
+		// the live aimed eye in ocular space, the same basis the composite shader works in,
+		// so it can be read directly against the published baseline
+		Fvector right = ocular.m_W.i, up = ocular.m_W.j, forward = ocular.m_W.k;
+		right.normalize_safe();
+		up.normalize_safe();
+		forward.normalize_safe();
+		Fvector delta;
+		delta.sub(Device.vCameraPosition, ocular.m_W.c);
+		Fvector eye;
+		eye.set(delta.dotproduct(right), delta.dotproduct(up), delta.dotproduct(forward));
+		PipMsg("[SVP-REF] r=%.4fm src=%.4f ratio=%.2f active=%d fromWeapon=%d base=(%.4f,%.4f,%.4f) "
+			   "eye=(%.4f,%.4f,%.4f) dst=%ux%u drew=%d",
+			ocular.radius, p.sourceRadius, p.sourceRadius / ocular.radius, p.active ? 1 : 0,
+			p.ocularBaselineFromWeapon ? 1 : 0, p.ocularBaselineEye.x, p.ocularBaselineEye.y, p.ocularBaselineEye.z, eye.x,
+			eye.y, eye.z, destination->dwWidth, destination->dwHeight, drew ? 1 : 0);
+	}
+	return drew;
 }
 
 void CRenderTarget::EnsureScopeShaders()
@@ -641,16 +676,38 @@ void CRenderTarget::phase_3DSSReticle(bool object_lens_pass)
 	// and reticle at the visible glass pixels instead (scope_glass_fallback).
 	const bool stockPipImage = !object_lens_pass && Device.m_SecondViewport.IsSVPActive() && RImplementation.TargetSVP &&
 		scope_reference_composited_frame != Device.dwFrame;
+	// pip [SVP-BRANCH] which image path the lens takes, one line per second under r__svp_diag.
+	// The Reference image REPLACES the stock one, so an optic landing on an unexpected branch
+	// here shows bodycam's glass where its own PiP image belongs. The object-lens pass and the
+	// ordinary pass get SEPARATE throttles: both run every frame, and a shared one would only
+	// ever show whichever called first that second.
+	static u32 s_branch_ms[2] = {0, 0};
+	const unsigned branch_pass = object_lens_pass ? 1u : 0u;
+	const bool branch_diag = ps_r__svp_diag && Device.dwTimeGlobal - s_branch_ms[branch_pass] > 1000;
+	if (branch_diag)
+		s_branch_ms[branch_pass] = Device.dwTimeGlobal;
 	if (scope_glass_deferred_current() && !stockPipImage)
 	{
 		if (object_lens_pass)
+		{
+			if (branch_diag)
+				PipMsg("[SVP-BRANCH] take=deferred-objpass stockPip=%d refCurrent=%d composited=%d svp=%d r=%.4fm",
+					stockPipImage ? 1 : 0, scope_reference_current() ? 1 : 0,
+					scope_reference_composited_frame == Device.dwFrame ? 1 : 0,
+					Device.m_SecondViewport.IsSVPActive() ? 1 : 0, Device.m_SecondViewport.eyepiece.radius);
 			return;
+		}
 		SetActive(true);
 		u_setrt(rt_Generic_0, nullptr, rt_Position, baseZB);
 		RCache.set_CullMode(CULL_CCW);
 		RCache.set_Stencil(FALSE);
 		RCache.set_ColorWriteEnable();
 		const bool referenceReticle = scope_reference_current() && scope_reference_composited_frame == Device.dwFrame;
+		if (branch_diag)
+			PipMsg("[SVP-BRANCH] take=deferred objPass=0 stockPip=%d refReticle=%d refCurrent=%d composited=%d svp=%d r=%.4fm",
+				stockPipImage ? 1 : 0, referenceReticle ? 1 : 0, scope_reference_current() ? 1 : 0,
+				scope_reference_composited_frame == Device.dwFrame ? 1 : 0, Device.m_SecondViewport.IsSVPActive() ? 1 : 0,
+				Device.m_SecondViewport.eyepiece.radius);
 		if (referenceReticle)
 		{
 			svp_track_disc(Width, Height);
@@ -694,6 +751,12 @@ void CRenderTarget::phase_3DSSReticle(bool object_lens_pass)
 	// captures nothing falls through to the stock render_Reticle
 	const bool svp = Device.m_SecondViewport.IsSVPActive() && RImplementation.TargetSVP;
 	const bool has_lens = !RImplementation.GMBase.RGraph.mapScopeHUDSorted.empty() && Device.m_SecondViewport.eyepiece.radius > EPS;
+	if (branch_diag)
+		PipMsg("[SVP-BRANCH] take=stock objPass=%d deferred=%d stockPip=%d refImage=%d refCurrent=%d composited=%d svp=%d "
+			   "has_lens=%d r=%.4fm",
+			object_lens_pass ? 1 : 0, scope_glass_deferred_current() ? 1 : 0, stockPipImage ? 1 : 0, referenceImage ? 1 : 0,
+			scope_reference_current() ? 1 : 0, scope_reference_composited_frame == Device.dwFrame ? 1 : 0, svp ? 1 : 0,
+			has_lens ? 1 : 0, Device.m_SecondViewport.eyepiece.radius);
 	if (object_lens_pass && (!Device.true_pip_on || (!svp && !has_lens)))
 		return;
 
