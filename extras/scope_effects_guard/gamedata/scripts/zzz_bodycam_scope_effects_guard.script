@@ -1,0 +1,151 @@
+-- Bodycam scope effects guard.
+--
+-- The bodycam reference glass blanks the lens of NV / thermal / digital-display
+-- optics: the reference image is only presented on the deferred-glass path, and
+-- those optics are excluded from deferred glass by design. Until that is fixed in
+-- the engine, hold bodycam scope effects off while such an optic is aimed and put
+-- them straight back afterwards, so every other scope keeps the effect.
+--
+-- Listed optics live in bodycam_scope_effects_guard.ltx [broken_optics].
+
+local KEY = "scope_effects_enable"
+
+local blocked = nil   -- name -> true, built once on first use
+local holding = false -- true while we are the ones keeping the setting off
+local restore_to = nil -- the player's value from before we took it down
+
+local function list()
+    if blocked then return blocked end
+    blocked = {}
+    local ini = ini_file("bodycam_scope_effects_guard.ltx")
+    if not (ini and ini:section_exist("broken_optics")) then return blocked end
+    for i = 0, ini:line_count("broken_optics") - 1 do
+        local _, name = ini:r_line_ex("broken_optics", i, "", "")
+        if name and name ~= "" then blocked[name] = true end
+    end
+    return blocked
+end
+
+-- [settings] mode decides what the hold keys off:
+--   pip   hold whenever PiP scopes are on, whatever the optic (the default)
+--   list  hold only for the optics in [broken_optics]
+local mode_cached = nil
+local function mode()
+    if mode_cached then return mode_cached end
+    local ini = ini_file("bodycam_scope_effects_guard.ltx")
+    local v = ini and ini:r_string_ex("settings", "mode")
+    mode_cached = (v == "list") and "list" or "pip"
+    return mode_cached
+end
+
+-- r__svpscope: 0 off, 1 eyepiece, 2 objective. Anything non-zero means the
+-- engine is rendering the lens itself, which is when the bodycam reference
+-- glass has something to collide with.
+local function pip_on()
+    local ok, v = pcall(function()
+        return get_console():get_integer("r__svpscope")
+    end)
+    return ok and v and v > 0 or false
+end
+
+local function blocked_weapon(wpn)
+    if not wpn then return false end
+    local names = list()
+    -- A detachable scope names itself.
+    if wpn.IsScopeAttached and wpn:IsScopeAttached() and wpn.GetScopeName then
+        local scope = wpn:GetScopeName()
+        if scope and scope ~= "" and names[scope] then return true end
+    end
+    local sec = wpn:section()
+    if not sec then return false end
+    if names[sec] then return true end
+    -- An INTEGRATED optic reports no scope name at all - GetScopeName() comes
+    -- back empty and the engine itself falls back to a hint derived from the
+    -- weapon section. Measured 2026-10-29: SVP-CONFIG logs
+    -- "scope= diagnostic_scope=1pn93" for wpn_ak101_1pn93, and the same shape
+    -- for wpn_mk47_sup_pn23, wpn_ak104_pn23, wpn_m98b_pn23.
+    --
+    -- Match on underscore-separated TOKENS rather than the suffix alone: the
+    -- optic is not always last (wpn_ak104_alfa_pn23, and variants that append
+    -- a kit or skin after the optic). Token boundaries keep it from firing on
+    -- an unrelated section that merely contains the letters.
+    for token in sec:gmatch("[^_]+") do
+        if names[token] then return true end
+    end
+    -- Multi-token entries (gauss_sight, 1pn93n2_1gs, whole weapon sections) do
+    -- not survive the split, so check those as a trailing _<name> only. NOT as a
+    -- prefix: wpn_g36c_rwap is listed, but wpn_g36c_rwap_acog is that same rifle
+    -- wearing an ACOG, which renders fine and must keep its bodycam glass.
+    -- Verified over all 7030 weapon and up_sect sections in this install:
+    -- 431/431 of the listed-optic variants match, with zero false positives.
+    for name in pairs(names) do
+        if name:find("_", 1, true) and sec:sub(-(#name + 1)) == ("_" .. name) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Taking the setting down and putting it back are both idempotent, so the zoom
+-- callbacks, the zoom-type toggle and an item switch can all call them freely.
+local function hold()
+    if holding then return end
+    if not (bodycam and bodycam.get_bool and bodycam.set_bool) then return end
+    restore_to = bodycam.get_bool(KEY, true)
+    if restore_to == false then return end -- already off by the player's own choice
+    bodycam.set_bool(KEY, false)
+    holding = true
+end
+
+local function release()
+    if not holding then return end
+    holding = false
+    if bodycam and bodycam.set_bool then
+        bodycam.set_bool(KEY, restore_to == nil and true or restore_to)
+    end
+    restore_to = nil
+end
+
+local function evaluate()
+    local actor = db.actor
+    if not actor then return release() end
+    if mode() == "pip" then
+        -- Re-read the cvar each time rather than caching it, so turning PiP
+        -- off with r__svpscope 0 gives the bodycam glass back without a
+        -- restart, and turning it back on takes it away again.
+        if pip_on() then hold() else release() end
+        return
+    end
+    local wpn = actor:active_item()
+    if wpn and blocked_weapon(wpn) then hold() else release() end
+end
+
+function actor_on_weapon_zoom_in()
+    evaluate()
+end
+
+function actor_on_weapon_zoom_out()
+    release()
+end
+
+-- "=" switches the optic's mode; the lens only blanks in one of them, but the
+-- weapon can also change under us, so just re-decide.
+function actor_on_weapon_zoom_type_changed()
+    evaluate()
+end
+
+-- Holstering or swapping does not always raise zoom_out first, so re-decide on
+-- any item state change: evaluate() releases by itself once the active item is
+-- gone or is not a listed optic.
+function actor_on_item_state_switch()
+    evaluate()
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_weapon_zoom_in", actor_on_weapon_zoom_in)
+    RegisterScriptCallback("actor_on_weapon_zoom_out", actor_on_weapon_zoom_out)
+    RegisterScriptCallback("actor_on_weapon_zoom_type_changed", actor_on_weapon_zoom_type_changed)
+    RegisterScriptCallback("actor_on_item_state_switch", actor_on_item_state_switch)
+    -- never leave the setting held down across a load
+    RegisterScriptCallback("save_state", release)
+end
