@@ -255,6 +255,7 @@ public:
     void NoteTextureWait(const CTexture* T, u64 us);
     void NoteTextureDeferred();
     void ResidencyFrame();
+    void RelieveVramPressure(u64 usage, u64 budget);
 	void StoreNecessaryTextures();
 	void DestroyNecessaryTextures();
 	void Dump(bool bBrief);

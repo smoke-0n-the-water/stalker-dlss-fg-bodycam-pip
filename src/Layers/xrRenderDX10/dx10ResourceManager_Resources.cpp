@@ -718,8 +718,28 @@ u32 s_deferred_window = 0;
 u32 s_deferred_next_ms = 0;
 #ifdef USE_DX11
 u32 s_vram_next_ms = 0;
+u32 s_pressure_next_ms = 0;
+bool s_pressure_warned = false;
 IDXGIAdapter3* s_adapter3 = nullptr;
 bool s_adapter3_tried = false;
+
+bool query_local_vram(DXGI_QUERY_VIDEO_MEMORY_INFO& local)
+{
+	if (!s_adapter3_tried)
+	{
+		s_adapter3_tried = true;
+		if (HW.m_pAdapter)
+			HW.m_pAdapter->QueryInterface(__uuidof(IDXGIAdapter3), (void**)&s_adapter3);
+	}
+	return s_adapter3 && SUCCEEDED(s_adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local));
+}
+
+// Textures VRAM pressure must never unload: sky and weather, engine lookup tables, UI, render targets.
+bool residency_pinned(LPCSTR name)
+{
+	return strncmp(name, "sky", 3) == 0 || strncmp(name, "shaders", 7) == 0 || strncmp(name, "ui\\", 3) == 0 ||
+		strncmp(name, "ui/", 3) == 0 || strchr(name, '$') != nullptr;
+}
 #endif
 }
 
@@ -775,25 +795,28 @@ void CResourceManager::ResidencyFrame()
 	}
 
 #ifdef USE_DX11
-	if (!ps_r__tex_vram_log || Device.dwTimeGlobal < s_vram_next_ms)
-		return;
-	s_vram_next_ms = Device.dwTimeGlobal + u32(ps_r__tex_vram_log) * 1000;
-	if (!s_adapter3_tried)
-	{
-		s_adapter3_tried = true;
-		if (HW.m_pAdapter)
-			HW.m_pAdapter->QueryInterface(__uuidof(IDXGIAdapter3), (void**)&s_adapter3);
-	}
+	const u32 now = Device.dwTimeGlobal;
+	const bool log_due = ps_r__tex_vram_log && now >= s_vram_next_ms;
+	const bool check_due = ps_r__tex_res_budget_target && now >= s_pressure_next_ms;
 	DXGI_QUERY_VIDEO_MEMORY_INFO local = {};
-	if (!s_adapter3 || FAILED(s_adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local)))
+	if (!(log_due || check_due) || !query_local_vram(local))
 		return;
+	if (check_due)
+	{
+		s_pressure_next_ms = now + 1000;
+		RelieveVramPressure(local.CurrentUsage, local.Budget);
+	}
+	if (!log_due)
+		return;
+	s_vram_next_ms = now + u32(ps_r__tex_vram_log) * 1000;
 	u64 tex_bytes = 0;
 	u32 tex_count = 0;
 	{
 		xrCriticalSectionGuard guard(creationGuard);
 		for (const auto& entry : m_textures)
 		{
-			if (!entry.second->flags.bLoaded)
+			// Staging textures not drawn yet live in system RAM, not VRAM.
+			if (!entry.second->flags.bLoaded || entry.second->flags.bLoadedAsStaging)
 				continue;
 			tex_bytes += entry.second->flags.MemoryUsage;
 			++tex_count;
@@ -801,9 +824,64 @@ void CResourceManager::ResidencyFrame()
 	}
 	const u64 mb = 1024 * 1024;
 	// Usage above budget means the driver is paging video memory out to system RAM, a stutter source.
-	Msg("%s [TexVRAM] usage %llu MB of budget %llu MB (%.0f%%), %u loaded textures %llu MB",
+	Msg("%s [TexVRAM] usage %llu MB of budget %llu MB (%.0f%%), %u textures in VRAM %llu MB",
 		local.CurrentUsage > local.Budget ? "!" : "*", local.CurrentUsage / mb, local.Budget / mb,
 		local.Budget ? 100.0 * double(local.CurrentUsage) / double(local.Budget) : 0.0, tex_count, tex_bytes / mb);
+#endif
+}
+
+void CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
+{
+#ifdef USE_DX11
+	const u64 target = budget / 100 * u64(ps_r__tex_res_budget_target);
+	if (usage <= target)
+	{
+		s_pressure_warned = false;
+		return;
+	}
+	const u64 mb = 1024 * 1024;
+	// Aim 5% of the budget below the target so the pass does not fire again next second.
+	const u64 want = _min(usage - target + budget / 20, u64(ps_r__tex_res_batch_mb) * mb);
+	const u32 now = Device.dwTimeGlobal;
+	const u32 idle_ms = u32(ps_r__tex_res_idle_s) * 1000;
+
+	// Held throughout, as in EvictStalledTextures: no texture can be destroyed under us.
+	xrCriticalSectionGuard guard(creationGuard);
+	xr_vector<std::pair<u32, CTexture*>> idle; // (ms since last drawn, texture)
+	for (const auto& entry : m_textures)
+	{
+		CTexture* T = entry.second;
+		// Not drawn yet (staging) means system RAM; unloading it frees no VRAM.
+		if (!T->flags.bLoaded || T->flags.bLoadedAsStaging || T->flags.bUser || T->IsLoading())
+			continue;
+		if (now - T->dwLastUsedTime < idle_ms || residency_pinned(entry.first))
+			continue;
+		idle.emplace_back(now - T->dwLastUsedTime, T);
+	}
+	std::sort(idle.begin(), idle.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+
+	u64 freed = 0;
+	u32 count = 0;
+	u32 youngest = 0;
+	for (const auto& [age, T] : idle)
+	{
+		if (freed >= want)
+			break;
+		freed += T->flags.MemoryUsage;
+		youngest = age;
+		++count;
+		// The next bind queues an async reload; r__tex_nowait keeps that from stalling the frame.
+		T->Unload();
+	}
+
+	if (count)
+		Msg("* [TexRes] VRAM %llu of %llu MB, over the %d%% target: unloaded %u idle texture(s), ~%llu MB, idle %u-%u s",
+			usage / mb, budget / mb, ps_r__tex_res_budget_target, count, freed / mb, youngest / 1000,
+			idle.front().first / 1000);
+	else if (!s_pressure_warned)
+		Msg("! [TexRes] VRAM %llu of %llu MB, over the %d%% target, but no texture has been idle for %d s",
+			usage / mb, budget / mb, ps_r__tex_res_budget_target, ps_r__tex_res_idle_s);
+	s_pressure_warned = !count;
 #endif
 }
 

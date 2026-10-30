@@ -332,6 +332,7 @@ void CTexture::Apply(u32 dwStage)
 {
 	wait_timed(this);
 	dwLastUsedFrame = RDEVICE.dwFrame;
+	dwLastUsedTime = RDEVICE.dwTimeGlobal;
 
 	if (flags.bLoadedAsStaging)
 		ProcessStaging();

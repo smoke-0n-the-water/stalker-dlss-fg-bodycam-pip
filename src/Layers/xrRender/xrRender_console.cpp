@@ -559,6 +559,9 @@ int ps_r__tex_evict_interval   = 600;
 int ps_r__tex_nowait    = 1;  // a still-loading texture binds nothing for the frame instead of stalling it
 int ps_r__tex_wait_log  = 2;  // log frames whose render thread waited at least this many ms on texture loads, 0 = off
 int ps_r__tex_vram_log  = 30; // seconds between VRAM usage/budget lines, 0 = off
+int ps_r__tex_res_budget_target = 85; // % of the DXGI budget; above it idle textures are unloaded, 0 = off
+int ps_r__tex_res_idle_s        = 30; // a texture is idle when not drawn for this many seconds
+int ps_r__tex_res_batch_mb      = 256; // most texture memory one pass (once a second) unloads
 
 int ps_r__swapchain_buffers = 2;
 int ps_r__max_frame_latency = 0;
@@ -2028,6 +2031,9 @@ void xrRender_initconsole()
 	CMD4(CCC_Integer, "r__tex_nowait",           &ps_r__tex_nowait,           0,   1    );
 	CMD4(CCC_Integer, "r__tex_wait_log",         &ps_r__tex_wait_log,         0,   1000 );
 	CMD4(CCC_Integer, "r__tex_vram_log",         &ps_r__tex_vram_log,         0,   3600 );
+	CMD4(CCC_Integer, "r__tex_res_budget_target", &ps_r__tex_res_budget_target, 0, 100  );
+	CMD4(CCC_Integer, "r__tex_res_idle_s",       &ps_r__tex_res_idle_s,       5,   3600 );
+	CMD4(CCC_Integer, "r__tex_res_batch_mb",     &ps_r__tex_res_batch_mb,     16,  4096 );
 	CMD4(CCC_Integer, "r__swapchain_buffers", &ps_r__swapchain_buffers, 2, 3);
 	CMD4(CCC_Integer, "r__max_frame_latency", &ps_r__max_frame_latency, 0, 4);
 	CMD4(CCC_Integer, "r__sun_minmax_lean", &ps_r__sun_minmax_lean, 0, 1);

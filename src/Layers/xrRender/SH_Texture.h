@@ -103,6 +103,7 @@ public: //	Public class members (must be encapsulated furthur)
 	} flags;
 
     u32 dwLastUsedFrame = 0; // frame index of last Apply() call — used for eviction
+    u32 dwLastUsedTime = 0; // Device.dwTimeGlobal of last Apply() call, used by VRAM pressure relief
 
 	xr_delegate<void(u32)> bind;
 
