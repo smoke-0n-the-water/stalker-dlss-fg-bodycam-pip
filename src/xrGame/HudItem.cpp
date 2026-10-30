@@ -625,8 +625,23 @@ void CHudItem::OnMotionMark(u32 state, const motion_marks& M)
 		funct(state, *M.name, object().lua_game_object(), object().lua_game_object() ? object().lua_game_object()->Parent() : nullptr);
 }
 
+extern ENGINE_API BOOL g_bootComplete;
+
 void CHudItem::OnH_A_Chield()
 {
+	// Items the actor carries at a save or level load: build the HUD model now, behind the loading
+	// screen, instead of on the first draw ([HudTime] measured 50-90 ms of model load per weapon).
+	// Not on a worker: hud_loading is a global that also steers world models loading on this thread.
+	// Pickups during play are left alone so the cost does not just move to the pickup.
+	if (g_bootComplete || !smart_cast<CActor*>(object().H_Parent()))
+		return;
+	LPCSTR visual = READ_IF_EXISTS(pSettings, r_string, hud_sect, "item_visual", nullptr);
+	if (!visual)
+		return;
+	const bool prev_hud = ::Render->hud_loading;
+	::Render->hud_loading = true;
+	::Render->models_PrefetchOne(visual, false);
+	::Render->hud_loading = prev_hud;
 }
 
 void CHudItem::OnH_B_Chield()
