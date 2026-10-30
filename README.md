@@ -7,6 +7,17 @@ I play on it daily (RTX 5080, 4K).
 
 - `v0.3`: bodycam 0.3 + PiP + DLSS/FSR + frame gen, plus my crash fixes
 - `v0.3.1`: same thing on bodycam 0.3.1. Needs Bodycam GAMMA Patch 2.0.x and Grass Optimisation 5.0.0
+- `v0.4`: stutter fixes on the DX12 exe: TBB job system, non-blocking texture loads, weapon HUD preload, texture residency
+- `v0.4.1`: texture residency adapts to your card's VRAM, with an MCM menu. Fixes nonstop trimming on 10-12 GB cards
+
+## Setup (v0.4.1)
+
+Download from the [latest release](https://github.com/smoke-0n-the-water/stalker-dlss-fg-bodycam-pip/releases/latest). Its page and `READ ME FIRST.txt` have the full step by step. Short version:
+
+1. Close the game and MO2, then run `INSTALL - double-click me.bat` from the full pack.
+2. In MO2, tick mods 1 to 7 from the pack and drag them to the bottom in order. Mod 7, `Tex Residency Classes`, is the stutter fix.
+3. Add `Anomaly\bin\AnomalyDX12.exe` to MO2's dropdown as "Anomaly (DX12 + Frame Gen)" and run it.
+4. Load a save, press Esc, open MCM > **Texture Residency (VRAM)**: Manage VRAM ticked, VRAM size **Auto**. Accept.
 
 ## What I changed
 
