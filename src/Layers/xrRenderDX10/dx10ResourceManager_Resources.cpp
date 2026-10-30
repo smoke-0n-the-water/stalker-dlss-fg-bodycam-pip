@@ -725,6 +725,7 @@ u32 s_vram_next_ms = 0;
 u32 s_pressure_next_ms = 0;
 u32 s_class_sweep_next_ms = 0;
 u32 s_swap_installed = 0;
+u32 s_swap_promoted = 0;
 u32 s_swap_dropped = 0;
 u32 s_swap_log_next_ms = 0;
 bool s_pressure_warned = false;
@@ -898,6 +899,10 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 		// keeps drawing (blurrier) rather than needing a fresh reload on next use.
 		if (T->ResClass >= 0 && T->RequestedLod < m_tex_res_classes[T->ResClass].floor_lod)
 		{
+			// Under real pressure the hold still applies, otherwise this pass re-creates the
+			// demote/promote ping-pong the idle sweep avoids.
+			if (T->dwPromotedTime && now - T->dwPromotedTime < m_tex_res_classes[T->ResClass].hold_ms)
+				continue;
 			if (!QueueTextureSwap(ref_texture(T), m_tex_res_classes[T->ResClass].floor_lod))
 				continue;
 			// A floor-2 demote keeps about 1/16 of the bytes.
@@ -1001,6 +1006,8 @@ void CResourceManager::ApplyTextureSwaps()
 				continue;
 			}
 			const u64 before = texture->TrueBytes;
+			if (texture->PendingLod < texture->RequestedLod)
+				++s_swap_promoted;
 			texture->ApplySwap();
 			const u64 after = texture->TrueBytes;
 			applied_bytes += (before > after) ? (before - after) : (after - before);
@@ -1023,10 +1030,11 @@ void CResourceManager::ApplyTextureSwaps()
 				xrCriticalSectionGuard guard(swapGuard);
 				waiting = readySwaps.size();
 			}
-			Msg("* [TexRes] last 10 s: %u LOD swap(s) installed, %u failed, %u waiting to install",
-				s_swap_installed, s_swap_dropped, (u32)waiting);
+			Msg("* [TexRes] last 10 s: %u LOD swap(s) installed (%u demote, %u promote), %u failed, %u waiting to install",
+				s_swap_installed, s_swap_installed - s_swap_promoted, s_swap_promoted, s_swap_dropped, (u32)waiting);
 		}
 		s_swap_installed = 0;
+		s_swap_promoted = 0;
 		s_swap_dropped = 0;
 		s_swap_log_next_ms = Device.dwTimeGlobal + 10000;
 	}
@@ -1117,9 +1125,11 @@ void CResourceManager::LoadTexResidencyClasses()
 			cls.age_ms = u32(atoi(val)) * 1000;
 		if (sect.line_exist("floor", &val) && val && val[0])
 			cls.floor_lod = u32(atoi(val));
+		if (sect.line_exist("hold", &val) && val && val[0])
+			cls.hold_ms = u32(atoi(val)) * 1000;
 
-		Msg("* [TexRes] class [%s]: %u folder(s), age %us, floor lod %u", sect.Name.c_str(),
-			(u32)cls.folders.size(), cls.age_ms / 1000, cls.floor_lod);
+		Msg("* [TexRes] class [%s]: %u folder(s), age %us, hold %us, floor lod %u", sect.Name.c_str(),
+			(u32)cls.folders.size(), cls.age_ms / 1000, cls.hold_ms / 1000, cls.floor_lod);
 		m_tex_res_classes.push_back(cls);
 	}
 	CInifile::Destroy(ini);
@@ -1150,11 +1160,25 @@ s8 CResourceManager::ClassifyTexture(const shared_str& name)
 	xr_strcpy(lower, name.c_str());
 	strlwr(lower);
 
+	for (char* c = lower; *c; ++c)
+		if (*c == '/')
+			*c = '\\';
+
+	// Whole path segment only: "act" matches act\x or a\act\x, never impact\x or contact.
 	for (size_t i = 0; i < m_tex_res_classes.size(); ++i)
 	{
 		for (const auto& folder : m_tex_res_classes[i].folders)
-			if (strstr(lower, folder.c_str()))
-				return s8(i);
+		{
+			const size_t len = folder.size();
+			if (!len)
+				continue;
+			for (LPCSTR hit = strstr(lower, folder.c_str()); hit; hit = strstr(hit + 1, folder.c_str()))
+			{
+				const bool starts = hit == lower || hit[-1] == '\\';
+				if (starts && hit[len] == '\\')
+					return s8(i);
+			}
+		}
 	}
 	return -1;
 #else
@@ -1185,6 +1209,8 @@ void CResourceManager::TexResClassIdleSweep()
 			continue; // already at or past floor
 		if (now - T->dwLastUsedTime < cls.age_ms)
 			continue; // still active
+		if (T->dwPromotedTime && now - T->dwPromotedTime < cls.hold_ms)
+			continue; // promoted recently: hold full detail
 		if (QueueTextureSwap(ref_texture(T), cls.floor_lod))
 			++queued;
 	}

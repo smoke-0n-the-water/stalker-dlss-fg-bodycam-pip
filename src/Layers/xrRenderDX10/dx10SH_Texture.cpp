@@ -307,6 +307,8 @@ void CTexture::ApplySwap()
 
 	pSurface = PendingSurface;
 	m_pSRView = PendingSRView;
+	if (PendingLod < RequestedLod)
+		dwPromotedTime = RDEVICE.dwTimeGlobal;
 	RequestedLod = PendingLod;
 	PendingSurface = nullptr;
 	PendingSRView = nullptr;

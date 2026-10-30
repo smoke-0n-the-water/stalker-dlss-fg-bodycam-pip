@@ -50,6 +50,7 @@ public:
     // Phase 2: tex_residency.ltx class index, cached once in PostLoad() via
     // CResourceManager::ClassifyTexture(). -2 = not yet classified, -1 = no class matches.
     s8 ResClass = -2;
+    u32 dwPromotedTime = 0; // Device.dwTimeGlobal when a swap last raised detail; starts the class hold
 #endif
     bool IsLoading() const {
 #if defined(USE_DX10) || defined(USE_DX11)

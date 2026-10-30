@@ -17,13 +17,15 @@ struct lua_State;
 
 class dx10ConstantBuffer;
 
-// Phase 2: one tex_residency.ltx class ([weapon], [character], ...). folders is matched as a
-// substring against the texture name (same convention as reduce_lod_texture_list); age is how
-// long undrawn before it demotes to floor via a Phase 1 swap.
+// Phase 2: one tex_residency.ltx class ([weapon], [character], ...). Each folder matches a whole
+// path segment of the texture name ("act" matches act\... and ...\act\..., not "impact"). age is
+// how long undrawn before it demotes to floor via a Phase 1 swap; hold is how long after a
+// promote it may not demote again, so textures going in and out of view don't ping-pong.
 struct TexResClass
 {
 	sh_list folders;
-	u32 age_ms = 30000;
+	u32 age_ms = 120000;
+	u32 hold_ms = 300000;
 	u32 floor_lod = 2;
 };
 
