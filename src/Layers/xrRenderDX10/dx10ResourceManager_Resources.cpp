@@ -726,6 +726,93 @@ u32 s_pressure_next_ms = 0;
 u32 s_class_sweep_next_ms = 0;
 u32 s_swap_installed = 0;
 u32 s_swap_promoted = 0;
+// Adaptive pressure policy (render thread only, except s_demotes_in_flight).
+bool s_trim_active = false;      // between crossing the high watermark and falling under the low one
+u64 s_last_usage = 0;            // last DXGI CurrentUsage / effective budget seen by ResidencyFrame
+u64 s_last_budget = 0;
+u32 s_backoff = 1;               // 1, 2, 4, 8: multiplies ages, holds and cooldowns while thrashing
+u32 s_quick_promotes = 0;        // promotes within kThrashWindowMs of that texture's demote, this window
+std::atomic<u32> s_demotes_in_flight{0};
+constexpr u32 kThrashWindowMs = 60000;
+// Trim episodes. DXGI usage does not drop when we unload (WDDM had already paged those textures
+// out, or reports with a long lag), so "trim until under the low watermark" never ends. Instead
+// an episode frees at most (usage - low) by our own byte count, then settles before the next one.
+u64 s_episode_left = 0;          // bytes still to trim in this episode
+u64 s_episode_freed = 0;         // bytes trimmed so far in this episode
+u64 s_episode_start_usage = 0;   // DXGI usage when the last episode started
+u64 s_prev_episode_freed = 0;    // what the last finished episode trimmed, judged at the next start
+u32 s_settle_until_ms = 0;       // no new episode before this
+u32 s_trim_backoff = 1;          // 1..8: multiplies the settle time while trimming doesn't move usage
+constexpr u32 kSettleMs = 60000;
+constexpr u32 kMaxUnloadsPerPass = 48; // each Unload() runs on the render thread
+
+// VRAM tiers (r__tex_res_preset, set from the MCM menu). Smaller cards start trimming earlier to
+// keep headroom for spikes, install swaps faster and demote idle class textures sooner; big cards
+// barely trim. Reasoned starting points, only the 16 GB tier is measured in game so far.
+struct TexResParams
+{
+	u32 high_pct, low_pct;  // trim start / stop, % of the DXGI budget
+	u32 idle_s;             // unclassified textures: seconds undrawn before they may be unloaded
+	u32 swaps_per_frame;    // demote installs per frame (promotes get 4x)
+	u32 swap_mb;            // demote MB per frame (promotes get 4x)
+	u32 demotes_inflight;   // demote reloads queued on workers at once
+	u32 age_pct;            // scales each class's tex_residency.ltx age
+};
+constexpr TexResParams kTexResTiers[] = {
+	{ 88, 80, 20, 8, 32, 24,  50 }, // 1: 4 GB
+	{ 90, 82, 25, 6, 24, 20,  75 }, // 2: 6 GB
+	{ 92, 85, 30, 6, 24, 16, 100 }, // 3: 8 GB
+	{ 94, 88, 30, 4, 16, 16, 100 }, // 4: 10-12 GB
+	{ 96, 90, 45, 4, 16, 16, 150 }, // 5: 16 GB
+	{ 98, 93, 60, 4, 16, 12, 200 }, // 6: 20 GB and up
+};
+constexpr u32 kTexResCustom = 7;
+TexResParams s_params = kTexResTiers[4];
+u32 s_auto_tier = 0; // last tier Auto picked, logged when it changes
+
+// The DXGI budget is what the driver lets this process use: roughly 90% of the card's VRAM minus
+// what other apps hold, so a 12 GB card reports about 10.5 GB and a 16 GB one about 14.4 GB.
+u32 tier_for_budget(u64 budget_mb)
+{
+	if (budget_mb < 4500) return 1;
+	if (budget_mb < 6500) return 2;
+	if (budget_mb < 9000) return 3;
+	if (budget_mb < 13000) return 4;
+	if (budget_mb < 18000) return 5;
+	return 6;
+}
+
+void update_tex_res_params(u64 budget)
+{
+	const u32 preset = u32(ps_r__tex_res_preset);
+	if (preset == kTexResCustom)
+	{
+		s_params.high_pct = u32(ps_r__tex_res_high_pct);
+		s_params.low_pct = u32(ps_r__tex_res_low_pct);
+		s_params.idle_s = u32(ps_r__tex_res_idle_s);
+		s_params.swaps_per_frame = u32(ps_r__tex_res_swaps_per_frame);
+		s_params.swap_mb = u32(ps_r__tex_res_swap_mb);
+		s_params.demotes_inflight = u32(ps_r__tex_res_demotes_inflight);
+		s_params.age_pct = 100;
+	}
+	else
+	{
+		u32 tier = preset;
+		if (!tier && budget)
+		{
+			tier = tier_for_budget(budget / (1024 * 1024));
+			if (tier != s_auto_tier)
+			{
+				static LPCSTR names[] = { "", "4 GB", "6 GB", "8 GB", "10-12 GB", "16 GB", "20 GB+" };
+				Msg("* [TexRes] auto VRAM tier: %s (budget %llu MB)", names[tier], budget / (1024 * 1024));
+				s_auto_tier = tier;
+			}
+		}
+		if (tier >= 1 && tier <= 6)
+			s_params = kTexResTiers[tier - 1];
+	}
+	s_params.low_pct = _min(s_params.low_pct, s_params.high_pct - 1);
+}
 u32 s_swap_dropped = 0;
 u32 s_swap_log_next_ms = 0;
 bool s_pressure_warned = false;
@@ -811,24 +898,31 @@ void CResourceManager::ResidencyFrame()
 	const bool log_due = ps_r__tex_vram_log && now >= s_vram_next_ms;
 	const bool check_due = ps_r__tex_res_budget_target && now >= s_pressure_next_ms;
 
-	// Phase 2: idle-age demotion, independent of VRAM pressure. Runs every 5s once any class
-	// is configured; before the first texture's PostLoad() lazy-loads tex_residency.ltx,
-	// m_tex_res_classes is empty and this is a no-op.
+	// Phase 2: idle-age demotion every 5 s. Only once usage is within reach of the budget (above
+	// the low watermark): with headroom, demoting buys nothing (WDDM pages idle textures out by
+	// itself) and costs a reload plus blur when the texture comes back.
+	const bool near_budget = s_last_budget && s_last_usage * 100 >= s_last_budget * u64(s_params.low_pct);
 	if (!m_tex_res_classes.empty() && now >= s_class_sweep_next_ms)
 	{
-		TexResClassIdleSweep();
+		if (near_budget || s_trim_active)
+			TexResClassIdleSweep();
 		s_class_sweep_next_ms = now + 5000;
 	}
 
 	DXGI_QUERY_VIDEO_MEMORY_INFO local = {};
 	if (!(log_due || check_due) || !query_local_vram(local))
 		return;
+	if (ps_r__tex_res_budget_mb)
+		local.Budget = _min(local.Budget, u64(ps_r__tex_res_budget_mb) * 1024 * 1024);
+	s_last_usage = local.CurrentUsage;
+	s_last_budget = local.Budget;
+	update_tex_res_params(local.Budget);
 	if (check_due)
 	{
 		// DXGI usage lagged an unload pass by tens of seconds in game, so passes a second apart kept
 		// unloading while usage sat flat and then overshot the target. Give each pass time to land.
 		const bool unloaded = RelieveVramPressure(local.CurrentUsage, local.Budget);
-		s_pressure_next_ms = now + (unloaded ? 10000 : 1000);
+		s_pressure_next_ms = now + (unloaded ? 10000 * s_backoff : 1000);
 	}
 	if (!log_due)
 		return;
@@ -857,17 +951,55 @@ void CResourceManager::ResidencyFrame()
 bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 {
 #ifdef USE_DX11
-	const u64 target = budget / 100 * u64(ps_r__tex_res_budget_target);
-	if (usage <= target)
+	// Hysteresis instead of a fixed target: start only when usage really nears the budget (the
+	// driver pages above it), then keep going pass by pass until it is back under the low
+	// watermark. A fixed 80% kept a 12 GB card, whose scenes need 8-11.6 GB, trimming forever.
+	const u32 high_pct = s_params.high_pct;
+	const u32 low_pct = s_params.low_pct;
+	const u64 high = budget / 100 * high_pct;
+	const u64 low = budget / 100 * low_pct;
+	const u64 mb = 1024 * 1024;
+	const u32 now = Device.dwTimeGlobal;
+	if (!s_trim_active)
 	{
+		if (usage <= high)
+		{
+			s_pressure_warned = false;
+			if (s_trim_backoff > 1 && now >= s_settle_until_ms)
+				s_trim_backoff = 1; // pressure is gone: start fresh next time
+			return false;
+		}
+		if (now < s_settle_until_ms)
+			return false;
+		// Judge the last episode now that DXGI has had the settle time to catch up: if usage
+		// didn't come down by at least a quarter of what we freed, trimming isn't what fills
+		// VRAM here. Keep the episodes, but space them further apart.
+		if (s_prev_episode_freed && usage + s_prev_episode_freed / 4 > s_episode_start_usage)
+		{
+			const u32 old = s_trim_backoff;
+			s_trim_backoff = _min(s_trim_backoff * 2, 8u);
+			if (s_trim_backoff != old)
+				Msg("* [TexRes] last trim freed ~%llu MB but VRAM usage went %llu -> %llu MB: next trims %ux further apart",
+					s_prev_episode_freed / mb, s_episode_start_usage / mb, usage / mb, s_trim_backoff);
+		}
+		s_trim_active = true;
+		s_episode_left = usage - low;
+		s_episode_freed = 0;
+		s_episode_start_usage = usage;
+		Msg("* [TexRes] VRAM %llu of %llu MB, over %u%%: trimming up to ~%llu MB of idle textures",
+			usage / mb, budget / mb, high_pct, s_episode_left / mb);
+	}
+	else if (usage <= low)
+	{
+		s_trim_active = false;
 		s_pressure_warned = false;
+		s_prev_episode_freed = 0; // it worked: nothing to judge
+		s_trim_backoff = _max(1u, s_trim_backoff / 2);
+		Msg("* [TexRes] VRAM %llu of %llu MB, back under %u%%: trimming stopped", usage / mb, budget / mb, low_pct);
 		return false;
 	}
-	const u64 mb = 1024 * 1024;
-	// Aim 5% of the budget below the target so the pass does not fire again next second.
-	const u64 want = _min(usage - target + budget / 20, u64(ps_r__tex_res_batch_mb) * mb);
-	const u32 now = Device.dwTimeGlobal;
-	const u32 idle_ms = u32(ps_r__tex_res_idle_s) * 1000;
+	const u64 want = _min(s_episode_left, u64(ps_r__tex_res_batch_mb) * mb);
+	const u32 idle_ms = s_params.idle_s * 1000 * s_backoff;
 
 	// Held throughout, as in EvictStalledTextures: no texture can be destroyed under us.
 	xrCriticalSectionGuard guard(creationGuard);
@@ -878,9 +1010,21 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 		// Not drawn yet (staging) means system RAM; unloading it frees no VRAM.
 		if (!T->flags.bLoaded || T->flags.bLoadedAsStaging || T->flags.bUser || T->IsLoading())
 			continue;
-		if (now - T->dwLastUsedTime < idle_ms || residency_pinned(entry.first))
+		if (residency_pinned(entry.first))
 			continue;
-		idle.emplace_back(now - T->dwLastUsedTime, T);
+		const u32 unused = now - T->dwLastUsedTime;
+		if (T->ResClass >= 0)
+		{
+			// Class textures follow their class's age and hold, whether or not they were ever promoted.
+			const TexResClass& cls = m_tex_res_classes[T->ResClass];
+			if (unused < cls.age_ms / 100 * s_params.age_pct * s_backoff)
+				continue;
+			if (T->dwPromotedTime && now - T->dwPromotedTime < cls.hold_ms * s_backoff)
+				continue;
+		}
+		else if (unused < idle_ms)
+			continue;
+		idle.emplace_back(unused, T);
 	}
 	std::sort(idle.begin(), idle.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
 
@@ -899,10 +1043,6 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 		// keeps drawing (blurrier) rather than needing a fresh reload on next use.
 		if (T->ResClass >= 0 && T->RequestedLod < m_tex_res_classes[T->ResClass].floor_lod)
 		{
-			// Under real pressure the hold still applies, otherwise this pass re-creates the
-			// demote/promote ping-pong the idle sweep avoids.
-			if (T->dwPromotedTime && now - T->dwPromotedTime < m_tex_res_classes[T->ResClass].hold_ms)
-				continue;
 			if (!QueueTextureSwap(ref_texture(T), m_tex_res_classes[T->ResClass].floor_lod))
 				continue;
 			// A floor-2 demote keeps about 1/16 of the bytes.
@@ -913,6 +1053,8 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 		{
 			if (T->ResClass >= 0)
 				continue; // already at its floor: leave it drawing, don't unload a class texture
+			if (count - demoted >= kMaxUnloadsPerPass)
+				continue; // spread unloads over passes; demotes may still go
 			freed += bytes;
 			// The next bind queues an async reload; r__tex_nowait keeps that from stalling the frame.
 			T->Unload();
@@ -922,13 +1064,27 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 	}
 
 	if (count)
-		Msg("* [TexRes] VRAM %llu of %llu MB, over the %d%% target: unloaded %u idle texture(s) (%u demoted instead), ~%llu MB, idle %u-%u s",
-			usage / mb, budget / mb, ps_r__tex_res_budget_target, count - demoted, demoted, freed / mb, youngest / 1000,
+		Msg("* [TexRes] VRAM %llu of %llu MB: unloaded %u idle texture(s), demoted %u, ~%llu MB, idle %u-%u s",
+			usage / mb, budget / mb, count - demoted, demoted, freed / mb, youngest / 1000,
 			idle.front().first / 1000);
 	else if (!s_pressure_warned)
-		Msg("! [TexRes] VRAM %llu of %llu MB, over the %d%% target, but no texture has been idle for %d s",
-			usage / mb, budget / mb, ps_r__tex_res_budget_target, ps_r__tex_res_idle_s);
+		Msg("! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle long enough to trim",
+			usage / mb, budget / mb, high_pct);
 	s_pressure_warned = !count;
+
+	// End the episode once its byte allowance is spent or nothing is left to trim, whatever DXGI
+	// says, and settle before the next one (longer while trims prove ineffective).
+	s_episode_freed += freed;
+	s_episode_left = freed >= s_episode_left ? 0 : s_episode_left - freed;
+	if (!s_episode_left || !count)
+	{
+		s_trim_active = false;
+		s_prev_episode_freed = s_episode_freed;
+		s_settle_until_ms = now + kSettleMs * s_trim_backoff;
+		if (s_episode_freed)
+			Msg("* [TexRes] trim done: ~%llu MB freed, usage %llu MB; next trim no sooner than %u s",
+				s_episode_freed / mb, usage / mb, kSettleMs * s_trim_backoff / 1000);
+	}
 	return count != 0;
 #else
 	return false;
@@ -943,12 +1099,21 @@ bool CResourceManager::QueueTextureSwap(const ref_texture& texture, u32 new_lod)
 	if (texture->RequestedLod == new_lod && texture->TrueBytes)
 		return false; // already at that LOD
 
+	// Demotes and promotes share the worker pool. Cap demotes in flight so a promote (a texture
+	// the player is looking at right now) never waits behind hundreds of demote reloads.
+	const bool demote = new_lod > texture->RequestedLod;
+	if (demote && s_demotes_in_flight.load(std::memory_order_relaxed) >= s_params.demotes_inflight)
+		return false;
+
 	// swapQueued stays set from here until the render thread installs or drops the result
 	// (ApplySwap / ApplyTextureSwaps). Clearing it any earlier let a second request load the
 	// texture again and overwrite PendingSurface, leaking the first one.
 	bool expected = false;
 	if (!texture->swapQueued.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
 		return false;
+	texture->PendingDemote = demote;
+	if (demote)
+		s_demotes_in_flight.fetch_add(1, std::memory_order_relaxed);
 
 	CResourceManager* self = this;
 	textures_load_tasks.run([texture, new_lod, self]()
@@ -985,10 +1150,19 @@ void CResourceManager::ApplyTextureSwaps()
 
 	if (!batch.empty())
 	{
-		u32 applied = 0;
-		u64 applied_bytes = 0;
+		// Promotes first: those are textures on screen right now, still drawing blurry. They get
+		// 4x the per-frame budget of demotes, which only free memory and can always wait a frame.
+		std::stable_partition(batch.begin(), batch.end(),
+			[](const ref_texture& t) { return t->PendingLod < t->RequestedLod; });
+
+		const u32 now = Device.dwTimeGlobal;
 		const u64 mb = 1024 * 1024;
-		const u64 cap_bytes = u64(ps_r__tex_res_swap_mb) * mb;
+		const u32 demote_cap = s_params.swaps_per_frame;
+		const u32 promote_cap = demote_cap * 4;
+		const u64 demote_cap_bytes = u64(s_params.swap_mb) * mb;
+		const u64 promote_cap_bytes = demote_cap_bytes * 4;
+		u32 promotes = 0, demotes = 0;
+		u64 promote_bytes = 0, demote_bytes = 0;
 		xr_vector<ref_texture> deferred;
 		for (const auto& texture : batch)
 		{
@@ -996,24 +1170,45 @@ void CResourceManager::ApplyTextureSwaps()
 			{
 				// The worker's load failed: nothing to install, release the request.
 				_RELEASE(texture->PendingSRView);
+				if (texture->PendingDemote)
+					s_demotes_in_flight.fetch_sub(1, std::memory_order_relaxed);
+				texture->PendingDemote = false;
 				texture->swapQueued.store(false, std::memory_order_release);
 				++s_swap_dropped;
 				continue;
 			}
-			if ((applied >= u32(ps_r__tex_res_swaps_per_frame)) || (applied && applied_bytes >= cap_bytes))
+			const bool promote = texture->PendingLod < texture->RequestedLod;
+			const bool full = promote
+				? (promotes >= promote_cap || (promotes && promote_bytes >= promote_cap_bytes))
+				: (demotes >= demote_cap || (demotes && demote_bytes >= demote_cap_bytes));
+			if (full)
 			{
 				deferred.push_back(texture);
 				continue;
 			}
+			if (promote && texture->dwDemotedTime && now - texture->dwDemotedTime < kThrashWindowMs)
+				++s_quick_promotes; // demoted under a minute ago and already needed again
+			if (texture->PendingDemote)
+				s_demotes_in_flight.fetch_sub(1, std::memory_order_relaxed);
+			texture->PendingDemote = false;
+
 			const u64 before = texture->TrueBytes;
-			if (texture->PendingLod < texture->RequestedLod)
-				++s_swap_promoted;
 			texture->ApplySwap();
 			const u64 after = texture->TrueBytes;
-			applied_bytes += (before > after) ? (before - after) : (after - before);
-			++applied;
+			const u64 delta = (before > after) ? (before - after) : (after - before);
+			if (promote)
+			{
+				++promotes;
+				promote_bytes += delta;
+			}
+			else
+			{
+				++demotes;
+				demote_bytes += delta;
+			}
 		}
-		s_swap_installed += applied;
+		s_swap_installed += promotes + demotes;
+		s_swap_promoted += promotes;
 		if (!deferred.empty())
 		{
 			xrCriticalSectionGuard guard(swapGuard);
@@ -1023,6 +1218,18 @@ void CResourceManager::ApplyTextureSwaps()
 
 	if (Device.dwTimeGlobal >= s_swap_log_next_ms)
 	{
+		// Thrash check: many promotes of textures demoted under a minute ago means the demotes
+		// are hurting. Double every age, hold and cooldown (up to 8x); relax once it stops.
+		const u32 window_demotes = s_swap_installed - s_swap_promoted;
+		const u32 old_backoff = s_backoff;
+		if (s_quick_promotes >= 8 && s_quick_promotes * 4 >= window_demotes)
+			s_backoff = _min(s_backoff * 2, 8u);
+		else if (!s_quick_promotes && s_backoff > 1)
+			s_backoff /= 2;
+		if (s_backoff != old_backoff)
+			Msg("* [TexRes] %u texture(s) needed again within %u s of a demote: residency backoff %ux -> %ux",
+				s_quick_promotes, kThrashWindowMs / 1000, old_backoff, s_backoff);
+
 		if (s_swap_installed || s_swap_dropped)
 		{
 			size_t waiting;
@@ -1030,12 +1237,14 @@ void CResourceManager::ApplyTextureSwaps()
 				xrCriticalSectionGuard guard(swapGuard);
 				waiting = readySwaps.size();
 			}
-			Msg("* [TexRes] last 10 s: %u LOD swap(s) installed (%u demote, %u promote), %u failed, %u waiting to install",
-				s_swap_installed, s_swap_installed - s_swap_promoted, s_swap_promoted, s_swap_dropped, (u32)waiting);
+			Msg("* [TexRes] last 10 s: %u LOD swap(s) installed (%u demote, %u promote, %u quick), %u failed, %u waiting to install, %u demote(s) loading",
+				s_swap_installed, window_demotes, s_swap_promoted, s_quick_promotes, s_swap_dropped, (u32)waiting,
+				s_demotes_in_flight.load(std::memory_order_relaxed));
 		}
 		s_swap_installed = 0;
 		s_swap_promoted = 0;
 		s_swap_dropped = 0;
+		s_quick_promotes = 0;
 		s_swap_log_next_ms = Device.dwTimeGlobal + 10000;
 	}
 
@@ -1191,7 +1400,7 @@ void CResourceManager::TexResClassIdleSweep()
 #ifdef USE_DX11
 	// Each demote is a full reload on a worker; cap a sweep so a level change (everything idle
 	// at once) can't flood the load queue. The rest go on the next sweep, 5 s later.
-	const u32 max_per_sweep = u32(ps_r__tex_res_swaps_per_frame) * 8;
+	const u32 max_per_sweep = _max(1u, s_params.swaps_per_frame * 8 / s_backoff);
 	u32 queued = 0;
 	const u32 now = Device.dwTimeGlobal;
 	xrCriticalSectionGuard guard(creationGuard);
@@ -1207,9 +1416,9 @@ void CResourceManager::TexResClassIdleSweep()
 		const TexResClass& cls = m_tex_res_classes[T->ResClass];
 		if (T->RequestedLod >= cls.floor_lod)
 			continue; // already at or past floor
-		if (now - T->dwLastUsedTime < cls.age_ms)
+		if (now - T->dwLastUsedTime < cls.age_ms / 100 * s_params.age_pct * s_backoff)
 			continue; // still active
-		if (T->dwPromotedTime && now - T->dwPromotedTime < cls.hold_ms)
+		if (T->dwPromotedTime && now - T->dwPromotedTime < cls.hold_ms * s_backoff)
 			continue; // promoted recently: hold full detail
 		if (QueueTextureSwap(ref_texture(T), cls.floor_lod))
 			++queued;

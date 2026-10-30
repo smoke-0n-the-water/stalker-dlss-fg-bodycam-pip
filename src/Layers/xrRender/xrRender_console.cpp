@@ -559,7 +559,12 @@ int ps_r__tex_evict_interval   = 600;
 int ps_r__tex_nowait    = 1;  // a still-loading texture binds nothing for the frame instead of stalling it
 int ps_r__tex_wait_log  = 0;  // log frames whose render thread waited at least this many ms on texture loads, 0 = off
 int ps_r__tex_vram_log  = 0;  // seconds between VRAM usage/budget lines, 0 = off
-int ps_r__tex_res_budget_target = 80; // % of the DXGI budget; above it idle textures are unloaded, 0 = off
+int ps_r__tex_res_budget_target = 80; // master switch for VRAM pressure trimming: 0 = off (the % itself is no longer used)
+int ps_r__tex_res_preset        = 0;  // VRAM tier: 0 auto (from the DXGI budget), 1-6 = 4/6/8/12/16/20+ GB, 7 custom (the cvars below)
+int ps_r__tex_res_high_pct      = 96; // start trimming when DXGI usage passes this % of the budget
+int ps_r__tex_res_low_pct       = 90; // keep trimming until usage is back under this %; idle class textures only demote above it
+int ps_r__tex_res_budget_mb     = 0;  // testing: pretend the DXGI budget is at most this many MB (e.g. 10500 = a 12 GB card), 0 = real budget
+int ps_r__tex_res_demotes_inflight = 16; // most demote reloads queued on workers at once, so promotes never wait behind a flood
 int ps_r__tex_res_idle_s        = 30; // a texture is idle when not drawn for this many seconds
 int ps_r__tex_res_batch_mb      = 256; // most texture memory one pass unloads (checks every 1 s, 10 s after a pass)
 int ps_r__tex_res_swaps_per_frame = 4;  // LOD swaps CResourceManager::ApplyTextureSwaps() installs per frame
@@ -2095,6 +2100,11 @@ void xrRender_initconsole()
 	CMD4(CCC_Integer, "r__tex_res_idle_s",       &ps_r__tex_res_idle_s,       5,   3600 );
 	CMD4(CCC_Integer, "r__tex_res_batch_mb",     &ps_r__tex_res_batch_mb,     16,  4096 );
 	CMD4(CCC_Integer, "r__tex_res_swaps_per_frame", &ps_r__tex_res_swaps_per_frame, 1, 64);
+	CMD4(CCC_Integer, "r__tex_res_preset",       &ps_r__tex_res_preset,       0,   7    );
+	CMD4(CCC_Integer, "r__tex_res_high_pct",     &ps_r__tex_res_high_pct,     50,  110  );
+	CMD4(CCC_Integer, "r__tex_res_low_pct",      &ps_r__tex_res_low_pct,      40,  105  );
+	CMD4(CCC_Integer, "r__tex_res_budget_mb",    &ps_r__tex_res_budget_mb,    0,   65536);
+	CMD4(CCC_Integer, "r__tex_res_demotes_inflight", &ps_r__tex_res_demotes_inflight, 1, 256);
 	CMD4(CCC_Integer, "r__tex_res_swap_mb",      &ps_r__tex_res_swap_mb,      1,   256  );
 	CMD1(CCC_TexResDump, "tex_res_dump");
 	CMD1(CCC_TexResSetLod, "tex_res_set_lod");
