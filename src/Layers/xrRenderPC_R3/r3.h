@@ -289,7 +289,7 @@ public:
 	virtual void level_Load(IReader*);
 	virtual void level_Unload();
 
-	ID3DBaseTexture* texture_load(LPCSTR fname, u32& msize, bool bStaging = false);
+	ID3DBaseTexture* texture_load(LPCSTR fname, u32& msize, bool bStaging = false, int requested_lod = 0);
 	virtual HRESULT shader_compile(
 		LPCSTR name,
 		DWORD const* pSrcData,

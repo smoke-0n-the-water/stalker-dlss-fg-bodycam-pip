@@ -3,6 +3,8 @@
 
 #include "../xrRender/ResourceManager.h"
 
+void fix_texture_name(LPSTR fn);
+
 #ifndef _EDITOR
 #include "../../xrEngine/render.h"
 #endif
@@ -14,6 +16,8 @@
 #include "../xrRender/dxRenderDeviceRender.h"
 
 #include "StateManager/dx10ShaderResourceStateCache.h"
+
+#include <chrono>
 
 #if RENDER == R_R4
 #include "../xrRenderPC_R4/r4_reticle_vector.h"
@@ -29,6 +33,137 @@
 // ready. apply_load() below reuses the same queue for evicted textures instead of
 // calling Load() inline.
 extern xr_task_group textures_load_tasks;
+
+namespace
+{
+// Binds a view at an engine stage index (see CTexture::ResourceShaderType).
+void bind_srv(u32 dwStage, ID3DShaderResourceView* view)
+{
+	if (dwStage < CTexture::rstVertex)
+		SRVSManager.SetPSResource(dwStage, view);
+	else if (dwStage < CTexture::rstGeometry)
+		SRVSManager.SetVSResource(dwStage - CTexture::rstVertex, view);
+	else if (dwStage < CTexture::rstHull)
+		SRVSManager.SetGSResource(dwStage - CTexture::rstGeometry, view);
+#ifdef USE_DX11
+	else if (dwStage < CTexture::rstDomain)
+		SRVSManager.SetHSResource(dwStage - CTexture::rstHull, view);
+	else if (dwStage < CTexture::rstCompute)
+		SRVSManager.SetDSResource(dwStage - CTexture::rstDomain, view);
+	else if (dwStage < CTexture::rstInvalid)
+		SRVSManager.SetCSResource(dwStage - CTexture::rstCompute, view);
+#endif
+	else
+		VERIFY("Invalid stage");
+}
+
+// Waits out an in-flight load and reports how long the calling thread was held.
+void wait_timed(const CTexture* T)
+{
+	if (!T->IsLoading())
+		return;
+	const auto start = std::chrono::steady_clock::now();
+	while (T->IsLoading())
+		SwitchToThread();
+	const auto held = std::chrono::steady_clock::now() - start;
+	DEV->NoteTextureWait(T, (u64)std::chrono::duration_cast<std::chrono::microseconds>(held).count());
+}
+
+// Textures whose missing frames would show: sky and weather, engine lookup tables, render targets.
+// UI is not in the list: a weapon icon stalled the frame 40 ms on a weapon swap, a blank icon for a
+// frame is the better trade.
+bool must_wait(const shared_str& name)
+{
+	LPCSTR n = name.c_str();
+	if (!n)
+		return true;
+	return strncmp(n, "sky", 3) == 0 || strncmp(n, "shaders", 7) == 0 || strchr(n, '$') != nullptr;
+}
+
+// Phase 0 accounting: true byte size of a 2D/array/cube resource at its actual width/height/mip
+// count (post LOD-skip), independent of flags.MemoryUsage (a legacy 27-bit estimate derived from
+// the source file's on-disk size, which overcounts - see docs/TEXTURE-STREAMING-PLAN.md).
+u64 compute_true_bytes(const D3D_TEXTURE2D_DESC& desc)
+{
+	if (!desc.Width || !desc.Height || !desc.MipLevels)
+		return 0;
+
+	u32 block_w = 1, block_h = 1, block_bytes = 0, texel_bytes = 0;
+	switch (desc.Format)
+	{
+	case DXGI_FORMAT_BC1_TYPELESS: case DXGI_FORMAT_BC1_UNORM: case DXGI_FORMAT_BC1_UNORM_SRGB:
+	case DXGI_FORMAT_BC4_TYPELESS: case DXGI_FORMAT_BC4_UNORM: case DXGI_FORMAT_BC4_SNORM:
+		block_w = block_h = 4; block_bytes = 8;
+		break;
+	case DXGI_FORMAT_BC2_TYPELESS: case DXGI_FORMAT_BC2_UNORM: case DXGI_FORMAT_BC2_UNORM_SRGB:
+	case DXGI_FORMAT_BC3_TYPELESS: case DXGI_FORMAT_BC3_UNORM: case DXGI_FORMAT_BC3_UNORM_SRGB:
+	case DXGI_FORMAT_BC5_TYPELESS: case DXGI_FORMAT_BC5_UNORM: case DXGI_FORMAT_BC5_SNORM:
+	case DXGI_FORMAT_BC6H_TYPELESS: case DXGI_FORMAT_BC6H_UF16: case DXGI_FORMAT_BC6H_SF16:
+	case DXGI_FORMAT_BC7_TYPELESS: case DXGI_FORMAT_BC7_UNORM: case DXGI_FORMAT_BC7_UNORM_SRGB:
+		block_w = block_h = 4; block_bytes = 16;
+		break;
+	case DXGI_FORMAT_R32G32B32A32_TYPELESS: case DXGI_FORMAT_R32G32B32A32_FLOAT:
+	case DXGI_FORMAT_R32G32B32A32_UINT: case DXGI_FORMAT_R32G32B32A32_SINT:
+		texel_bytes = 16;
+		break;
+	case DXGI_FORMAT_R32G32B32_TYPELESS: case DXGI_FORMAT_R32G32B32_FLOAT:
+	case DXGI_FORMAT_R32G32B32_UINT: case DXGI_FORMAT_R32G32B32_SINT:
+		texel_bytes = 12;
+		break;
+	case DXGI_FORMAT_R16G16B16A16_TYPELESS: case DXGI_FORMAT_R16G16B16A16_FLOAT:
+	case DXGI_FORMAT_R16G16B16A16_UNORM: case DXGI_FORMAT_R16G16B16A16_UINT:
+	case DXGI_FORMAT_R16G16B16A16_SNORM: case DXGI_FORMAT_R16G16B16A16_SINT:
+	case DXGI_FORMAT_R32G32_TYPELESS: case DXGI_FORMAT_R32G32_FLOAT:
+	case DXGI_FORMAT_R32G32_UINT: case DXGI_FORMAT_R32G32_SINT:
+		texel_bytes = 8;
+		break;
+	case DXGI_FORMAT_R8G8B8A8_TYPELESS: case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+	case DXGI_FORMAT_R8G8B8A8_UINT: case DXGI_FORMAT_R8G8B8A8_SNORM: case DXGI_FORMAT_R8G8B8A8_SINT:
+	case DXGI_FORMAT_B8G8R8A8_TYPELESS: case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+	case DXGI_FORMAT_R10G10B10A2_TYPELESS: case DXGI_FORMAT_R10G10B10A2_UNORM: case DXGI_FORMAT_R10G10B10A2_UINT:
+	case DXGI_FORMAT_R16G16_TYPELESS: case DXGI_FORMAT_R16G16_FLOAT: case DXGI_FORMAT_R16G16_UNORM:
+	case DXGI_FORMAT_R16G16_UINT: case DXGI_FORMAT_R16G16_SNORM: case DXGI_FORMAT_R16G16_SINT:
+	case DXGI_FORMAT_R32_TYPELESS: case DXGI_FORMAT_R32_FLOAT: case DXGI_FORMAT_R32_UINT: case DXGI_FORMAT_R32_SINT:
+	case DXGI_FORMAT_D32_FLOAT: case DXGI_FORMAT_R24G8_TYPELESS: case DXGI_FORMAT_D24_UNORM_S8_UINT:
+		texel_bytes = 4;
+		break;
+	case DXGI_FORMAT_R8G8_TYPELESS: case DXGI_FORMAT_R8G8_UNORM: case DXGI_FORMAT_R8G8_UINT:
+	case DXGI_FORMAT_R8G8_SNORM: case DXGI_FORMAT_R8G8_SINT:
+	case DXGI_FORMAT_R16_TYPELESS: case DXGI_FORMAT_R16_FLOAT: case DXGI_FORMAT_R16_UNORM:
+	case DXGI_FORMAT_R16_UINT: case DXGI_FORMAT_R16_SNORM: case DXGI_FORMAT_R16_SINT: case DXGI_FORMAT_D16_UNORM:
+		texel_bytes = 2;
+		break;
+	case DXGI_FORMAT_R8_TYPELESS: case DXGI_FORMAT_R8_UNORM: case DXGI_FORMAT_R8_UINT:
+	case DXGI_FORMAT_R8_SNORM: case DXGI_FORMAT_R8_SINT: case DXGI_FORMAT_A8_UNORM:
+		texel_bytes = 1;
+		break;
+	default:
+		// Unhandled format: fall back to a conservative RGBA8 estimate rather than reporting zero,
+		// so an unlisted format shows up as a plausible number instead of silently vanishing from the dump.
+		texel_bytes = 4;
+		break;
+	}
+
+	u64 bytes = 0;
+	u32 w = desc.Width, h = desc.Height;
+	for (u32 mip = 0; mip < desc.MipLevels; ++mip)
+	{
+		if (block_bytes)
+		{
+			const u32 bw = _max(1u, (w + block_w - 1) / block_w);
+			const u32 bh = _max(1u, (h + block_h - 1) / block_h);
+			bytes += u64(bw) * bh * block_bytes;
+		}
+		else
+		{
+			bytes += u64(w) * h * texel_bytes;
+		}
+		w = _max(1u, w / 2);
+		h = _max(1u, h / 2);
+	}
+	return bytes * _max(1u, u32(desc.ArraySize));
+}
+}
 
 void resptrcode_texture::create(LPCSTR _name)
 {
@@ -85,10 +220,11 @@ void CTexture::surface_set(ID3DBaseTexture* surf)
 
 	if (pSurface)
 	{
-		desc_update();
+		desc_update(); // also recomputes TrueBytes from the new desc
 
 		D3D_RESOURCE_DIMENSION type;
 		pSurface->GetType(&type);
+
 		if (D3D_RESOURCE_DIMENSION_TEXTURE2D == type)
 		{
 			D3D_SHADER_RESOURCE_VIEW_DESC ViewDesc;
@@ -141,10 +277,7 @@ void CTexture::surface_set(ID3DBaseTexture* surf)
 
 ID3DBaseTexture* CTexture::surface_get()
 {
-	while (IsLoading())
-	{
-		SwitchToThread();
-	}
+	wait_timed(this);
 	if (flags.bLoadedAsStaging)
 		ProcessStaging();
 
@@ -152,8 +285,50 @@ ID3DBaseTexture* CTexture::surface_get()
 	return pSurface;
 }
 
+void CTexture::ApplySwap()
+{
+	// Render-thread only (called from CResourceManager::ApplyTextureSwaps(), at frame start).
+	// PendingSurface/PendingSRView were built on a worker without touching the live
+	// pSurface/m_pSRView, so there is nothing here that races a concurrent Apply()/bind.
+	if (!PendingSurface)
+		return;
+
+	if (!flags.bLoaded)
+	{
+		// Unloaded (e.g. VRAM pressure) while the swap was in flight: drop the result.
+		_RELEASE(PendingSurface);
+		_RELEASE(PendingSRView);
+		swapQueued.store(false, std::memory_order_release);
+		return;
+	}
+
+	ID3DBaseTexture* old_surface = pSurface;
+	ID3DShaderResourceView* old_srv = m_pSRView;
+
+	pSurface = PendingSurface;
+	m_pSRView = PendingSRView;
+	if (PendingLod < RequestedLod)
+		dwPromotedTime = RDEVICE.dwTimeGlobal;
+	RequestedLod = PendingLod;
+	PendingSurface = nullptr;
+	PendingSRView = nullptr;
+
+	desc_cache = 0; // force a fresh desc_update() for the resource that just landed
+	desc_update(); // also recomputes TrueBytes from the new desc
+	flags.MemoryUsage = u32(TrueBytes); // legacy 27-bit estimate; same truncation risk as Load() already has
+
+	_RELEASE(old_surface);
+	_RELEASE(old_srv);
+	swapQueued.store(false, std::memory_order_release);
+}
+
 void CTexture::PostLoad()
 {
+	// Phase 2: classify once per load. DEV->ClassifyTexture() lazy-loads tex_residency.ltx on
+	// its own first call; safe here since nothing on this thread already holds creationGuard.
+	if (ResClass == -2)
+		ResClass = DEV->ClassifyTexture(cName);
+
 	if (pTheora) bind = xr_make_delegate(this, &CTexture::apply_theora);
 	else if (pAVI) bind = xr_make_delegate(this, &CTexture::apply_avi);
 	else if (!seqDATA.empty()) bind = xr_make_delegate(this, &CTexture::apply_seq);
@@ -178,9 +353,8 @@ void CTexture::apply_load(u32 dwStage)
 #endif // DEBUG
             DEV->QueueTextureLoad(ref_texture(this));
         }
-        // Bind nothing (or whatever is already there, e.g. mid-flight from an
-        // in-flight Load()) for this call. apply_normal() waits out any in-flight
-        // load, so this never touches D3D resources that are being created
+        // apply_normal() either binds nothing for this call (r__tex_nowait) or waits
+        // out the load, so this never touches D3D resources that are being created
         // concurrently. Once the queued Load() completes, PostLoad() re-points
         // `bind` at the real apply_* handler and subsequent calls stop landing here.
         apply_normal(dwStage);
@@ -285,14 +459,18 @@ void CTexture::ProcessStaging()
 
 void CTexture::Apply(u32 dwStage)
 {
-	while (IsLoading())
-	{
-		SwitchToThread();
-	}
+	wait_timed(this);
 	dwLastUsedFrame = RDEVICE.dwFrame;
+	dwLastUsedTime = RDEVICE.dwTimeGlobal;
 
 	if (flags.bLoadedAsStaging)
 		ProcessStaging();
+
+	// Phase 2: a classified texture that was demoted for being idle is back in use - queue a
+	// promote. Cheap for the common case (RequestedLod is 0 for almost everything); the actual
+	// swap work happens on a worker, and QueueTextureSwap's own guards make repeat calls free.
+	if (RequestedLod && ResClass >= 0 && !swapQueued.load(std::memory_order_relaxed))
+		DEV->QueueTextureSwap(ref_texture(this), 0);
 
 	//if( !RImplementation.o.dx10_msaa )
 	//   VERIFY( !((!pSurface)^(!m_pSRView)) );	//	Both present or both missing
@@ -302,37 +480,7 @@ void CTexture::Apply(u32 dwStage)
 	//   return;
 	//}
 
-	if (dwStage < rstVertex) //	Pixel shader stage resources
-	{
-		//HW.pDevice->PSSetShaderResources(dwStage, 1, &m_pSRView);
-		SRVSManager.SetPSResource(dwStage, m_pSRView);
-	}
-	else if (dwStage < rstGeometry) //	Vertex shader stage resources
-	{
-		//HW.pDevice->VSSetShaderResources(dwStage-rstVertex, 1, &m_pSRView);
-		SRVSManager.SetVSResource(dwStage - rstVertex, m_pSRView);
-	}
-	else if (dwStage < rstHull) //	Geometry shader stage resources
-	{
-		//HW.pDevice->GSSetShaderResources(dwStage-rstGeometry, 1, &m_pSRView);
-		SRVSManager.SetGSResource(dwStage - rstGeometry, m_pSRView);
-	}
-#ifdef USE_DX11
-	else if (dwStage < rstDomain) //	Geometry shader stage resources
-	{
-		SRVSManager.SetHSResource(dwStage - rstHull, m_pSRView);
-	}
-	else if (dwStage < rstCompute) //	Geometry shader stage resources
-	{
-		SRVSManager.SetDSResource(dwStage - rstDomain, m_pSRView);
-	}
-	else if (dwStage < rstInvalid) //	Geometry shader stage resources
-	{
-		SRVSManager.SetCSResource(dwStage - rstCompute, m_pSRView);
-	}
-#endif
-	else
-		VERIFY("Invalid stage");
+	bind_srv(dwStage, m_pSRView);
 }
 
 void CTexture::apply_theora(u32 dwStage)
@@ -459,9 +607,12 @@ void CTexture::apply_gif(u32 dwStage)
 
 void CTexture::apply_normal(u32 dwStage)
 {
-	while (IsLoading())
+	if (ps_r__tex_nowait && IsLoading() && !must_wait(cName))
 	{
-		SwitchToThread();
+		// Still loading on a worker: draw this frame without it rather than stall the render thread.
+		bind_srv(dwStage, nullptr);
+		DEV->NoteTextureDeferred();
+		return;
 	}
 	//CHK_DX(HW.pDevice->SetTexture(dwStage,pSurface));
 	Apply(dwStage);
@@ -493,6 +644,7 @@ void CTexture::Load()
 
 	flags.bUser = false;
 	flags.MemoryUsage = 0;
+	TrueBytes = 0; // reset on every (re)load - the seq branch below accumulates into it
 	if (0 == stricmp(*cName, "$null"))
 	{
 		flags.bLoading = false;
@@ -527,6 +679,7 @@ void CTexture::Load()
 		else
 		{
 			flags.MemoryUsage = pTheora->Width(true) * pTheora->Height(true) * 4;
+			TrueBytes = flags.MemoryUsage; // video overlay, not worth a separate desc query
 			pTheora->Play(TRUE, Device.dwTimeContinual);
 
 			// Now create texture
@@ -578,6 +731,7 @@ void CTexture::Load()
 		else
 		{
 			flags.MemoryUsage = pAVI->m_dwWidth * pAVI->m_dwHeight * 4;
+			TrueBytes = flags.MemoryUsage; // video overlay, not worth a separate desc query
 
 			// Now create texture
 			ID3DTexture2D* pTexture = 0;
@@ -630,12 +784,35 @@ void CTexture::Load()
 		u32 fps = atoi(buffer);
 		seqMSPF = 1000 / fps;
 
+		// Resolved name of each seqDATA entry. A frame file that repeats is loaded once:
+		// later entries share its surface and view, each holding its own reference, so
+		// Unload() still releases every entry once. MemoryUsage counts it once.
+		xr_vector<shared_str> seq_names;
 		while (!_fs->eof())
 		{
 			_fs->r_string(buffer, sizeof(buffer));
 			_Trim(buffer);
 			if (buffer[0])
 			{
+				string_path resolved;
+				xr_strcpy(resolved, buffer);
+				fix_texture_name(resolved);
+				xr_strlwr(resolved);
+				const shared_str name = resolved;
+
+				const auto it = std::find(seq_names.begin(), seq_names.end(), name);
+				if (it != seq_names.end())
+				{
+					const size_t first = it - seq_names.begin();
+					seqDATA.push_back(seqDATA[first]);
+					seqDATA.back()->AddRef();
+					m_seqSRView.push_back(m_seqSRView[first]);
+					if (m_seqSRView.back())
+						m_seqSRView.back()->AddRef();
+					seq_names.push_back(name);
+					continue;
+				}
+
 				// Load another texture
 				u32 mem = 0;
 				pSurface = ::RImplementation.texture_load(buffer, mem);
@@ -646,6 +823,8 @@ void CTexture::Load()
 					m_seqSRView.push_back(0);
 					HW.pDevice->CreateShaderResourceView(seqDATA.back(), NULL, &m_seqSRView.back());
 					flags.MemoryUsage += mem;
+					TrueBytes += mem; // sequence frames, not worth a per-frame desc query
+					seq_names.push_back(name);
 				}
 			}
 		}
@@ -664,6 +843,7 @@ void CTexture::Load()
         else
         {
             flags.MemoryUsage = gifPlayer->GetUsedMemory();
+            TrueBytes = flags.MemoryUsage; // animated UI texture, not worth a separate desc query
 
             gifPlayer->Play();
 
@@ -685,7 +865,7 @@ void CTexture::Load()
 		else
 #endif
 		//pSurface = ::RImplementation.texture_load	(*cName,mem);
-		pSurface = ::RImplementation.texture_load(*cName, mem, true);
+		pSurface = ::RImplementation.texture_load(*cName, mem, true, (int)RequestedLod);
 
 		if (GetUsage() == D3D_USAGE_STAGING)
 		{
@@ -698,6 +878,19 @@ void CTexture::Load()
 		{
 			// pSurface->SetPriority	(PRIORITY_NORMAL);
 			flags.MemoryUsage = mem;
+
+			// Phase 0 accounting: true bytes from the resource just created, at its actual
+			// mip count/LOD. Can't go through desc_update() here - flags.bLoading is still
+			// set and desc_update() would spin forever waiting on IsLoading() on this very
+			// thread - so query the fresh pSurface directly instead.
+			D3D_RESOURCE_DIMENSION rtype;
+			pSurface->GetType(&rtype);
+			if (D3D_RESOURCE_DIMENSION_TEXTURE2D == rtype)
+			{
+				D3D_TEXTURE2D_DESC d;
+				((ID3DTexture2D*)pSurface)->GetDesc(&d);
+				TrueBytes = compute_true_bytes(d);
+			}
 		}
 		
 		if (pSurface && bCreateView)
@@ -778,7 +971,20 @@ void CTexture::desc_update()
 		{
 			ID3DTexture2D* T = (ID3DTexture2D*)pSurface;
 			T->GetDesc(&desc);
+			// Phase 0 accounting: true bytes from the resource actually created, at its
+			// current mip count/LOD (see compute_true_bytes). Most textures never reach here
+			// lazily (nothing calls get_Width()/get_Height() on them) - Load() sets TrueBytes
+			// itself for the common path; this covers surface_set() callers and later queries.
+			TrueBytes = compute_true_bytes(desc);
 		}
+		else
+		{
+			TrueBytes = 0;
+		}
+	}
+	else
+	{
+		TrueBytes = 0;
 	}
 }
 

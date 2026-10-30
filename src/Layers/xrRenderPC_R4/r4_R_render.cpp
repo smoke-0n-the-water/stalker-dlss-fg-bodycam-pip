@@ -208,6 +208,7 @@ void CRender::Render()
 
 	if ((Device.dwFrame % (u32)ps_r__tex_evict_interval) == 0)
 		dxRenderDeviceRender::Instance().Resources->EvictStalledTextures();
+	dxRenderDeviceRender::Instance().Resources->ResidencyFrame();
 
 	//.	VERIFY					(g_pGameLevel && g_pGameLevel->pHUD);
 

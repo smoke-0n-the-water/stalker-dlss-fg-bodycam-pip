@@ -348,7 +348,7 @@ public:
 	virtual void level_Load(IReader*);
 	virtual void level_Unload();
 
-	ID3DBaseTexture* texture_load(LPCSTR fname, u32& msize, bool bStaging = false);
+	ID3DBaseTexture* texture_load(LPCSTR fname, u32& msize, bool bStaging = false, int requested_lod = 0);
 	// the defines every shader compiles with and the shader cache name they make (shader_compile and the shader
 	// warm-up, r4_shader_warmup.cpp)
 	struct ShaderCompileOptions

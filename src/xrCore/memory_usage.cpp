@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include <malloc.h>
 #include <errno.h>
+#include <psapi.h>
 
 XRCORE_API void vminfo(size_t* _free, size_t* reserved, size_t* committed)
 {
@@ -40,33 +41,15 @@ XRCORE_API void log_vminfo()
 	);
 }
 
-size_t xrMemory::mem_usage(bool assert)
+// Process private bytes. This used to _heapwalk the CRT heap, which is not safe while other
+// threads allocate (it FATALed with "bad node in heap" during load) and no longer sees engine
+// memory now that xrMemory allocates from tbbmalloc.
+size_t xrMemory::mem_usage(bool /*assert*/)
 {
-    xrCriticalSectionGuard g(mem_lock);
 	PROF_EVENT("mem_usage");
-	_HEAPINFO hinfo = {};
-	int status;
-	size_t bytesUsed = 0;
-	while ((status = _heapwalk(&hinfo)) == _HEAPOK)
-	{
-		if (hinfo._useflag == _USEDENTRY)
-			bytesUsed += hinfo._size;
-	}
-	switch (status)
-	{
-	case _HEAPEMPTY:
-		break;
-	case _HEAPEND:
-		break;
-	case _HEAPBADPTR:
-		if (assert) FATAL("bad pointer to heap");
-		break;
-	case _HEAPBADBEGIN:
-        if (assert) FATAL("bad start of heap");
-		break;
-	case _HEAPBADNODE:
-        if (assert) FATAL("bad node in heap");
-		break;
-	}
-	return bytesUsed;
+	PROCESS_MEMORY_COUNTERS_EX counters = {};
+	counters.cb = sizeof(counters);
+	if (!GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&counters, sizeof(counters)))
+		return 0;
+	return counters.PrivateUsage;
 }

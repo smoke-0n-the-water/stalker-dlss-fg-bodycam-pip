@@ -4,6 +4,7 @@
 #include "SoundRender_Core.h"
 #include "SoundRender_Source.h"
 #include "../xrCore/ScopeLock.hpp"
+#include "../xrCore/spawn_cost.h"
 
 CSoundRender_Source* CSoundRender_Core::i_create_source(LPCSTR name)
 {
@@ -19,6 +20,7 @@ CSoundRender_Source* CSoundRender_Core::i_create_source(LPCSTR name)
 	}
 
 	// Load a _new one
+	spawn_cost::Scope cost(spawn_cost::Sound);
 	CSoundRender_Source* S = xr_new<CSoundRender_Source>();
 	S->load(id);
 	s_sources.insert({id, S});

@@ -199,6 +199,7 @@ extern BOOL duplicate_story_id_crash;
 
 extern BOOL spawn_antifreeze;
 extern BOOL spawn_antifreeze_debug;
+extern int spawn_time_log;
 
 extern float IK_CALC_DIST;
 extern float IK_CALC_SSA;
@@ -3295,6 +3296,7 @@ void CCC_RegisterCommands()
 
 	CMD4(CCC_Integer, "spawn_antifreeze", &spawn_antifreeze, 0, 1);
 	CMD4(CCC_Integer, "spawn_antifreeze_debug", &spawn_antifreeze_debug, 0, 1);
+	CMD4(CCC_Integer, "spawn_time_log", &spawn_time_log, 0, 1000);
 
 	CMD4(CCC_Float, "ik_calc_dist", &IK_CALC_DIST, 50, 150);
 	CMD4(CCC_Float, "ik_calc_ssa", &IK_CALC_SSA, 0.001f, 0.02f);
