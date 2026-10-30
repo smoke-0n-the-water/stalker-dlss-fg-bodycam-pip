@@ -429,6 +429,12 @@ extern ECORE_API int ps_r__tex_res_batch_mb;
 // Phase 1: LOD swap primitive caps, applied on the render thread at frame start
 extern ECORE_API int ps_r__tex_res_swaps_per_frame;
 extern ECORE_API int ps_r__tex_res_swap_mb;
+// Adaptive pressure policy: hysteresis watermarks, simulated budget, demote flood cap
+extern ECORE_API int ps_r__tex_res_preset;
+extern ECORE_API int ps_r__tex_res_high_pct;
+extern ECORE_API int ps_r__tex_res_low_pct;
+extern ECORE_API int ps_r__tex_res_budget_mb;
+extern ECORE_API int ps_r__tex_res_demotes_inflight;
 
 // dxgi swapchain depth, needs vid_restart to apply, flip-discard requires >= 2
 extern ECORE_API int ps_r__swapchain_buffers;

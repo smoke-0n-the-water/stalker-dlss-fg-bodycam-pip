@@ -51,6 +51,8 @@ public:
     // CResourceManager::ClassifyTexture(). -2 = not yet classified, -1 = no class matches.
     s8 ResClass = -2;
     u32 dwPromotedTime = 0; // Device.dwTimeGlobal when a swap last raised detail; starts the class hold
+    u32 dwDemotedTime = 0;  // when a swap last lowered detail; a promote soon after it counts as thrash
+    bool PendingDemote = false; // the queued swap lowers detail (counts against r__tex_res_demotes_inflight)
 #endif
     bool IsLoading() const {
 #if defined(USE_DX10) || defined(USE_DX11)
