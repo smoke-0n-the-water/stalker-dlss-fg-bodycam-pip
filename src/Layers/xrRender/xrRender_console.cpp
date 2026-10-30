@@ -556,6 +556,15 @@ int ps_r__tex_evict_age_frames = 1800;
 int ps_r__tex_evict_batch_size = 200;
 int ps_r__tex_evict_interval   = 600;
 
+int ps_r__tex_nowait    = 1;  // a still-loading texture binds nothing for the frame instead of stalling it
+int ps_r__tex_wait_log  = 0;  // log frames whose render thread waited at least this many ms on texture loads, 0 = off
+int ps_r__tex_vram_log  = 0;  // seconds between VRAM usage/budget lines, 0 = off
+int ps_r__tex_res_budget_target = 80; // % of the DXGI budget; above it idle textures are unloaded, 0 = off
+int ps_r__tex_res_idle_s        = 30; // a texture is idle when not drawn for this many seconds
+int ps_r__tex_res_batch_mb      = 256; // most texture memory one pass unloads (checks every 1 s, 10 s after a pass)
+int ps_r__tex_res_swaps_per_frame = 4;  // LOD swaps CResourceManager::ApplyTextureSwaps() installs per frame
+int ps_r__tex_res_swap_mb         = 16; // most texture memory one frame's batch of swaps installs
+
 int ps_r__swapchain_buffers = 2;
 int ps_r__max_frame_latency = 0;
 int ps_r__sun_minmax_lean = 1;
@@ -1470,6 +1479,64 @@ public:
 	}
 };
 
+// Phase 0 accounting: dumps every tracked texture's true bytes/state to a CSV in the logs folder.
+class CCC_TexResDump : public IConsole_Command
+{
+public:
+	CCC_TexResDump(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; }
+
+	virtual void Execute(LPCSTR /*args*/)
+	{
+		DEV->DumpTextureResidency();
+	}
+
+	virtual void Info(TInfo& I) { xr_strcpy(I, sizeof(I), "dump every tracked texture's size/state to a CSV in the logs folder"); }
+};
+
+// Phase 1: queue a one-off LOD swap for a single texture, by name (as tex_res_dump prints it).
+class CCC_TexResSetLod : public IConsole_Command
+{
+public:
+	CCC_TexResSetLod(LPCSTR N) : IConsole_Command(N) {}
+
+	virtual void Execute(LPCSTR args)
+	{
+		string256 name = {};
+		int lod = 0;
+		if (!args || !args[0] || sscanf_s(args, "%255s %d", name, (unsigned)sizeof(name), &lod) != 2)
+		{
+			Msg("! usage: tex_res_set_lod <name> <lod>");
+			return;
+		}
+		CTexture* T = DEV->_FindTexture(name);
+		if (!T)
+		{
+			Msg("! [TexRes] no such texture: %s", name);
+			return;
+		}
+		DEV->QueueTextureSwap(ref_texture(T), u32(_max(0, lod)));
+		Msg("* [TexRes] queued swap: %s -> lod %d", name, lod);
+	}
+
+	virtual void Info(TInfo& I) { xr_strcpy(I, sizeof(I), "tex_res_set_lod <name> <lod> - queue a LOD swap for one texture"); }
+};
+
+// Phase 1: demote then promote back N loaded, non-pinned textures - watch for a blank frame.
+class CCC_TexResSelftest : public IConsole_Command
+{
+public:
+	CCC_TexResSelftest(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; }
+
+	virtual void Execute(LPCSTR args)
+	{
+		int count = 8;
+		if (args && args[0]) sscanf_s(args, "%d", &count);
+		DEV->TexResSelftest(u32(_max(1, count)));
+	}
+
+	virtual void Info(TInfo& I) { xr_strcpy(I, sizeof(I), "tex_res_selftest [count=8] - demote then promote back N loaded textures"); }
+};
+
 //-----------------------------------------------------------------------
 void xrRender_initconsole()
 {
@@ -2021,6 +2088,17 @@ void xrRender_initconsole()
 	CMD4(CCC_Integer, "r__tex_evict_age_frames", &ps_r__tex_evict_age_frames, 300, 36000);
 	CMD4(CCC_Integer, "r__tex_evict_batch_size", &ps_r__tex_evict_batch_size, 10,  1000 );
 	CMD4(CCC_Integer, "r__tex_evict_interval",   &ps_r__tex_evict_interval,   60,  3600 );
+	CMD4(CCC_Integer, "r__tex_nowait",           &ps_r__tex_nowait,           0,   1    );
+	CMD4(CCC_Integer, "r__tex_wait_log",         &ps_r__tex_wait_log,         0,   1000 );
+	CMD4(CCC_Integer, "r__tex_vram_log",         &ps_r__tex_vram_log,         0,   3600 );
+	CMD4(CCC_Integer, "r__tex_res_budget_target", &ps_r__tex_res_budget_target, 0, 100  );
+	CMD4(CCC_Integer, "r__tex_res_idle_s",       &ps_r__tex_res_idle_s,       5,   3600 );
+	CMD4(CCC_Integer, "r__tex_res_batch_mb",     &ps_r__tex_res_batch_mb,     16,  4096 );
+	CMD4(CCC_Integer, "r__tex_res_swaps_per_frame", &ps_r__tex_res_swaps_per_frame, 1, 64);
+	CMD4(CCC_Integer, "r__tex_res_swap_mb",      &ps_r__tex_res_swap_mb,      1,   256  );
+	CMD1(CCC_TexResDump, "tex_res_dump");
+	CMD1(CCC_TexResSetLod, "tex_res_set_lod");
+	CMD1(CCC_TexResSelftest, "tex_res_selftest");
 	CMD4(CCC_Integer, "r__swapchain_buffers", &ps_r__swapchain_buffers, 2, 3);
 	CMD4(CCC_Integer, "r__max_frame_latency", &ps_r__max_frame_latency, 0, 4);
 	CMD4(CCC_Integer, "r__sun_minmax_lean", &ps_r__sun_minmax_lean, 0, 1);

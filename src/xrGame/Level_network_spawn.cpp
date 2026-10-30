@@ -9,6 +9,12 @@
 #include "client_spawn_manager.h"
 #include "../xrEngine/xr_object.h"
 #include "../xrEngine/IGame_Persistent.h"
+#include "../xrCore/spawn_cost.h"
+
+// Log in-game spawns ([SpawnTime]) and weapon HUD loads ([HudTime]) that held the main thread at
+// least this many ms, 0 = off.
+int spawn_time_log = 5;
+extern ENGINE_API BOOL g_bootComplete;
 
 void CLevel::cl_Process_Spawn(NET_Packet& P)
 {
@@ -16,6 +22,7 @@ void CLevel::cl_Process_Spawn(NET_Packet& P)
 	shared_str s_name;
 	P.r_stringZ(s_name);
 	PROF_EVENT("CLevel::cl_Process_Spawn");
+	spawn_cost::Owner spawn_timer("SpawnTime", s_name.c_str(), g_bootComplete ? spawn_time_log : 0);
 
 	//Msg("cl_Process_Spawn spawning %s", s_name.c_str());
 

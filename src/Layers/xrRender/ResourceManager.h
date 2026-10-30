@@ -17,6 +17,18 @@ struct lua_State;
 
 class dx10ConstantBuffer;
 
+// Phase 2: one tex_residency.ltx class ([weapon], [character], ...). Each folder matches a whole
+// path segment of the texture name ("act" matches act\... and ...\act\..., not "impact"). age is
+// how long undrawn before it demotes to floor via a Phase 1 swap; hold is how long after a
+// promote it may not demote again, so textures going in and out of view don't ping-pong.
+struct TexResClass
+{
+	sh_list folders;
+	u32 age_ms = 120000;
+	u32 hold_ms = 300000;
+	u32 floor_lod = 2;
+};
+
 // defs
 class ECORE_API CResourceManager
 {
@@ -93,6 +105,21 @@ private:
 #if defined(USE_DX10) || defined(USE_DX11)
     TextureLoadLifetime::Queue<ref_texture> pendingTextureLoads;
     xr_vector<ref_texture> prefetchedTextures;
+    // Phase 1 LOD swap primitive: textures whose worker reload finished, waiting for the
+    // render thread to install them, and the selftest's pending demote->promote deadlines.
+    xrCriticalSection swapGuard;
+    xr_vector<ref_texture> readySwaps;
+    xr_vector<std::pair<u32, ref_texture>> selftestPromoteAt;
+    // Phase 2: classes parsed from tex_residency.ltx, loaded lazily on first ClassifyTexture()
+    // call. Deliberately its OWN lock, not creationGuard: ClassifyTexture() runs from every
+    // texture's PostLoad(), often from many worker threads in parallel during a level's mass
+    // texture load, and creationGuard is the same lock _CreateTexture() needs for every new
+    // texture - sharing it serialized classification against texture creation itself and
+    // stalled level loads. m_tex_res_classes is written once, then read-only: safe to read
+    // without any lock once the ready flag is set.
+    xrCriticalSection texResInitGuard;
+    std::atomic<bool> m_tex_res_classes_ready{false};
+    xr_vector<TexResClass> m_tex_res_classes;
 #endif
 	// misc
 	xrCriticalSection creationGuard;
@@ -251,6 +278,25 @@ public:
 	void UnloadAllTexturesOnLevelUnload();
 	void Evict();
     void EvictStalledTextures();
+    // Render-thread texture wait telemetry; ResidencyFrame() runs once per frame.
+    void NoteTextureWait(const CTexture* T, u64 us);
+    void NoteTextureDeferred();
+    void ResidencyFrame();
+    bool RelieveVramPressure(u64 usage, u64 budget); // true when it unloaded something
+    // Phase 0 accounting: dump every tracked texture's true bytes/state to a CSV in $logs$.
+    void DumpTextureResidency();
+    // Phase 1 LOD swap primitive. QueueTextureSwap submits a worker reload at new_lod into
+    // the texture's Pending* fields; ApplyTextureSwaps (render-thread only, called from
+    // ResidencyFrame at frame start) installs a capped batch via CTexture::ApplySwap().
+    bool QueueTextureSwap(const ref_texture& texture, u32 new_lod); // false: not queued (already pending/at lod)
+    void ApplyTextureSwaps();
+    void TexResSelftest(u32 count); // demotes then promotes back N loaded textures, console-driven
+    // Phase 2: classes + idle demotion. ClassifyTexture lazy-loads tex_residency.ltx on first
+    // call; PostLoad() caches the result on each CTexture. TexResClassIdleSweep (periodic, from
+    // ResidencyFrame) demotes classified textures idle past their class's age.
+    void LoadTexResidencyClasses(); // caller must hold texResInitGuard
+    s8 ClassifyTexture(const shared_str& name);
+    void TexResClassIdleSweep();
 	void StoreNecessaryTextures();
 	void DestroyNecessaryTextures();
 	void Dump(bool bBrief);

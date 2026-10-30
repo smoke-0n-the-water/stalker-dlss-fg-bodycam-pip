@@ -71,6 +71,19 @@ private:
 	void check_pathes();
 
 	files_set m_files;
+	mutable xrSRWLock m_files_lock;
+	// Scoped hold of m_files_lock. With -dbg it asserts if the calling thread
+	// already holds the lock, shared or exclusive: SRWLOCK is not reentrant.
+	class files_lock_guard
+	{
+	public:
+		files_lock_guard(xrSRWLock& lock, bool shared = false);
+		~files_lock_guard();
+	private:
+		static bool enter(bool shared);
+		bool counted;
+		xrSRWLockGuard guard;
+	};
 	BOOL bNoRecurse;
 
 	xrCriticalSection m_auth_lock;
@@ -82,6 +95,8 @@ private:
 	bool Recurse(LPCSTR path);
 
 	files_it file_find_it(LPCSTR n);
+	// Caller must hold m_files_lock (shared for reads, exclusive if it mutates)
+	files_it file_find_it_nolock(LPCSTR n);
 public:
 	enum
 	{

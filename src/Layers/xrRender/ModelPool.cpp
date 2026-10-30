@@ -6,6 +6,7 @@
 #ifndef _EDITOR
 #include "../../xrEngine/IGame_Persistent.h"
 #include "../../xrEngine/fmesh.h"
+#include "../../xrCore/spawn_cost.h"
 #include "fhierrarhyvisual.h"
 #include "SkeletonAnimated.h"
 #include "fvisual.h"
@@ -272,12 +273,13 @@ dxRender_Visual* CModelPool::Create(const char* name, IReader* data, bool assert
 #ifdef _EDITOR
 	if (!name||!name[0])	return 0;
 #endif
+	spawn_cost::Scope cost(spawn_cost::Model);
 	string_path low_name;
 	VERIFY(xr_strlen(name)<sizeof(low_name));
 	xr_strcpy(low_name, name);
 	strlwr(low_name);
 	if (strext(low_name)) *strext(low_name) = 0;
-	
+
 	// 0. Search POOL
 	POOL_IT it = Pool.find(low_name);
 	if (it != Pool.end())
@@ -296,6 +298,7 @@ dxRender_Visual* CModelPool::Create(const char* name, IReader* data, bool assert
 		if (0 == Base)
 		{
 			// 2. If not found
+			spawn_cost::Scope load_cost(spawn_cost::ModelLoad);
 			bAllowChildrenDuplicate = FALSE;
 			if (data) Base = Instance_Load(low_name, data, TRUE);
 			else Base = Instance_Load(low_name, TRUE, assert);

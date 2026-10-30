@@ -39,6 +39,24 @@ ICF u32 get_pool(size_t size)
 #define PURE_MEMORY_FILL_ZERO
 #define PURE_MEMORY_ALIGNMENT 1 << 4
 
+// Route the pure allocator to tbbmalloc directly (no proxy, so the CRT heap that
+// third-party DLLs use is left alone). Comment out to go back to the CRT.
+#define PURE_ALLOC_TBBMALLOC
+
+#ifdef PURE_ALLOC_TBBMALLOC
+#include <tbb/scalable_allocator.h>
+#pragma comment(lib, "tbbmalloc.lib")
+# define pure_aligned_malloc(size, align) scalable_aligned_malloc(size, align)
+# define pure_aligned_realloc(ptr, size, align) scalable_aligned_realloc(ptr, size, align)
+# define pure_aligned_free(ptr) scalable_aligned_free(ptr)
+# define pure_aligned_msize(ptr, align) scalable_msize(ptr)
+#else
+# define pure_aligned_malloc(size, align) _aligned_malloc(size, align)
+# define pure_aligned_realloc(ptr, size, align) _aligned_realloc(ptr, size, align)
+# define pure_aligned_free(ptr) _aligned_free(ptr)
+# define pure_aligned_msize(ptr, align) _aligned_msize(ptr, align, 0)
+#endif // PURE_ALLOC_TBBMALLOC
+
 void* xrMemory::mem_alloc(size_t size
 # ifdef DEBUG_MEMORY_NAME
                           , const char* _name
@@ -50,7 +68,7 @@ void* xrMemory::mem_alloc(size_t size
 #ifdef PURE_ALLOC
 	{
 		//void* result = malloc(size);
-		void* result = _aligned_malloc(size, PURE_MEMORY_ALIGNMENT);
+		void* result = pure_aligned_malloc(size, PURE_MEMORY_ALIGNMENT);
 #ifdef PURE_MEMORY_FILL_ZERO
 		if (result && zeroMemory)
 			memset(result, 0, size);
@@ -138,7 +156,7 @@ void xrMemory::mem_free(void* P)
 #ifdef PURE_ALLOC
 	{
 		//free(P);
-		_aligned_free(P);
+		pure_aligned_free(P);
 		return;
 	}
 #endif // PURE_ALLOC
@@ -192,11 +210,17 @@ void* xrMemory::mem_realloc(void* P, size_t size
 #ifdef PURE_ALLOC
 	{
 #ifdef PURE_MEMORY_FILL_ZERO
-		size_t old_size = P ? _aligned_msize(P, PURE_MEMORY_ALIGNMENT, 0) : 0;
+		size_t old_size = P ? pure_aligned_msize(P, PURE_MEMORY_ALIGNMENT) : 0;
+
+		// A shrink can stay in place with _aligned_msize still reporting the old size,
+		// so the growth zeroing below would start past the bytes being dropped now.
+		// Zero them here so they come back clean when the block grows again.
+		if (P && size && size < old_size)
+			memset((u8*)P + size, 0, old_size - size);
 #endif // PURE_MEMORY_FILL_ZERO
 
 		//void* result = realloc(P, size);
-		void* result = _aligned_realloc(P, size, PURE_MEMORY_ALIGNMENT);
+		void* result = pure_aligned_realloc(P, size, PURE_MEMORY_ALIGNMENT);
 
 #ifdef PURE_MEMORY_FILL_ZERO
 		if (result && size > old_size)
