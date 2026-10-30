@@ -803,8 +803,10 @@ void CResourceManager::ResidencyFrame()
 		return;
 	if (check_due)
 	{
-		s_pressure_next_ms = now + 1000;
-		RelieveVramPressure(local.CurrentUsage, local.Budget);
+		// DXGI usage lagged an unload pass by tens of seconds in game, so passes a second apart kept
+		// unloading while usage sat flat and then overshot the target. Give each pass time to land.
+		const bool unloaded = RelieveVramPressure(local.CurrentUsage, local.Budget);
+		s_pressure_next_ms = now + (unloaded ? 10000 : 1000);
 	}
 	if (!log_due)
 		return;
@@ -830,14 +832,14 @@ void CResourceManager::ResidencyFrame()
 #endif
 }
 
-void CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
+bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 {
 #ifdef USE_DX11
 	const u64 target = budget / 100 * u64(ps_r__tex_res_budget_target);
 	if (usage <= target)
 	{
 		s_pressure_warned = false;
-		return;
+		return false;
 	}
 	const u64 mb = 1024 * 1024;
 	// Aim 5% of the budget below the target so the pass does not fire again next second.
@@ -882,6 +884,9 @@ void CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 		Msg("! [TexRes] VRAM %llu of %llu MB, over the %d%% target, but no texture has been idle for %d s",
 			usage / mb, budget / mb, ps_r__tex_res_budget_target, ps_r__tex_res_idle_s);
 	s_pressure_warned = !count;
+	return count != 0;
+#else
+	return false;
 #endif
 }
 
