@@ -557,8 +557,8 @@ int ps_r__tex_evict_batch_size = 200;
 int ps_r__tex_evict_interval   = 600;
 
 int ps_r__tex_nowait    = 1;  // a still-loading texture binds nothing for the frame instead of stalling it
-int ps_r__tex_wait_log  = 2;  // log frames whose render thread waited at least this many ms on texture loads, 0 = off
-int ps_r__tex_vram_log  = 30; // seconds between VRAM usage/budget lines, 0 = off
+int ps_r__tex_wait_log  = 0;  // log frames whose render thread waited at least this many ms on texture loads, 0 = off
+int ps_r__tex_vram_log  = 0;  // seconds between VRAM usage/budget lines, 0 = off
 int ps_r__tex_res_budget_target = 80; // % of the DXGI budget; above it idle textures are unloaded, 0 = off
 int ps_r__tex_res_idle_s        = 30; // a texture is idle when not drawn for this many seconds
 int ps_r__tex_res_batch_mb      = 256; // most texture memory one pass unloads (checks every 1 s, 10 s after a pass)
