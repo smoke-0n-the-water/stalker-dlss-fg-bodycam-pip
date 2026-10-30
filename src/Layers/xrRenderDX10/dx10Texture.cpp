@@ -307,7 +307,7 @@ IC u32 it_height_rev_base(u32 d, u32 s)	{	return	color_rgba	(
 	(color_get_R(s)+color_get_G(s)+color_get_B(s))/3	);	// height
 }
 */
-ID3DBaseTexture* CRender::texture_load(LPCSTR fRName, u32& ret_msize, bool bStaging)
+ID3DBaseTexture* CRender::texture_load(LPCSTR fRName, u32& ret_msize, bool bStaging, int requested_lod)
 {
 	//	Moved here just to avoid warning
 #ifdef USE_DX11
@@ -494,6 +494,13 @@ _DDS:
 			//	), fn);
 
 			img_loaded_lod = get_texture_load_lod(fn);
+
+			// Phase 1: per-texture requested LOD on top of the global quality skip, clamped so
+			// FirstMipLevel never reaches the actual mip count. IMG.MipLevels can be 0/1 on the
+			// bump-dummy fallback paths that jump straight to _DDS_2D without reading a header,
+			// or for a genuinely tiny texture - skip the clamp in that case rather than go negative.
+			if (requested_lod && IMG.MipLevels > 1)
+				img_loaded_lod = _min(img_loaded_lod + requested_lod, int(IMG.MipLevels) - 1);
 
 			//	Inited to default by provided default constructor
 #ifdef USE_DX11

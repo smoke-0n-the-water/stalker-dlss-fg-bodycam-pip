@@ -35,6 +35,21 @@ public:
 
 #if defined(USE_DX10) || defined(USE_DX11)
     std::atomic<bool> loadQueued{false};
+
+    // Phase 1 LOD swap primitive. A worker loads PendingSurface/PendingSRView at
+    // PendingLod into fresh resources without touching the live pSurface/m_pSRView;
+    // ApplySwap() (render-thread only, called from CResourceManager::ApplyTextureSwaps())
+    // installs them and releases the old ones. swapQueued guards against re-queuing.
+    std::atomic<bool> swapQueued{false};
+    ID3DBaseTexture* PendingSurface = nullptr;
+    ID3DShaderResourceView* PendingSRView = nullptr;
+    u32 PendingLod = 0;
+    u32 RequestedLod = 0; // 0 = full detail; added to psTextureLOD's skip by the loader
+    void ApplySwap();
+
+    // Phase 2: tex_residency.ltx class index, cached once in PostLoad() via
+    // CResourceManager::ClassifyTexture(). -2 = not yet classified, -1 = no class matches.
+    s8 ResClass = -2;
 #endif
     bool IsLoading() const {
 #if defined(USE_DX10) || defined(USE_DX11)
@@ -63,6 +78,10 @@ public:
 		desc_enshure();
 		return desc.Height;
 	}
+
+	// Cached resource desc, no wait: desc is refreshed synchronously in surface_set()
+	// whenever pSurface changes, so a loaded texture's desc is already current here.
+	IC const D3D_TEXTURE2D_DESC& get_desc_nowait() const { return desc; }
 
 	void video_Sync(u32 _time) { m_play_time = _time; }
 	void video_Play(BOOL looped, u32 _time = 0xFFFFFFFF);
@@ -104,6 +123,11 @@ public: //	Public class members (must be encapsulated furthur)
 
     u32 dwLastUsedFrame = 0; // frame index of last Apply() call — used for eviction
     u32 dwLastUsedTime = 0; // Device.dwTimeGlobal of last Apply() call, used by VRAM pressure relief
+
+    // Phase 0 accounting: true bytes of the created 2D resource at its actual mip count/LOD,
+    // computed in surface_set(). Independent of flags.MemoryUsage (a legacy 27-bit estimate from
+    // the file's on-disk size that overcounts); 0 for non-2D resources (video/seq/gif surfaces).
+    u64 TrueBytes = 0;
 
 	xr_delegate<void(u32)> bind;
 

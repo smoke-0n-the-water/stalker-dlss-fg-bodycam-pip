@@ -426,6 +426,9 @@ extern ECORE_API int ps_r__tex_vram_log;
 extern ECORE_API int ps_r__tex_res_budget_target;
 extern ECORE_API int ps_r__tex_res_idle_s;
 extern ECORE_API int ps_r__tex_res_batch_mb;
+// Phase 1: LOD swap primitive caps, applied on the render thread at frame start
+extern ECORE_API int ps_r__tex_res_swaps_per_frame;
+extern ECORE_API int ps_r__tex_res_swap_mb;
 
 // dxgi swapchain depth, needs vid_restart to apply, flip-discard requires >= 2
 extern ECORE_API int ps_r__swapchain_buffers;

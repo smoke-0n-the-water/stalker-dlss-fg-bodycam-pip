@@ -15,6 +15,7 @@
 #include "blenders\blender.h"
 #include "blenders\blender_recorder.h"
 #include "../../xrCore/_thread_types.h"
+#include "../../xrCore/xrMemory.h" // Memory.mem_usage() for the Phase 0 load summary
 
 #if RENDER == R_R4
 #include "svp_console.h"
@@ -528,6 +529,33 @@ void CResourceManager::DeferredUpload()
     Msg("CResourceManager::DeferredUpload -> START, size = %d",snapshot.size());
     for(const auto& texture:snapshot)QueueTextureLoad(texture);
     DrainTextureLoads();
+
+    // Phase 0: load summary once this deferred upload (typically level load) finishes.
+    {
+        u64 vram_bytes = 0, staging_bytes = 0;
+        u32 vram_count = 0, staging_count = 0;
+        xrCriticalSectionGuard guard(creationGuard);
+        for (const auto& entry : m_textures)
+        {
+            const CTexture* T = entry.second;
+            if (!T->flags.bLoaded)
+                continue;
+            const u64 bytes = T->TrueBytes ? T->TrueBytes : T->flags.MemoryUsage;
+            if (T->flags.bLoadedAsStaging)
+            {
+                staging_bytes += bytes;
+                ++staging_count;
+            }
+            else
+            {
+                vram_bytes += bytes;
+                ++vram_count;
+            }
+        }
+        const u64 mb = 1024 * 1024;
+        Msg("* [TexRes] load summary: %u textures in VRAM (%llu MB), %u staging in RAM (%llu MB), process private %llu MB",
+            vram_count, vram_bytes / mb, staging_count, staging_bytes / mb, u64(Memory.mem_usage(false)) / mb);
+    }
 #else
     Msg("CResourceManager::DeferredUpload -> START, size = %d",m_textures.size());
     static DWORD this_thread_id=0;this_thread_id=GetCurrentThreadId();
