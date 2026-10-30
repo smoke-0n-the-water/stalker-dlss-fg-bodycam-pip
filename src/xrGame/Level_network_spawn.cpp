@@ -11,51 +11,10 @@
 #include "../xrEngine/IGame_Persistent.h"
 #include "../xrCore/spawn_cost.h"
 
-int spawn_time_log = 5; // log in-game spawns that held the main thread at least this many ms, 0 = off
+// Log in-game spawns ([SpawnTime]) and weapon HUD loads ([HudTime]) that held the main thread at
+// least this many ms, 0 = off.
+int spawn_time_log = 5;
 extern ENGINE_API BOOL g_bootComplete;
-
-namespace
-{
-// Thread storage, not the stack: xrGame builds without unwind semantics, so if an exception ever
-// skipped ~SpawnTimer the frame pointer must not dangle. The worst case is logging stops.
-thread_local spawn_cost::Frame t_spawn_frame;
-
-// Opens a spawn_cost frame for the outermost spawn on this thread and logs it if it was slow.
-// Nested spawns add to the outer one.
-struct SpawnTimer
-{
-	spawn_cost::Frame& frame = t_spawn_frame;
-	const shared_str& name;
-	bool owner = false;
-	std::chrono::steady_clock::time_point start;
-
-	explicit SpawnTimer(const shared_str& n) : name(n)
-	{
-		if (!spawn_time_log || !g_bootComplete || spawn_cost::t_frame)
-			return;
-		owner = true;
-		frame = spawn_cost::Frame();
-		start = frame.since = std::chrono::steady_clock::now();
-		spawn_cost::t_frame = &frame;
-	}
-
-	~SpawnTimer()
-	{
-		if (!owner)
-			return;
-		spawn_cost::t_frame = nullptr;
-		const u64 total = spawn_cost::elapsed_us(start, std::chrono::steady_clock::now());
-		if (total < u64(spawn_time_log) * 1000)
-			return;
-		const u64* us = frame.us;
-		const u64 parts = us[spawn_cost::Lua] + us[spawn_cost::Sound] + us[spawn_cost::Model] + us[spawn_cost::ModelLoad];
-		Msg("! [SpawnTime] %s: %.1f ms = lua %.1f, sound %.1f (%u files), model %.1f, model load %.1f (%u files), other %.1f",
-			name.c_str(), total / 1000.f, us[spawn_cost::Lua] / 1000.f, us[spawn_cost::Sound] / 1000.f,
-			frame.n[spawn_cost::Sound], us[spawn_cost::Model] / 1000.f, us[spawn_cost::ModelLoad] / 1000.f,
-			frame.n[spawn_cost::ModelLoad], (total > parts ? total - parts : 0) / 1000.f);
-	}
-};
-}
 
 void CLevel::cl_Process_Spawn(NET_Packet& P)
 {
@@ -63,7 +22,7 @@ void CLevel::cl_Process_Spawn(NET_Packet& P)
 	shared_str s_name;
 	P.r_stringZ(s_name);
 	PROF_EVENT("CLevel::cl_Process_Spawn");
-	SpawnTimer spawn_timer(s_name);
+	spawn_cost::Owner spawn_timer("SpawnTime", s_name.c_str(), g_bootComplete ? spawn_time_log : 0);
 
 	//Msg("cl_Process_Spawn spawning %s", s_name.c_str());
 

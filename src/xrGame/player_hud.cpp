@@ -18,6 +18,10 @@
 #include "bodycam_reference/animation_blend.h"
 #include "first_person_transform.h"
 #include "bodycam_hud_arms.h"
+#include "../xrCore/spawn_cost.h"
+
+extern int spawn_time_log;
+extern ENGINE_API BOOL g_bootComplete;
 #include "../Layers/xrRender/svp_console.h"
 
 #include "bodycam_reference_optics.h"
@@ -618,6 +622,8 @@ attachable_hud_item::~attachable_hud_item()
 
 void attachable_hud_item::load(const shared_str& sect_name)
 {
+	// Runs on a weapon's first draw (CHudItem::HudItemData).
+	spawn_cost::Owner hud_timer("HudTime", sect_name.c_str(), g_bootComplete ? spawn_time_log : 0);
 	m_sect_name = sect_name;
 	m_active_hand_motion.invalidate();
 	m_active_hand_blend = nullptr;
