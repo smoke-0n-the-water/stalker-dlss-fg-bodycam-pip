@@ -14,6 +14,10 @@ IC CAgentEnemyManager::CAgentEnemyManager(CAgentManager* object)
 	m_object = object;
 	m_only_wounded_left = false;
 	m_is_any_wounded = false;
+	m_effectiveness_enemy_count = 0;
+	m_member_merge_scratch.reserve(16);
+	for (u32 i = 0; i < sizeof(m_effectiveness_row_by_member) / sizeof(m_effectiveness_row_by_member[0]); ++i)
+		m_effectiveness_row_by_member[i] = u32(-1);
 }
 
 IC CAgentManager& CAgentEnemyManager::object() const

@@ -144,10 +144,10 @@ IC void CCoverEvaluatorCloseToEnemy::setup(const Fvector& enemy_position, float 
 
 IC CCoverEvaluatorAngle::CCoverEvaluatorAngle(CRestrictedObject* object) : inherited(object)
 {
-	m_direction.set(flt_max,flt_max,flt_max);
 	m_best_direction.set(flt_max,flt_max,flt_max);
-	m_best_alpha = flt_max;;
+	m_best_alpha = flt_max;
 	m_level_vertex_id = u32(-1);
+	m_cached_level_vertex_id = u32(-1);
 }
 
 IC void CCoverEvaluatorAngle::setup(const Fvector& enemy_position, float min_enemy_distance, float max_enemy_distance,

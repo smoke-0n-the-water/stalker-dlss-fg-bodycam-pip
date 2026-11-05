@@ -6,6 +6,69 @@
 
 namespace luabind { namespace detail
 {
+	namespace
+	{
+		char lua_vm_token_registry_key;
+
+		lua_vm_token* find_lua_vm_token(lua_State* L)
+		{
+			lua_pushlightuserdata(L, &lua_vm_token_registry_key);
+			lua_rawget(L, LUA_REGISTRYINDEX);
+			lua_vm_token* const result =
+				static_cast<lua_vm_token*>(lua_touserdata(L, -1));
+			lua_pop(L, 1);
+			return result;
+		}
+	}
+
+	lua_vm_token* LUABIND_API acquire_lua_vm_token(lua_State* L)
+	{
+		assert(L);
+		lua_vm_token* token = find_lua_vm_token(L);
+		if (!token)
+		{
+			// open() establishes this token on the main VM before any coroutine
+			// can create a binding handle.
+			const bool main_state = lua_pushthread(L) != 0;
+			lua_pop(L, 1);
+			assert(main_state && "call luabind::open on the main Lua state first");
+			token = luabind_new<lua_vm_token>(L);
+			lua_pushlightuserdata(L, &lua_vm_token_registry_key);
+			lua_pushlightuserdata(L, token);
+			lua_rawset(L, LUA_REGISTRYINDEX);
+		}
+
+		assert(token->alive && token->count > 0);
+		++token->count;
+		return token;
+	}
+
+	void LUABIND_API retain_lua_vm_token(lua_vm_token* token)
+	{
+		assert(token && token->alive && token->count > 0);
+		++token->count;
+	}
+
+	void LUABIND_API release_lua_vm_token(lua_vm_token* token)
+	{
+		assert(token && token->count > 0);
+		if (--token->count == 0)
+			luabind_delete(token);
+	}
+
+	void LUABIND_API invalidate_lua_vm(lua_State* L)
+	{
+		assert(L);
+		lua_vm_token* const token = find_lua_vm_token(L);
+		if (!token)
+			return;
+
+		lua_pushlightuserdata(L, &lua_vm_token_registry_key);
+		lua_pushnil(L);
+		lua_rawset(L, LUA_REGISTRYINDEX);
+		token->alive = false;
+		release_lua_vm_token(token);
+	}
 
 // most of the code in this file comes from
 // lauxlib.c in lua distribution

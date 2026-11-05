@@ -65,7 +65,11 @@ private:
 	DEFINE_SET_PRED(file, files_set, files_it, file_pred);
 
 	DEFINE_VECTOR(_finddata_t, FFVec, FFIt);
-	FFVec rec_files;
+
+	// Only alive while fsgame.ltx aliases are initialized. Runtime rescans
+	// always enumerate the filesystem afresh.
+	struct StartupScanCache;
+	StartupScanCache* m_startup_scan_cache = nullptr;
 
 	int m_iLockRescan;
 	void check_pathes();
@@ -85,6 +89,15 @@ private:
 		xrSRWLockGuard guard;
 	};
 	BOOL bNoRecurse;
+
+	// Runtime filename lookup cache. m_files remains the source of truth; these
+	// tables only memoize immutable set-element addresses while the FS index is stable.
+	xr_unordered_flat_map<shared_str, const file*> m_file_lookup_cache;
+	xr_unordered_flat_set<shared_str> m_file_negative_cache;
+	xrSRWLock m_file_lookup_cache_lock;
+	void clear_file_lookup_cache();
+	void erase_negative_file_lookup(LPCSTR name);
+	const file* file_find_cached(LPCSTR name);
 
 	xrCriticalSection m_auth_lock;
 	u64 m_auth_code;
@@ -160,6 +173,7 @@ public:
 	IWriter* w_open_ex(LPCSTR initial, LPCSTR N);
 	IC IWriter* w_open_ex(LPCSTR N) { return w_open_ex(0, N); }
 	void w_close(IWriter*& S);
+	bool write_file_atomic(LPCSTR file_name, const void* prefix, u32 prefix_size, const void* data, u32 data_size);
 
 	const file* exist(LPCSTR N);
 	const file* exist(LPCSTR path, LPCSTR name);

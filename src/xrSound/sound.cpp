@@ -10,8 +10,9 @@ void CSound_manager_interface::_create(int stage)
 {
 	if (stage == 0)
 	{
-		SoundRenderA = xr_new<CSoundRender_CoreA>();
-		SoundRender = SoundRenderA;
+		CSoundRender_CoreA* sound_render = xr_new<CSoundRender_CoreA>();
+		InterlockedExchangePointer(reinterpret_cast<PVOID volatile*>(&SoundRenderA), sound_render);
+		SoundRender = sound_render;
 		Sound = SoundRender;
 
 		if (Core.ParamsData.test(ECoreParams::nosound))
@@ -29,7 +30,8 @@ void CSound_manager_interface::_create(int stage)
 
 void CSound_manager_interface::_destroy()
 {
+	InterlockedExchangePointer(reinterpret_cast<PVOID volatile*>(&SoundRenderA), nullptr);
 	Sound->_clear();
+	Sound = nullptr;
 	xr_delete(SoundRender);
-	Sound = 0;
 }

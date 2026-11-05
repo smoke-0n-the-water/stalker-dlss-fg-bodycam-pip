@@ -20,6 +20,15 @@ extern float psHUDStepSoundVolume;
 float g_step_sound_distance = 50.0f;
 float g_step_particle_distance = 50.0f;
 
+namespace
+{
+const ::luabind::functor<bool>* actor_footstep_callback()
+{
+	static cached_script_functor<bool> callback_cache("_G.CActor__FootstepCallback");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 CStepManager::CStepManager()
 {
 }
@@ -211,10 +220,9 @@ void CStepManager::update(bool b_hud_view)
 						SGameMtl* mt = GMLib.GetMaterialByID(mtl_pair->GetMtl1());
 						if (mt)
 						{
-							::luabind::functor<bool>	funct;
-							if (ai().script_engine().functor("_G.CActor__FootstepCallback", funct))
+							if (const ::luabind::functor<bool>* funct = actor_footstep_callback())
 							{
-								if (funct(*mt->m_Name, m_step_info.params.step[i].power, b_hud_view))
+								if ((*funct)(*mt->m_Name, m_step_info.params.step[i].power, b_hud_view))
 									m_step_sound.play_next(mtl_pair, m_object, m_step_info.params.step[i].power, b_hud_view);
 							}
 						}

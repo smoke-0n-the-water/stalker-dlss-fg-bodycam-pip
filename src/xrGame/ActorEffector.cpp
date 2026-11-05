@@ -497,6 +497,7 @@ void CActorCameraManager::UpdateCamEffectors()
 
 	inherited::UpdateCamEffectors();
 
+	run_script_callbacks();
 	// pin wins over hud affect deltas so the frozen anchor holds
 	if (hud_pinned)
 		m_cam_info_hud = hud_pin_pose;

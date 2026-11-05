@@ -4,6 +4,7 @@
 #include "../../../actor.h"
 #include "../../../ActorEffector.h"
 #include "../../../../Include/xrRender/KinematicsAnimated.h"
+#include "../../../../xrEngine/bone.h"
 #include "../../../level.h"
 #include "../../../material_manager.h"
 #include "bloodsucker_vampire_effector.h"
@@ -383,6 +384,9 @@ void CAI_Bloodsucker::vfAssignBones()
 		smart_cast<IKinematics*>(Visual())->LL_BoneID("bip01_head"));
 	if (!PPhysicsShell()) //нельзя ставить колбеки, если создан физ шел - у него стоят свои колбеки!!!
 	{
+		// Bones.Update() changes only this monster's Bones, which the main thread writes
+		// (SetMotion) outside the skeleton worker batch, so skeleton workers may run it.
+		bone_callback_mark_worker_safe(&CAI_Bloodsucker::BoneCallback);
 		bone_spine->set_callback(bctCustom, BoneCallback, this);
 		bone_head->set_callback(bctCustom, BoneCallback, this);
 	}
@@ -596,18 +600,19 @@ void CAI_Bloodsucker::update_invisibility()
 	}
 	else if (CEntityAlive const* const enemy = EnemyMan.get_enemy())
 	{
-		float const dist2enemy = enemy->Position().distance_to(Position());
+		const float dist_to_enemy_sqr = enemy->Position().distance_to_sqr(Position());
+		const float full_visibility_radius = get_full_visibility_radius();
 
-		if (dist2enemy <= get_full_visibility_radius())
+		if (full_visibility_radius >= 0.f && dist_to_enemy_sqr <= _sqr(full_visibility_radius))
 		{
 			set_visibility_state(full_visibility);
 		}
-		else if (dist2enemy <= get_partial_visibility_radius())
-		{
-			set_visibility_state(partial_visibility);
-		}
 		else
 		{
+			const float partial_visibility_radius = get_partial_visibility_radius();
+			if (partial_visibility_radius >= 0.f && dist_to_enemy_sqr <= _sqr(partial_visibility_radius))
+				set_visibility_state(partial_visibility);
+			else
 			set_visibility_state(no_visibility);
 		}
 	}

@@ -261,11 +261,14 @@ class MTL_EXPORT_API CGameMtlLibrary
 
 	GameMtlVec materials;
 	GameMtlPairVec material_pairs;
+	xr_vector<float> material_vis_transparency;
 
 #ifndef _EDITOR
 	// game part
 	u32 material_count;
 	GameMtlPairVec material_pairs_rt;
+	xr_unordered_flat_map<u32, SGameMtlPair*> material_pairs_sparse_rt;
+	bool material_pairs_dense_rt;
 #endif
 public:
 	CGameMtlLibrary();
@@ -283,7 +286,10 @@ public:
 	{
 #ifndef _EDITOR
 		material_count = 0;
-		material_pairs_rt.clear();
+		material_pairs_rt.clear_and_free();
+		decltype(material_pairs_sparse_rt) empty_sparse_pairs;
+		material_pairs_sparse_rt.swap(empty_sparse_pairs);
+		material_pairs_dense_rt = false;
 #endif
 		for (GameMtlIt m_it = materials.begin(); materials.end() != m_it; ++m_it)
 			xr_delete(*m_it);
@@ -291,6 +297,7 @@ public:
 		for (GameMtlPairIt p_it = material_pairs.begin(); material_pairs.end() != p_it; ++p_it)
 			xr_delete(*p_it);
 		material_pairs.clear();
+		material_vis_transparency.clear_and_free();
 	}
 
 	// material routine
@@ -362,6 +369,7 @@ public:
 	IC GameMtlIt FirstMaterial() { return materials.begin(); }
 	IC GameMtlIt LastMaterial() { return materials.end(); }
 	IC u32 CountMaterial() { return materials.size(); }
+	IC const xr_vector<float>& MaterialVisTransparency() const { return material_vis_transparency; }
 
 	// material pair routine
 #ifdef _EDITOR
@@ -387,7 +395,14 @@ public:
 	IC SGameMtlPair* GetMaterialPair(u16 idx0, u16 idx1)
 	{
 		R_ASSERT((idx0 < material_count) && (idx1 < material_count));
-		return material_pairs_rt[idx1 * material_count + idx0];
+		if (material_pairs_dense_rt)
+			return material_pairs_rt[static_cast<size_t>(idx1) * material_count + idx0];
+
+		const u16 low = _min(idx0, idx1);
+		const u16 high = _max(idx0, idx1);
+		const u32 key = (static_cast<u32>(high) << 16u) | static_cast<u32>(low);
+		const auto found = material_pairs_sparse_rt.find(key);
+		return found != material_pairs_sparse_rt.end() ? found->second : nullptr;
 	}
 #endif
 	IC GameMtlPairIt FirstMaterialPair() { return material_pairs.begin(); }

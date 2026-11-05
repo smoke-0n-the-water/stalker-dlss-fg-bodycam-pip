@@ -1,7 +1,9 @@
-#include "stdafx.h"
+﻿#include "stdafx.h"
 #pragma hdrstop
 
 #include "IGame_Persistent.h"
+#include "../xrCore/ResourceWarmBudget.h"
+#include "../xrCore/adaptive_memory_policy.h"
 
 #ifndef _EDITOR
 #include "environment.h"
@@ -25,6 +27,82 @@ bool g_dedicated_server = false;
 extern Fvector4 ps_ssfx_grass_interactive;
 
 ENGINE_API IGame_Persistent* g_pGamePersistent = NULL;
+ENGINE_API BOOL psTextureWarmupManifest = TRUE;
+ENGINE_API BOOL psTextureWarmupUiOnly = TRUE;
+ENGINE_API int psTextureWarmupSlowMs = 4;
+ENGINE_API int psTextureWarmupMax = 1024;
+// Learned UI textures' share; the warm cache holds twice this, so model prefetch
+// (pinned after the UI share) gets as much again. Saved in user.ltx as 256.
+int psTextureWarmupMemoryMb = 256;
+
+namespace
+{
+constexpr u32 texture_warmup_magic = 0x4D575554; // TUWM
+constexpr u32 texture_warmup_version = 1;
+constexpr u32 texture_warmup_max_file_size = 1024u * 1024u;
+
+void build_texture_warmup_path(string_path& result)
+{
+	FS.update_path(result, "$app_data_root$", "cache\\texture_prefetch\\runtime_ui.pmf");
+}
+
+bool read_texture_name_safe(IReader& reader, xr_string& value)
+{
+	const int remaining = reader.elapsed();
+	if (remaining <= 0)
+		return false;
+
+	const char* const begin = static_cast<const char*>(reader.pointer());
+	const char* const terminator = static_cast<const char*>(memchr(begin, 0, static_cast<size_t>(remaining)));
+	if (!terminator)
+		return false;
+
+	const size_t length = static_cast<size_t>(terminator - begin);
+	if (!length || length >= sizeof(string_path))
+		return false;
+
+	value.assign(begin, length);
+	reader.advance(static_cast<int>(length + 1));
+	return true;
+}
+
+void normalize_texture_warmup_name(LPCSTR source, string_path& destination)
+{
+	xr_strcpy(destination, source ? source : "");
+	xr_strlwr(destination);
+	LPSTR extension = strext(destination);
+	if (extension &&
+		(!xr_strcmp(extension, ".dds") || !xr_strcmp(extension, ".tga") ||
+		 !xr_strcmp(extension, ".bmp") || !xr_strcmp(extension, ".ogm") ||
+		 !xr_strcmp(extension, ".gif")))
+	{
+		*extension = 0;
+	}
+}
+
+bool runtime_ui_texture_exists(LPCSTR name)
+{
+	string_path resolved;
+	return name && name[0] && FS.exist(resolved, "$game_textures$", name, ".dds");
+}
+
+bool is_runtime_ui_texture(LPCSTR name)
+{
+	if (!name || !name[0] || name[0] == '$' || strstr(name, "..") || strchr(name, ':'))
+		return false;
+	if (!psTextureWarmupUiOnly)
+		return true;
+
+	// Several GAMMA main-menu atlases are deliberately stored at the texture
+	// root (for example gammamainmenulogo/logogamma) instead of under ui\\.
+	// Restrict the exception to root-level logo names so world texture retention
+	// remains bounded when texture_warmup_ui_only is enabled.
+	const bool root_level_logo = !strchr(name, '\\') && !strchr(name, '/') && strstr(name, "logo");
+	return !strncmp(name, "ui\\", 3) || !strncmp(name, "ui_", 3) ||
+		strstr(name, "\\ui\\") || strstr(name, "\\ui_") ||
+		!strncmp(name, "catsy\\", 6) || root_level_logo;
+}
+}
 
 bool IsMainMenuActive()
 {
@@ -33,6 +111,8 @@ bool IsMainMenuActive()
 
 IGame_Persistent::IGame_Persistent()
 {
+	grass_shader_data.render_bender_count = 0;
+	grass_shader_data.render_frame = u32(-1);
 	RDEVICE.seqAppStart.Add(this);
 	RDEVICE.seqAppEnd.Add(this);
 	RDEVICE.seqFrame.Add(this, REG_PRIORITY_HIGH + 1);
@@ -41,6 +121,10 @@ IGame_Persistent::IGame_Persistent()
 	m_pGShaderConstants = new ShadersExternalData(); //--#SM+#--
 
 	m_pMainMenu = NULL;
+	m_texture_warmup_dirty = false;
+	m_texture_warmup_unique.reserve(1024);
+	m_texture_warmup_order.reserve(1024);
+	m_texture_warmup_pending_pins.reserve(64);
 
 	PerlinNoise1D = xr_new<CPerlinNoise1D>(Random.randI(0, 0xFFFF));
 	PerlinNoise1D->SetOctaves(2);
@@ -77,12 +161,10 @@ IGame_Persistent::~IGame_Persistent()
 }
 
 void IGame_Persistent::OnAppActivate()
-{
-}
+{}
 
 void IGame_Persistent::OnAppDeactivate()
-{
-}
+{}
 
 void IGame_Persistent::OnAppStart()
 {
@@ -107,6 +189,7 @@ void IGame_Persistent::OnAppStart()
 
 void IGame_Persistent::OnAppEnd()
 {
+	SaveTextureWarmupManifest();
 #ifndef _EDITOR
 	Environment().unload();
 #endif
@@ -116,7 +199,6 @@ void IGame_Persistent::OnAppEnd()
 	DEL_INSTANCE(g_hud);
 #endif
 }
-
 
 void IGame_Persistent::PreStart(LPCSTR op)
 {
@@ -153,6 +235,7 @@ void IGame_Persistent::Start(LPCSTR op)
 
 void IGame_Persistent::Disconnect()
 {
+	InvalidateGrassFrameState();
 #ifndef _EDITOR
 	// clear "need to play" particles
 	destroy_particles(true);
@@ -165,6 +248,7 @@ void IGame_Persistent::Disconnect()
 
 void IGame_Persistent::OnGameStart()
 {
+	InvalidateGrassFrameState();
 #ifndef _EDITOR
 	// LoadTitle("st_prefetching_objects");
 	LoadTitle();
@@ -174,6 +258,149 @@ void IGame_Persistent::OnGameStart()
 }
 
 xr_task_group prefetch_task;
+void IGame_Persistent::LoadTextureWarmupManifest(xr_vector<shared_str>& names)
+{
+	if (!psTextureWarmupManifest)
+		return;
+
+	string_path manifest_path;
+	build_texture_warmup_path(manifest_path);
+	IReader* manifest = FS.r_open(manifest_path);
+	if (!manifest)
+		return;
+
+	const u32 maximum = static_cast<u32>(_max(psTextureWarmupMax, 1));
+	if (manifest->length() < static_cast<int>(sizeof(u32) * 3) ||
+		static_cast<u32>(manifest->length()) > texture_warmup_max_file_size)
+	{
+		FS.r_close(manifest);
+		return;
+	}
+
+	const u32 magic = manifest->r_u32();
+	const u32 version = manifest->r_u32();
+	const u32 count = manifest->r_u32();
+	if (magic != texture_warmup_magic || version != texture_warmup_version || count > maximum)
+	{
+		FS.r_close(manifest);
+		return;
+	}
+
+	resource_warm_budget<shared_str, xr_unordered_set<shared_str>> warm_budget;
+	warm_budget.reset(static_cast<u64>(_max(0, psTextureWarmupMemoryMb)) * 1024u * 1024u);
+	names.reserve(names.size() + count);
+	for (u32 index = 0; index < count; ++index)
+	{
+		xr_string value;
+		if (!read_texture_name_safe(*manifest, value))
+			break;
+
+		string_path normalized;
+		normalize_texture_warmup_name(value.c_str(), normalized);
+		if (!is_runtime_ui_texture(normalized) || !runtime_ui_texture_exists(normalized))
+			continue;
+
+		const shared_str name = normalized;
+		bool inserted = false;
+		{
+			xrCriticalSectionGuard guard(m_texture_warmup_guard);
+			inserted = m_texture_warmup_unique.emplace(name).second;
+			if (inserted)
+				m_texture_warmup_order.push_back(name);
+		}
+		// Keep every valid learned name in the manifest. Only automatic warming
+		// is capped; required UI loads continue through the normal shader path.
+		string_path resolved;
+		const CLocatorAPI::file* file = FS.exist(resolved, "$game_textures$", normalized, ".dds");
+		if (inserted && file)
+		{
+			const decltype(warm_budget)::cost cost{shared_str(file->name), file->size_real};
+			if (warm_budget.admit(&cost, 1))
+				names.push_back(name);
+		}
+	}
+	FS.r_close(manifest);
+}
+
+void IGame_Persistent::SaveTextureWarmupManifest()
+{
+	if (!psTextureWarmupManifest)
+		return;
+
+	xr_vector<shared_str> names;
+	{
+		xrCriticalSectionGuard guard(m_texture_warmup_guard);
+		if (!m_texture_warmup_dirty)
+			return;
+		names = m_texture_warmup_order;
+		m_texture_warmup_dirty = false;
+	}
+
+	const size_t maximum = static_cast<size_t>(_max(psTextureWarmupMax, 1));
+	if (names.size() > maximum)
+		names.resize(maximum);
+
+	string_path manifest_path;
+	build_texture_warmup_path(manifest_path);
+	VerifyPath(manifest_path);
+	IWriter* writer = FS.w_open(manifest_path);
+	if (!writer)
+	{
+		xrCriticalSectionGuard guard(m_texture_warmup_guard);
+		m_texture_warmup_dirty = true;
+		return;
+	}
+
+	writer->w_u32(texture_warmup_magic);
+	writer->w_u32(texture_warmup_version);
+	writer->w_u32(static_cast<u32>(names.size()));
+	for (const shared_str& name : names)
+		writer->w_stringZ(name.c_str());
+	FS.w_close(writer);
+	Msg("* [texture-warmup] saved %u slow UI textures", static_cast<u32>(names.size()));
+}
+
+void IGame_Persistent::RecordSlowTexture(LPCSTR texture_name, u32 elapsed_ms)
+{
+	if (!psTextureWarmupManifest || elapsed_ms < static_cast<u32>(_max(psTextureWarmupSlowMs, 1)))
+		return;
+
+	string_path normalized;
+	normalize_texture_warmup_name(texture_name, normalized);
+	if (!is_runtime_ui_texture(normalized))
+		return;
+
+	const shared_str name = normalized;
+	{
+		xrCriticalSectionGuard guard(m_texture_warmup_guard);
+		if (m_texture_warmup_unique.size() >= static_cast<size_t>(_max(psTextureWarmupMax, 1)))
+			return;
+		if (!m_texture_warmup_unique.emplace(name).second)
+			return;
+
+		m_texture_warmup_order.push_back(name);
+		m_texture_warmup_pending_pins.push_back(name);
+		m_texture_warmup_dirty = true;
+	}
+	Msg("* [texture-warmup] learned '%s' (%u ms)", normalized, elapsed_ms);
+}
+
+void IGame_Persistent::ProcessTextureWarmupPins()
+{
+#ifndef _EDITOR
+	if (!Device.m_pRender)
+		return;
+
+	xr_vector<shared_str> pending;
+	{
+		xrCriticalSectionGuard guard(m_texture_warmup_guard);
+		pending.swap(m_texture_warmup_pending_pins);
+	}
+	for (const shared_str& name : pending)
+		Device.m_pRender->ResourcesPrefetchCreateTexture(name.c_str()); // our renderer has no pin API; prefetch keeps it resident
+#endif
+}
+
 #ifndef _EDITOR
 void IGame_Persistent::Prefetch()
 {
@@ -271,6 +498,8 @@ void IGame_Persistent::Prefetch()
 
 void IGame_Persistent::OnGameEnd()
 {
+	InvalidateGrassFrameState();
+	SaveTextureWarmupManifest();
 #ifndef _EDITOR
 	ObjectPool.clear();
 	Render->models_Clear(TRUE);
@@ -280,6 +509,8 @@ void IGame_Persistent::OnGameEnd()
 void IGame_Persistent::OnFrame()
 {
 #ifndef _EDITOR
+
+	ProcessTextureWarmupPins();
 
 	if (!Device.Paused() || Device.dwPrecacheFrame)
 		Environment().OnFrame();
@@ -627,6 +858,47 @@ void IGame_Persistent::GrassBendersSet(u8 idx, u16 id, Fvector position, Fvector
 		grass_shader_data.radius_curr[idx] = 0.01f;
 		grass_shader_data.time[idx] = 0;
 	}
+}
+
+void IGame_Persistent::InvalidateGrassFrameState()
+{
+	grass_shader_data.render_bender_count = 0;
+	grass_shader_data.render_frame = u32(-1);
+}
+
+void IGame_Persistent::PrepareGrassFrameState()
+{
+	if (grass_shader_data.render_frame == RDEVICE.dwFrame)
+		return;
+
+	const u32 bender_count = ps_ssfx_grass_interactive.y > 0 ?
+		u32(_min(16, ps_ssfx_grass_interactive.y + 1)) : 0;
+	grass_shader_data.render_bender_count = bender_count;
+	if (bender_count)
+	{
+		Fvector4 player_position = { 0.f, 0.f, 0.f, 0.f };
+		if (ps_ssfx_grass_interactive.x > 0)
+			player_position.set(Device.vCameraPosition.x, Device.vCameraPosition.y,
+				Device.vCameraPosition.z, -1.f);
+
+		grass_shader_data.render_benders[0].set(player_position);
+		grass_shader_data.render_benders[16].set(0.f, -99.f, 0.f, 1.f);
+		for (u32 bend = 1; bend < bender_count; ++bend)
+		{
+			grass_shader_data.render_benders[bend].set(grass_shader_data.pos[bend].x,
+				grass_shader_data.pos[bend].y, grass_shader_data.pos[bend].z,
+				grass_shader_data.radius_curr[bend]);
+			grass_shader_data.render_benders[bend + 16].set(grass_shader_data.dir[bend].x,
+				grass_shader_data.dir[bend].y, grass_shader_data.dir[bend].z,
+				grass_shader_data.str[bend]);
+		}
+
+		const u32 bender_bytes = bender_count * sizeof(Fvector4);
+		CopyMemory(grass_shader_data.render_previous_benders, grass_shader_data.prev_pos, bender_bytes);
+		CopyMemory(grass_shader_data.render_previous_benders + 16, grass_shader_data.prev_dir, bender_bytes);
+	}
+
+	grass_shader_data.render_frame = RDEVICE.dwFrame;
 }
 
 float IGame_Persistent::GrassBenderToValue(float& current, float go_to, float intensity, bool use_easing)

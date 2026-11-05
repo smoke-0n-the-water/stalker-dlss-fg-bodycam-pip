@@ -1,6 +1,6 @@
 /*
 ** JIT library.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #define lib_jit_c
@@ -211,6 +211,7 @@ LJLIB_CF(jit_util_funcinfo)
     lua_setfield(L, -2, "source");
     lj_debug_pushloc(L, pt, pc);
     lua_setfield(L, -2, "loc");
+    setprotoV(L, lj_tab_setstr(L, t, lj_str_newlit(L, "proto")), pt);
   } else {
     GCfunc *fn = funcV(L->base);
     GCtab *t;
@@ -846,7 +847,7 @@ LUALIB_API int luaopen_jit(lua_State *L)
 {
   lua_pushliteral(L, LJ_OS_NAME);
   lua_pushliteral(L, LJ_ARCH_NAME);
-  lua_pushinteger(L, LUAJIT_VERSION_NUM);
+  lua_pushinteger(L, LUAJIT_VERSION_NUM);  /* Deprecated. */
   lua_pushliteral(L, LUAJIT_VERSION);
   LJ_LIB_REG(L, LUA_JITLIBNAME, jit);
 #ifndef LUAJIT_DISABLE_JITUTIL

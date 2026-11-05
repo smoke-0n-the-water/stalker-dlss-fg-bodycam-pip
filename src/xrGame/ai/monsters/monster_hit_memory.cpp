@@ -6,6 +6,7 @@ CMonsterHitMemory::CMonsterHitMemory()
 {
 	monster = 0;
 	time_memory = 10000;
+	reset_last_hit();
 }
 
 CMonsterHitMemory::~CMonsterHitMemory()
@@ -42,6 +43,8 @@ void CMonsterHitMemory::add_hit(CObject* who, EHitSide side)
 
 	if (it == m_hits.end()) m_hits.push_back(new_hit_info);
 	else *it = new_hit_info;
+
+	refresh_last_hit();
 }
 
 struct predicate_old_hit
@@ -69,6 +72,7 @@ struct predicate_old_hit
 
 void CMonsterHitMemory::remove_non_actual()
 {
+	const u32 previous_size = m_hits.size();
 	m_hits.erase(
 		std::remove_if(
 			m_hits.begin(),
@@ -80,29 +84,22 @@ void CMonsterHitMemory::remove_non_actual()
 		),
 		m_hits.end()
 	);
+
+	if (m_hits.size() != previous_size)
+		refresh_last_hit();
 }
 
 Fvector CMonsterHitMemory::get_last_hit_dir()
 {
 	Fvector dir = monster->Direction();
 
-	// найти последний по времени хит
-	SMonsterHit last_hit;
-	last_hit.time = 0;
-	last_hit.side = eSideFront;
-
-	for (u32 i = 0; i < m_hits.size(); i++)
-	{
-		if (m_hits[i].time > last_hit.time) last_hit = m_hits[i];
-	}
-
 	// если есть хит, вычислить направление
-	if (last_hit.time != 0)
+	if (m_last_hit.time != 0)
 	{
 		float h, p;
 		dir.getHP(h, p);
 
-		switch (last_hit.side)
+		switch (m_last_hit.side)
 		{
 		case eSideBack:
 			h += PI;
@@ -124,43 +121,17 @@ Fvector CMonsterHitMemory::get_last_hit_dir()
 
 TTime CMonsterHitMemory::get_last_hit_time()
 {
-	SMonsterHit last_hit;
-	last_hit.time = 0;
-
-	for (u32 i = 0; i < m_hits.size(); i++)
-	{
-		if (m_hits[i].time > last_hit.time) last_hit = m_hits[i];
-	}
-
-	return last_hit.time;
+	return m_last_hit.time;
 }
 
 CObject* CMonsterHitMemory::get_last_hit_object()
 {
-	SMonsterHit last_hit;
-	last_hit.object = 0;
-	last_hit.time = 0;
-
-	for (u32 i = 0; i < m_hits.size(); i++)
-	{
-		if (m_hits[i].time > last_hit.time) last_hit = m_hits[i];
-	}
-
-	return last_hit.object;
+	return m_last_hit.object;
 }
 
 Fvector CMonsterHitMemory::get_last_hit_position()
 {
-	SMonsterHit last_hit;
-	last_hit.time = 0;
-	last_hit.position.set(0.f, 0.f, 0.f);
-
-	for (u32 i = 0; i < m_hits.size(); i++)
-	{
-		if (m_hits[i].time > last_hit.time) last_hit = m_hits[i];
-	}
-
-	return last_hit.position;
+	return m_last_hit.position;
 }
 
 struct predicate_old_info
@@ -177,8 +148,9 @@ struct predicate_old_info
 	}
 };
 
-void CMonsterHitMemory::remove_hit_info(const CObject* obj)
+bool CMonsterHitMemory::remove_hit_info(const CObject* obj)
 {
+	const u32 previous_size = m_hits.size();
 	m_hits.erase(
 		std::remove_if(
 			m_hits.begin(),
@@ -187,4 +159,34 @@ void CMonsterHitMemory::remove_hit_info(const CObject* obj)
 		),
 		m_hits.end()
 	);
+
+	const bool removed = m_hits.size() != previous_size;
+	if (removed)
+		refresh_last_hit();
+
+	return removed;
+}
+
+void CMonsterHitMemory::clear()
+{
+	m_hits.clear();
+	reset_last_hit();
+}
+
+void CMonsterHitMemory::reset_last_hit()
+{
+	m_last_hit.object = 0;
+	m_last_hit.time = 0;
+	m_last_hit.side = eSideFront;
+	m_last_hit.position.set(0.f, 0.f, 0.f);
+}
+
+void CMonsterHitMemory::refresh_last_hit()
+{
+	reset_last_hit();
+	for (u32 i = 0; i < m_hits.size(); ++i)
+	{
+		if (m_hits[i].time > m_last_hit.time)
+			m_last_hit = m_hits[i];
+	}
 }

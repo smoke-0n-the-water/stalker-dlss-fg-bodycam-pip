@@ -4,6 +4,8 @@
 #include "../uistaticitem.h"
 #include "../../xrServerEntities/script_export_space.h"
 #include "uilines.h"
+#include <luabind/identity_back_reference.hpp>
+#include <luabind/weak_ref.hpp>
 
 class CUIFrameWindow;
 class CLAItem;
@@ -35,6 +37,8 @@ public:
 
 	CUIStatic();
 	virtual ~CUIStatic();
+	bool extract_lua_instance(lua_State* L) const;
+	void store_lua_instance(lua_State* L, int index) const;
 
 	virtual void Draw();
 	virtual void Update();
@@ -128,6 +132,7 @@ public:
     void SetNoShaderCache(bool v) { m_UIStaticItem.SetNoShaderCache(v); }
 
 protected:
+	mutable luabind::weak_ref m_lua_instance_ref;
 	CUILines* m_pTextControl;
 
 	ETextureMode m_eTextureMode;
@@ -154,6 +159,8 @@ class CUITextWnd : public CUIWindow, public CUILightAnimColorConrollerImpl
 	CUILines m_lines;
 public:
 	CUITextWnd();
+	bool extract_lua_instance(lua_State* L) const;
+	void store_lua_instance(lua_State* L, int index) const;
 
 	virtual ~CUITextWnd()
 	{
@@ -190,5 +197,23 @@ public:
 
 	CUILines& TextItemControl() { return m_lines; }
 
-
+private:
+	mutable luabind::weak_ref m_lua_instance_ref;
 };
+
+namespace luabind
+{
+	template <>
+	struct identity_back_reference<CUIStatic>
+	{
+		static bool extract(lua_State* L, const CUIStatic* object);
+		static void store(lua_State* L, const CUIStatic* object, int index);
+	};
+
+	template <>
+	struct identity_back_reference<CUITextWnd>
+	{
+		static bool extract(lua_State* L, const CUITextWnd* object);
+		static void store(lua_State* L, const CUITextWnd* object, int index);
+	};
+}

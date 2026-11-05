@@ -152,7 +152,21 @@ public:
 
 
 	u32 ModifyFrame() const { return m_dwModifyFrame; }
-	void InvalidateState() { m_dwModifyFrame = Device.dwFrame; }
+	u32 UIRevision() const { return m_ui_revision; }
+	void InvalidateUIState()
+	{
+		// Zero is reserved for never-initialized UI caches.  Keep the revision
+		// monotonic even after the practically unreachable u32 wraparound.
+		if (++m_ui_revision == 0)
+			++m_ui_revision;
+	}
+	void InvalidateState()
+	{
+		// Preserve the historical frame stamp used by weapon brief-info code,
+		// while giving UI caches a collision-free revision of their own.
+		m_dwModifyFrame = Device.dwFrame;
+		InvalidateUIState();
+	}
 	void Items_SetCurrentEntityHud(bool current_entity);
 	bool isBeautifulForActiveSlot(CInventoryItem* pIItem);
 protected:
@@ -179,6 +193,8 @@ protected:
 
 	//кадр на котором произошло последнее изменение в инвенторе
 	u32 m_dwModifyFrame;
+	// Monotonic structural/visual revision used only by UI caches.
+	u32 m_ui_revision;
 
 	bool m_drop_last_frame;
 

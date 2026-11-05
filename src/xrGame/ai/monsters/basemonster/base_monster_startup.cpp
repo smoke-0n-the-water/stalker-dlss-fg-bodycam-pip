@@ -59,6 +59,8 @@ void CBaseMonster::Load(LPCSTR section)
 	m_head_bone_name = READ_IF_EXISTS(pSettings, r_string, section, "bone_head", "bip01_head");
 	m_left_eye_bone_name = READ_IF_EXISTS(pSettings, r_string, section, "bone_eye_left", 0);
 	m_right_eye_bone_name = READ_IF_EXISTS(pSettings, r_string, section, "bone_eye_right", 0);
+	m_left_eye_bone_id = u16(-1);
+	m_right_eye_bone_id = u16(-1);
 
 	m_corpse_cover_evaluator = xr_new<CMonsterCorpseCoverEvaluator>(&movement().restrictions());
 	m_enemy_cover_evaluator = xr_new<CCoverEvaluatorFarFromEnemy>(&movement().restrictions());
@@ -274,6 +276,8 @@ void CBaseMonster::reload(LPCSTR section)
 void CBaseMonster::reinit()
 {
 	inherited::reinit();
+	m_left_eye_bone_id = u16(-1);
+	m_right_eye_bone_id = u16(-1);
 
 	EnemyMemory.clear();
 	SoundMemory.clear();

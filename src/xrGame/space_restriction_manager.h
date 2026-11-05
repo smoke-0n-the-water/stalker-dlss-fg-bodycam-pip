@@ -45,7 +45,7 @@ public:
 protected:
 	IC void join_restrictions(shared_str& restrictions, shared_str update);
 	IC void difference_restrictions(shared_str& restrictions, shared_str update);
-	CRestrictionPtr restriction(ALife::_OBJECT_ID id);
+	const CRestrictionPtr& restriction(ALife::_OBJECT_ID id) const;
 	CRestrictionPtr restriction(shared_str out_restrictors, shared_str in_restrictors);
 	IC void collect_garbage();
 	virtual void on_default_restrictions_changed();
@@ -63,6 +63,8 @@ public:
 
 	template <typename T1, typename T2>
 	IC void add_border(ALife::_OBJECT_ID id, T1 p1, T2 p2);
+	template <typename T1, typename T2>
+	IC void collect_border(ALife::_OBJECT_ID id, T1 p1, T2 p2, xr_vector<u32>& result);
 	void remove_border(ALife::_OBJECT_ID id);
 
 	shared_str in_restrictions(ALife::_OBJECT_ID id);

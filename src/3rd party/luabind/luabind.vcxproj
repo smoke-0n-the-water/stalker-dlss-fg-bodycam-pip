@@ -125,8 +125,8 @@
       <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <DisableSpecificWarnings>4073;4100;4390;4714;4127;4273;4595;4996;4005;4530</DisableSpecificWarnings>
-      <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
-      <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
       <ExceptionHandling>false</ExceptionHandling>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <InlineFunctionExpansion>Default</InlineFunctionExpansion>
@@ -358,8 +358,12 @@
     <ClInclude Include="weak_ref.hpp" />
     <ClInclude Include="wrapper_base.hpp" />
     <ClInclude Include="yield_policy.hpp" />
+    <ClInclude Include="identity_back_reference.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(ProjectDir)..\luajit-2\src\luajit.vcxproj" />
+  </ItemGroup>
 </Project>

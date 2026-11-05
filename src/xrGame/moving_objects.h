@@ -56,6 +56,7 @@ private:
 	NEAREST_MOVING m_visited_emitters;
 	COLLISIONS m_collisions;
 	COLLISIONS m_previous_collisions;
+	xr_vector<COLLISION> m_previous_collision_pairs;
 	Spatials m_spatial_objects;
 
 #ifdef DEBUG

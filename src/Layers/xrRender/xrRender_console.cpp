@@ -26,6 +26,16 @@ int ps_r_upscaler_jitter = 1;
 // 2 = force camera-only, 0 = raw shader-pack buffer.
 int ps_r__upscaler_camera_mv = 1;
 int ps_r_upscaler_debug = 0;
+int ps_r_upscaler_post_after = 0; // Laser Fix: off and hidden in the menu (post-order flip jumps PiP brightness)
+int ps_r_upscaler_particles_after = 1; // only used with r_upscaler_post_after 1 (no menu row)
+// 1 = stock 3DSS lenses (not the true-PiP composite) are drawn after reconstruction
+int ps_r_upscaler_scope_after = 1;
+u32 ps_r_upscaler_sunshafts = UPSCALER_SUNSHAFTS_SMOOTHED;
+xr_token upscaler_sunshafts_token[] = {
+    {"upscaled", UPSCALER_SUNSHAFTS_UPSCALED}, {"smoothed", UPSCALER_SUNSHAFTS_SMOOTHED},
+    {"raw", UPSCALER_SUNSHAFTS_RAW}, {nullptr, 0}
+};
+int ps_r_dlss_hdr_input = 1;
 xr_token dlss_preset_token[] = {
     {"default", 0}, {"j", 10}, {"k", 11}, {"l", 12}, {"m", 13}, {nullptr, 0}
 };
@@ -1835,8 +1845,19 @@ void xrRender_initconsole()
 	CMD4(CCC_Float, "r_dlss_sharpness", &ps_r_dlss_sharpness, 0.0f, 1.0f);
 	CMD4(CCC_Integer, "r__upscaler_jitter", &ps_r_upscaler_jitter, 0, 1);
 	CMD4(CCC_Integer, "r__upscaler_camera_mv", &ps_r__upscaler_camera_mv, 0, 2);
+	// Post chain, volumetric lights, particles and laser beams after the upscaler; needs vid_restart
+	CMD4(CCC_Integer, "r_upscaler_post_after", &ps_r_upscaler_post_after, 0, 1);
+	// 1 = particles are drawn after the upscaler too, along with the rest of the post chain
+	CMD4(CCC_Integer, "r_upscaler_particles_after", &ps_r_upscaler_particles_after, 0, 1);
+	// 1 = stock 3DSS lenses at display resolution after the upscaler; the true-PiP lens keeps its own path
+	CMD4(CCC_Integer, "r_upscaler_scope_after", &ps_r_upscaler_scope_after, 0, 1);
+	// Linear HDR input for DLSS, with a reversible curve around it; needs vid_restart
+	CMD4(CCC_Integer, "r_dlss_hdr_input", &ps_r_dlss_hdr_input, 0, 1);
 	// 1 = upscaler input (render resolution, stretched), 2 = motion vectors
 	CMD4(CCC_UnsavedInteger, "r_upscaler_debug", &ps_r_upscaler_debug, 0, 2);
+	// With the post chain after the upscaler: sunshafts before it (upscaled), or after it with the
+	// screen-space mask smoothed over time (smoothed) or not (raw)
+	CMD3(CCC_Token, "r_upscaler_sunshafts", &ps_r_upscaler_sunshafts, upscaler_sunshafts_token);
 #endif
 	CMD3(CCC_Mask,		"r2_gi",				&ps_r2_ls_flags,			R2FLAG_GI);
 	CMD4(CCC_Float,		"r2_gi_clip",			&ps_r2_GI_clip,				EPS,	0.1f	);

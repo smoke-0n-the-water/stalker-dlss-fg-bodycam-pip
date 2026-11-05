@@ -10,6 +10,8 @@
 #include "NET_Queue.h"
 #include "file_transfer.h"
 #include "hudmanager.h"
+#include "InventoryOwner.h"
+#include "ui/UIInventoryUtilities.h"
 
 #include "../xrphysics/iphworld.h"
 
@@ -223,10 +225,21 @@ bool CLevel::net_start_client5()
 		{
 			//			g_pGamePersistent->LoadTitle		("st_loading_textures");
 			g_pGamePersistent->LoadTitle();
+			// Declare mod-provided inventory atlases while deferred loading is
+			// still active.  The existing upload pass materializes them under the
+			// loading screen instead of during a later HUD/inventory frame.
+			CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(CurrentViewEntity());
+			if (!inventory_owner)
+				inventory_owner = smart_cast<CInventoryOwner*>(CurrentEntity());
+			const u32 preloaded_icon_shaders = InventoryUtilities::PreloadInventoryIconShaders(inventory_owner);
+			if (preloaded_icon_shaders)
+				Msg("* UI inventory icon atlases declared: %u", preloaded_icon_shaders);
+
 			//Device.Resources->DeferredLoad	(FALSE);
 			Device.m_pRender->DeferredLoad(FALSE);
 			//Device.Resources->DeferredUpload	();
 			Device.m_pRender->ResourcesDeferredUpload();
+			if (IsLoadDiagnosticsEnabled())
 			LL_CheckTextures();
 		}
 		sended_request_connection_data = FALSE;

@@ -31,6 +31,9 @@ public:
 
 private:
 	bool need_preplay_update;
+	float occlusion_target_volume;
+	float occlusion_next_update_time;
+	float query_occlusion(bool force);
 
 public:
 #ifdef DEBUG

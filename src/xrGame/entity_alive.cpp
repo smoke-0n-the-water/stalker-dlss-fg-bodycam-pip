@@ -52,7 +52,9 @@ STR_VECTOR* CEntityAlive::m_pFireParticlesVector = NULL;
 // CEntityAlive
 /////////////////////////////////////////////
 CEntityAlive::CEntityAlive() :
-	m_hit_bone_surface_areas_actual(false)
+	m_hit_bone_surface_areas_actual(false),
+	m_visible_hit_bones_mask(u64(-1)),
+	m_visible_hit_bones_surface_area(0.f)
 {
 	m_bMobility = false;
 	m_fAccuracy = 0.0f;
@@ -538,8 +540,11 @@ ALife::ERelationType CEntityAlive::tfGetRelationType(const CEntityAlive* tpEntit
 
 bool CEntityAlive::is_relation_enemy(const CEntityAlive* tpEntityAlive) const
 {
-	return ((tfGetRelationType(tpEntityAlive) == ALife::eRelationTypeEnemy) ||
-		(tfGetRelationType(tpEntityAlive) == ALife::eRelationTypeWorstEnemy));
+	// Stalker overrides route this virtual call through RELATION_REGISTRY.  The
+	// old expression evaluated it twice for every friend, neutral and worst
+	// enemy, which is the common path while merging shared squad memory.
+	const ALife::ERelationType relation = tfGetRelationType(tpEntityAlive);
+	return (relation == ALife::eRelationTypeEnemy) || (relation == ALife::eRelationTypeWorstEnemy);
 }
 
 void CEntityAlive::UpdateBloodDrops()
@@ -797,6 +802,9 @@ void CEntityAlive::OnChangeVisual()
 	inherited::OnChangeVisual();
 
 	m_hit_bone_surface_areas_actual = false;
+	m_visible_hit_bones_mask = u64(-1);
+	m_visible_hit_bones_surface_area = 0.f;
+	m_visible_hit_bone_cumulative_areas.clear_not_free();
 }
 
 void CEntityAlive::fill_hit_bone_surface_areas() const
@@ -846,6 +854,29 @@ void CEntityAlive::fill_hit_bone_surface_areas() const
 
 	std::sort(m_hit_bone_surface_areas.begin(), m_hit_bone_surface_areas.end(), sort_surface_area_predicate());
     m_hit_bone_surface_areas_actual = true;
+	m_visible_hit_bones_mask = u64(-1);
+	m_visible_hit_bones_surface_area = 0.f;
+	m_visible_hit_bone_cumulative_areas.clear_not_free();
+}
+
+void CEntityAlive::rebuild_visible_hit_bone_distribution(IKinematics* kinematics) const
+{
+	m_visible_hit_bone_cumulative_areas.clear_not_free();
+	m_visible_hit_bone_cumulative_areas.reserve(m_hit_bone_surface_areas.size());
+	m_visible_hit_bones_surface_area = 0.f;
+	m_visible_hit_bones_mask = kinematics->LL_GetBonesVisible();
+
+	hit_bone_surface_areas_type::const_iterator i = m_hit_bone_surface_areas.begin();
+	hit_bone_surface_areas_type::const_iterator const e = m_hit_bone_surface_areas.end();
+	for (; i != e; ++i)
+	{
+		if (!kinematics->LL_GetBoneVisible(i->first))
+			continue;
+
+		m_visible_hit_bones_surface_area += i->second;
+		m_visible_hit_bone_cumulative_areas.push_back(
+			std::make_pair(i->first, m_visible_hit_bones_surface_area));
+	}
 }
 
 BOOL g_ai_use_old_vision = 0;
@@ -869,48 +900,30 @@ Fvector CEntityAlive::get_new_local_point_on_mesh(u16& bone_id) const
 	if (m_hit_bone_surface_areas.empty())
 		return inherited::get_new_local_point_on_mesh(bone_id);
 
-	float hit_bones_surface_area = 0.f;
-	hit_bone_surface_areas_type::const_iterator i = m_hit_bone_surface_areas.begin();
-	hit_bone_surface_areas_type::const_iterator const e = m_hit_bone_surface_areas.end();
-	for (; i != e; ++i)
-	{
-		if (!kinematics->LL_GetBoneVisible((*i).first))
-			continue;
+	const u64 visible_bones_mask = kinematics->LL_GetBonesVisible();
+	if (visible_bones_mask != m_visible_hit_bones_mask || m_visible_hit_bone_cumulative_areas.empty())
+		rebuild_visible_hit_bone_distribution(kinematics);
 
-		SBoneShape const& shape = kinematics->LL_GetData((*i).first).shape;
-		VERIFY(shape.type != SBoneShape::stNone);
-		VERIFY(!shape.flags.is(SBoneShape::sfNoPickable));
-
-		hit_bones_surface_area += (*i).second;
-	}
-
-	VERIFY2(hit_bones_surface_area > 0.f, make_string("m_hit_bone_surface_areas[%d]", m_hit_bone_surface_areas.size()));
-	float const selected_area = m_hit_bones_random.randF(hit_bones_surface_area);
-
-	i = m_hit_bone_surface_areas.begin();
-    float accumulator = 0.f;
-	for (; i != e; ++i)
-	{
-		if (!kinematics->LL_GetBoneVisible((*i).first))
-			continue;
-
-		SBoneShape const& shape = kinematics->LL_GetData((*i).first).shape;
-		VERIFY(shape.type != SBoneShape::stNone);
-		VERIFY(!shape.flags.is(SBoneShape::sfNoPickable));
-
-		accumulator += (*i).second;
-		if (accumulator >= selected_area)
-			break;
-	}
-
-    if (i == e)
-    {
-        Msg("![CEntityAlive::get_new_local_point_on_mesh] ERROR, iterated through all m_hit_bone_surface_areas[%d] but accumulator %.5f < selected_area %.5f", m_hit_bone_surface_areas.size(), accumulator, selected_area);
+	if (m_visible_hit_bones_surface_area <= 0.f || m_visible_hit_bone_cumulative_areas.empty())
         return inherited::get_new_local_point_on_mesh(bone_id);
-    }
 	
-	SBoneShape const& shape = kinematics->LL_GetData((*i).first).shape;
-	bone_id = (*i).first;
+	const float selected_area = m_hit_bones_random.randF(m_visible_hit_bones_surface_area);
+	hit_bone_surface_areas_type::const_iterator selected = std::lower_bound(
+		m_visible_hit_bone_cumulative_areas.begin(),
+		m_visible_hit_bone_cumulative_areas.end(),
+		selected_area,
+		[](const std::pair<u16, float>& item, float value)
+		{
+			return item.second < value;
+		});
+
+	if (selected == m_visible_hit_bone_cumulative_areas.end())
+		selected = m_visible_hit_bone_cumulative_areas.end() - 1;
+
+	SBoneShape const& shape = kinematics->LL_GetData(selected->first).shape;
+	VERIFY(shape.type != SBoneShape::stNone);
+	VERIFY(!shape.flags.is(SBoneShape::sfNoPickable));
+	bone_id = selected->first;
 	Fvector result = Fvector().set(flt_max, flt_max, flt_max);
 	switch (shape.type)
 	{

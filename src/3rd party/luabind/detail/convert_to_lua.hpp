@@ -27,6 +27,21 @@
 
 namespace luabind { namespace detail
 {
+	template <typename T>
+	struct unwrap_reference
+	{
+		using type = T;
+	};
+
+	template <typename U>
+	struct unwrap_reference<std::reference_wrapper<U>>
+	{
+		using type = U;
+	};
+
+	template <typename T>
+	using unwrap_reference_t = typename unwrap_reference<std::remove_cv_t<T>>::type;
+
 	template<class T>
 	void convert_to_lua(lua_State* L, const T& v)
 	{

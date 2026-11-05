@@ -108,17 +108,24 @@ extern float cammera_into_collision_shift;
 string32 ACTOR_DEFS::g_quick_use_slots[4] = {NULL, NULL, NULL, NULL};
 //skeleton
 
-
 static Fbox bbStandBox;
 static Fbox bbCrouchBox;
 static Fvector vFootCenter;
 static Fvector vFootExt;
 
+namespace
+{
+const ::luabind::functor<bool>* actor_before_hit_callback()
+{
+	static cached_script_functor<bool> callback_cache("_G.CActor__BeforeHitCallback");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 int showActorBody = 0;
 
 Flags32 psActorFlags = {AF_GODMODE_RT | AF_AUTOPICKUP | AF_RUN_BACKWARD | AF_IMPORTANT_SAVE | AF_USE_TRACERS};
 int psActorSleepTime = 1;
-
 
 CActor::CActor() : CEntityAlive(), current_ik_cam_shift(0)
 {
@@ -190,7 +197,6 @@ CActor::CActor() : CEntityAlive(), current_ik_cam_shift(0)
 	m_holder = NULL;
 	m_holderID = u16(-1);
 
-
 #ifdef DEBUG
     Device.seqRender.Add	(this,REG_PRIORITY_LOW);
 #endif
@@ -216,7 +222,6 @@ CActor::CActor() : CEntityAlive(), current_ik_cam_shift(0)
 	//hFriendlyIndicator.create(FVF::F_LIT,RCache.Vertex.Buffer(),RCache.QuadIB);
 
 	m_pUsableObject = NULL;
-
 
 	m_anims = xr_new<SActorMotions>();
 	//Alundaio: Needed for car
@@ -259,7 +264,6 @@ CActor::CActor() : CEntityAlive(), current_ik_cam_shift(0)
 
 	m_FPCam = NULL;
 }
-
 
 CActor::~CActor()
 {
@@ -375,7 +379,6 @@ void CActor::Load(LPCSTR section)
 	// m_PhysicMovementControl: General
 	//m_PhysicMovementControl->SetParent		(this);
 
-
 	/*
 	Fbox	bb;Fvector	vBOX_center,vBOX_size;
 	// m_PhysicMovementControl: BOX
@@ -396,7 +399,6 @@ void CActor::Load(LPCSTR section)
 	bb.set	(vBOX_center,vBOX_center); bb.grow(vBOX_size);
 	character_physics_support()->movement()->SetBox		(0,bb);
 	*/
-
 
 	//// m_PhysicMovementControl: Foots
 	//Fvector	vFOOT_center= pSettings->r_fvector3	(section,"ph_foot_center"	);
@@ -452,7 +454,6 @@ void CActor::Load(LPCSTR section)
     m_fFeelGrenadeTime *= 1000.0f;
 
 	character_physics_support()->in_Load(section);
-
 
 	if (!g_dedicated_server)
 	{
@@ -605,7 +606,6 @@ void CActor::Hit(SHit* pHDS)
 			};
 		};
 
-
 		last_hit_frame = Device.dwFrame;
 	};
 
@@ -638,7 +638,6 @@ void CActor::Hit(SHit* pHDS)
 			S.play_at_pos(this, point);
 		}
 	}
-
 
 	//slow actor, only when he gets hit
 	m_hit_slowmo = conditions().HitSlowmo(pHDS);
@@ -684,10 +683,9 @@ void CActor::Hit(SHit* pHDS)
 			{
 				CScriptHit tLuaHit(&HDS);
 
-				::luabind::functor<bool> funct;
-				if (ai().script_engine().functor("_G.CActor__BeforeHitCallback", funct))
+				if (const auto* funct = actor_before_hit_callback())
 				{
-					if (!funct(this->lua_game_object(), &tLuaHit, HDS.boneID))
+					if (!(*funct)(this->lua_game_object(), &tLuaHit, HDS.boneID))
 						return;
 				}
 
@@ -1035,7 +1033,6 @@ void CActor::g_Physics(Fvector& _accel, float jump, float dt)
 	if (m_hit_slowmo < 0) m_hit_slowmo = 0.f;
 
 	accel.mul(1.f - m_hit_slowmo);
-
 
 	if (g_Alive())
 	{
@@ -1977,7 +1974,6 @@ void CActor::shedule_Update(u32 DT)
 	    */
 	NET_Jump = 0;
 
-
 	inherited::shedule_Update(DT);
 
 	// Эффектор, включаемый при ходьбе (Effector enabled while walking)
@@ -2062,7 +2058,6 @@ void CActor::shedule_Update(u32 DT)
 
 	// что актер видит перед собой (What the actor sees in front of him)
 	collide::rq_result& RQ = HUD().GetRQ();
-
 
 	if (!input_external_handler_installed() && RQ.O && RQ.O->getVisible() && RQ.range < 2.0f)
 	{
@@ -2295,6 +2290,7 @@ bool canRenderLegs(CActor* actor, CHolderCustom* m_holder) noexcept
 
 void CActor::renderable_Render(IDSGraphManager* DM)
 {
+
 	VERIFY(_valid(XFORM()));
 
     // leg shadows are disabled for DX8 and DX9
@@ -2414,7 +2410,6 @@ BOOL CActor::renderable_ShadowGenerate()
 	return inherited::renderable_ShadowGenerate();
 }
 
-
 void CActor::g_PerformDrop()
 {
 	b_DropActivated = FALSE;
@@ -2455,7 +2450,6 @@ void CActor::OnHUDDraw(CCustomHUD* Z, IDSGraphManager* DM)
 	if (!((mstate_real & mcLookout) && !IsGameTypeSingle()) && (!m_FPCam || m_FPCam->hudEnabled))
 		g_player_hud->render_hud(DM);
 
-
 #if 0//ndef NDEBUG
     if (Level().CurrentControlEntity() == this && g_ShowAnimationInfo)
     {
@@ -2490,7 +2484,6 @@ void CActor::OnHUDDraw(CCustomHUD* Z, IDSGraphManager* DM)
 void CActor::RenderIndicator(Fvector dpos, float r1, float r2, const ui_shader& IndShader)
 {
 	if (!g_Alive()) return;
-
 
 	UIRender->StartPrimitive(4, IUIRender::ptTriStrip, IUIRender::pttLIT);
 
@@ -2657,7 +2650,6 @@ ALife::_TIME_ID CActor::TimePassedAfterDeath() const
 		return 0;
 }
 
-
 void CActor::OnItemTake(CInventoryItem* inventory_item)
 {
 	CInventoryOwner::OnItemTake(inventory_item);
@@ -2693,7 +2685,6 @@ void CActor::OnItemDrop(CInventoryItem* inventory_item, bool just_before_destroy
 	}
 }
 
-
 void CActor::OnItemDropUpdate()
 {
 	CInventoryOwner::OnItemDropUpdate();
@@ -2705,7 +2696,6 @@ void CActor::OnItemDropUpdate()
 		if (!(*I)->IsInvalid() && !attached(*I))
 			attach(*I);
 }
-
 
 void CActor::OnItemRuck(CInventoryItem* inventory_item, const SInvItemPlace& previous_place)
 {
@@ -2868,7 +2858,6 @@ void CActor::spawn_supplies()
 	//CInventoryOwner::spawn_supplies();
 }
 
-
 void CActor::AnimTorsoPlayCallBack(CBlend* B)
 {
 	CActor* actor = (CActor*)B->CallbackParam;
@@ -2957,7 +2946,6 @@ bool CActor::is_on_ground()
 {
 	return (character_physics_support()->movement()->Environment() != CPHMovementControl::peInAir);
 }
-
 
 bool CActor::is_ai_obstacle() const
 {
@@ -3081,7 +3069,6 @@ float CActor::GetRestoreSpeed(ALife::EConditionRestoreType const& type)
 
 	return res;
 }
-
 
 void CActor::On_SetEntity()
 {

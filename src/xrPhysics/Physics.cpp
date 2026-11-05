@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "AVX2Math.h"
 #include "PHDynamicData.h"
 #include "Physics.h"
 #include "tri-colliderknoopc/dTriList.h"
@@ -479,12 +480,12 @@ void BodyCutForce(dBodyID body, float l_limit, float w_limit)
 
 void dMassSub(dMass* a, const dMass* b)
 {
-	int i;
 	VERIFY(a && b);
 	dReal denom = dRecip(a->mass-b->mass);
-	for (i = 0; i < 3; ++i) a->c[i] = (a->c[i] * a->mass - b->c[i] * b->mass) * denom;
+	for (int i = 0; i < 3; ++i) a->c[i] = (a->c[i] * a->mass - b->c[i] * b->mass) * denom;
 	a->mass -= b->mass;
-	for (i = 0; i < 12; ++i) a->I[i] -= b->I[i];
+	static_assert(sizeof(dReal) == sizeof(float), "xrPhysics AVX2 path requires ODE dSINGLE");
+	xr_physics_simd::subtract_12(reinterpret_cast<float*>(a->I), reinterpret_cast<const float*>(b->I));
 }
 
 

@@ -49,6 +49,8 @@ private:
 
 private:
 	SOUNDS* m_sounds;
+	typedef xr_unordered_flat_map<u16, u32> OBJECT_INDEX_CACHE;
+	mutable OBJECT_INDEX_CACHE m_object_indices;
 	PRIORITIES m_priorities;
 	u32 m_max_sound_count;
 
@@ -77,6 +79,7 @@ private:
 	IC u32 priority(const CSoundObject& sound) const;
 	void add(const CSoundObject& sound_object, bool check_for_existance = false);
 	void add(const CObject* object, int sound_type, const Fvector& position, float sound_power);
+	u32 object_index(u16 id) const;
 
 protected:
 	IC void priority(const ESoundTypes& sound_type, u32 priority);
@@ -97,6 +100,7 @@ public:
 
 public:
 	IC const SOUNDS& objects() const;
+	const CSoundObject* object_by_id(u16 id) const;
 #ifdef USE_SELECTED_SOUND
 	IC		const CSoundObject	*sound					() const;
 #endif

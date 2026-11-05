@@ -8,22 +8,29 @@ class CThread
 protected:
 	volatile u32 thID;
 	volatile BOOL Terminated;
+	HANDLE m_finishedEvent;
 public:
 	CThread(u32 _ID)
 	{
 		thID = _ID;
 		Terminated = FALSE;
+		m_finishedEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+		R_ASSERT(m_finishedEvent);
 	}
 
 	virtual ~CThread()
 	{
+		if (m_finishedEvent)
+			CloseHandle(m_finishedEvent);
 	}
 
 	void Start()
 	{
+		ResetEvent(m_finishedEvent);
 		thread_spawn(startup, "FS-notify", 0, this);
 	}
 
+	void Wait() { WaitForSingleObject(m_finishedEvent, INFINITE); }
 	virtual void Execute() = 0;
 	void Terminate() { Terminated = TRUE; }
 };

@@ -870,6 +870,7 @@
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\xrRender\r__dsgraph_manager.h" />
+    <ClInclude Include="r4_avx2_math.h" />
     <ClInclude Include="..\xrRender\R_sun_support.h">
       <Filter>Core</Filter>
     </ClInclude>

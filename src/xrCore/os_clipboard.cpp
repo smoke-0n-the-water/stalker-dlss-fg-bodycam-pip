@@ -22,10 +22,18 @@ void os_clipboard::copy_to_clipboard(LPCSTR buf)
 	}
 
 	char* memory = (char*)GlobalLock(handle);
+	if (!memory)
+	{
+		GlobalFree(handle);
+		CloseClipboard();
+		return;
+	}
+
 	xr_strcpy(memory, handle_size, buf);
 	GlobalUnlock(handle);
 	EmptyClipboard();
-	SetClipboardData(CF_TEXT, handle);
+	if (!SetClipboardData(CF_TEXT, handle))
+		GlobalFree(handle);
 	CloseClipboard();
 }
 
@@ -39,9 +47,18 @@ void os_clipboard::paste_from_clipboard(LPSTR buffer, u32 const& buffer_size)
 
 	HGLOBAL hmem = GetClipboardData(CF_TEXT);
 	if (!hmem)
+	{
+		CloseClipboard();
 		return;
+	}
 
 	LPCSTR clipdata = (LPCSTR)GlobalLock(hmem);
+	if (!clipdata)
+	{
+		CloseClipboard();
+		return;
+	}
+
 	strncpy_s(buffer, buffer_size, clipdata, buffer_size - 1);
 	buffer[buffer_size - 1] = 0;
 	for (u32 i = 0; i < strlen(buffer); ++i)

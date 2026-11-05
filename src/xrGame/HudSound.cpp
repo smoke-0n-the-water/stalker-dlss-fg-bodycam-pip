@@ -9,6 +9,15 @@
 float psHUDSoundVolume = 1.0f;
 float psHUDStepSoundVolume = 1.0f;
 
+namespace
+{
+const ::luabind::functor<::luabind::object>* before_play_hud_sound_callback()
+{
+	static cached_script_functor<::luabind::object> callback_cache("_G.COnBeforePlayHudSound");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 void InitHudSoundSettings()
 {
 	psHUDSoundVolume = pSettings->r_float("hud_sound", "hud_sound_vol_k");
@@ -250,14 +259,7 @@ sndShot is played, it will play all the sound items with the same alias.
 //----------------------------------------------------------
 HUD_SOUND_COLLECTION_LAYERED::~HUD_SOUND_COLLECTION_LAYERED()
 {
-	xr_vector<HUD_SOUND_COLLECTION>::iterator it = m_sound_items.begin();
-	xr_vector<HUD_SOUND_COLLECTION>::iterator it_e = m_sound_items.end();
-
-	for (; it != it_e; ++it)
-	{
-		it->~HUD_SOUND_COLLECTION();
-	}
-
+	// clear() runs each collection's destructor once; calling it here too released m_alias twice
 	m_sound_items.clear();
 }
 
@@ -296,6 +298,28 @@ void HUD_SOUND_COLLECTION_LAYERED::SetPosition(LPCSTR alias, const Fvector& pos)
 	}
 }
 
+bool HUD_SOUND_COLLECTION_LAYERED::HasActive3DSounds()
+{
+	bool has_active_3d_sound = false;
+
+	for (auto& collection : m_sound_items)
+	{
+		for (auto& sound : collection.m_sound_items)
+		{
+			if (!sound.m_activeSnd)
+				continue;
+
+			CSound_emitter* feedback = sound.m_activeSnd->snd._feedback();
+			if (feedback && !feedback->is_2D())
+				has_active_3d_sound = true;
+			else
+				sound.m_activeSnd = NULL;
+		}
+	}
+
+	return has_active_3d_sound;
+}
+
 void HUD_SOUND_COLLECTION_LAYERED::UpdateAllSoundsPositions(const Fvector& P)
 {
 	for (auto& i : m_sound_items)
@@ -313,6 +337,7 @@ void HUD_SOUND_COLLECTION_LAYERED::PlaySound(LPCSTR alias, const Fvector& positi
 {
 	PROF_EVENT("HUD_SOUND_COLLECTION_LAYERED::PlaySound");
 	LPCSTR alias_to_play = alias;
+	xr_string new_alias; // outlives the override block below; alias_to_play can point into it
 	::luabind::functor<::luabind::object> funct;
 	if (ai().script_engine().functor("_G.COnBeforePlayHudSound", funct))
 	{
@@ -363,7 +388,7 @@ void HUD_SOUND_COLLECTION_LAYERED::PlaySound(LPCSTR alias, const Fvector& positi
 				}
 				else
 				{
-					xr_string new_alias = xr_string(section) + "|" + line;
+					new_alias = xr_string(section) + "|" + line;
 					if (!FindSoundItem(new_alias.c_str(), false))
 					{
 						auto old_sound = FindSoundItem(alias, false);

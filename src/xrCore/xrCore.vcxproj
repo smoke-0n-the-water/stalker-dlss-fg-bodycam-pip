@@ -332,7 +332,7 @@
     <ClCompile>
       <AdditionalIncludeDirectories>.;$(SolutionDir)3rd party\optick-git\src;$(XRAY_16X_LIBS);$(xrSdkDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>$(XrProfilerDefines);PURE_ALLOC;WIN32;NDEBUG;_WINDOWS;_USRDLL;XRCORE_EXPORTS;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <BrowseInformation>
       </BrowseInformation>
@@ -341,7 +341,7 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <OmitFramePointers>true</OmitFramePointers>
-      <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <StringPooling>true</StringPooling>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -349,6 +349,8 @@
       <AdditionalOptions>/Ob3 /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
       <InlineFunctionExpansion>Default</InlineFunctionExpansion>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>$(xrSdkDir)libraries;$(XRAY_16X_LIBS)BugTrap\Bin;$(xrLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
@@ -654,6 +656,9 @@
     <ClCompile Include="_sphere.cpp" />
     <ClCompile Include="_std_extensions.cpp" />
     <ClCompile Include="DateTime.cpp" />
+    <ClCompile Include="cpu_placement.cpp" />
+    <ClCompile Include="engine_error_logger.cpp" />
+    <ClCompile Include="job_system.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\3rd party\fastdelegate\fastdelegate.h" />
@@ -783,12 +788,16 @@
     <ClInclude Include="_vector4.h" />
     <ClInclude Include="DateTime.hpp" />
     <ClInclude Include="RingBuffer.h" />
+    <ClInclude Include="cpu_placement.h" />
+    <ClInclude Include="diagnostic_privacy.h" />
+    <ClInclude Include="engine_error_logger.h" />
+    <ClInclude Include="job_system.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="xrCore.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Library Include="..\3rd party\stackwalker\lib\StackWalker.lib" />
+    <Library Include="$(ProjectDir)..\3rd party\stackwalker\lib\StackWalker.lib" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

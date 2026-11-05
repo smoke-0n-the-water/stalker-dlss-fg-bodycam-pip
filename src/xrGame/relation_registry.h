@@ -41,6 +41,9 @@ public:
 
 	template <typename T>
 	CHARACTER_GOODWILL GetAttitude(T from, T to) const;
+	CHARACTER_GOODWILL GetAttitude(const CInventoryOwner* from, const CInventoryOwner* to) const;
+	CHARACTER_GOODWILL GetAttitude(CInventoryOwner* from, CInventoryOwner* to) const;
+	static void InvalidateAttitudeCache();
 
 	//личное отношение (благосклонность) одного персонажа к другому - 
 	//величина от -100< (крайне враждебное) до >100 (очень дрюжелюбное)
@@ -63,6 +66,7 @@ public:
 	                          CHARACTER_GOODWILL goodwill);
 
 private:
+	static xr_unordered_flat_map<u32, CHARACTER_GOODWILL> m_attitude_cache;
 	CHARACTER_GOODWILL GetRankRelation(CHARACTER_RANK_VALUE, CHARACTER_RANK_VALUE) const;
 	CHARACTER_GOODWILL GetReputationRelation(CHARACTER_REPUTATION_VALUE, CHARACTER_REPUTATION_VALUE) const;
 

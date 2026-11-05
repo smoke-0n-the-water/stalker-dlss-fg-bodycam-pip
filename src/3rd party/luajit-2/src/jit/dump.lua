@@ -1,7 +1,7 @@
 ----------------------------------------------------------------------------
 -- LuaJIT compiler dump module.
 --
--- Copyright (C) 2005-2015 Mike Pall. All rights reserved.
+-- Copyright (C) 2005-2026 Mike Pall. All rights reserved.
 -- Released under the MIT license. See Copyright Notice in luajit.h
 ----------------------------------------------------------------------------
 --
@@ -55,7 +55,6 @@
 
 -- Cache some library functions and objects.
 local jit = require("jit")
-assert(jit.version_num == 20004, "LuaJIT core/library version mismatch")
 local jutil = require("jit.util")
 local vmdef = require("jit.vmdef")
 local funcinfo, funcbc = jutil.funcinfo, jutil.funcbc
@@ -63,9 +62,9 @@ local traceinfo, traceir, tracek = jutil.traceinfo, jutil.traceir, jutil.tracek
 local tracemc, tracesnap = jutil.tracemc, jutil.tracesnap
 local traceexitstub, ircalladdr = jutil.traceexitstub, jutil.ircalladdr
 local bit = require("bit")
-local band, shl, shr = bit.band, bit.lshift, bit.rshift
+local band, shr = bit.band, bit.rshift
 local sub, gsub, format = string.sub, string.gsub, string.format
-local byte, char, rep = string.byte, string.char, string.rep
+local byte, rep = string.byte, string.rep
 local type, tostring = type, tostring
 local stdout, stderr = io.stdout, io.stderr
 
@@ -207,7 +206,7 @@ local colortype_ansi = {
   "\027[35m%s\027[m",
 }
 
-local function colorize_text(s, t)
+local function colorize_text(s)
   return s
 end
 
@@ -272,7 +271,7 @@ local litname = {
     s = irtype[band(shr(mode, 5), 31)].."."..s
     if band(mode, 0x400) ~= 0 then s = s.." trunc"
     elseif band(mode, 0x800) ~= 0 then s = s.." sext" end
-    local c = shr(mode, 14)
+    local c = shr(mode, 12)
     if c == 2 then s = s.." index" elseif c == 3 then s = s.." check" end
     t[mode] = s
     return s
@@ -324,7 +323,7 @@ local function formatk(tr, idx)
       s = format("userdata:%p", k)
     else
       s = format("[%p]", k)
-      if s == "[0x00000000]" then s = "NULL" end
+      if s == "[NULL]" then s = "NULL" end
     end
   elseif t == 21 then -- int64_t
     s = sub(tostring(k), 1, -3)
@@ -564,13 +563,14 @@ local function dump_trace(what, tr, func, pc, otr, oex)
     end
     if dumpmode.H then out:write("</pre>\n\n") else out:write("\n") end
   else
+    if what == "flush" then symtab, nexitsym = {}, 0 end
     out:write("---- TRACE ", what, "\n\n")
   end
   out:flush()
 end
 
 -- Dump recorded bytecode.
-local function dump_record(tr, func, pc, depth, callee)
+local function dump_record(tr, func, pc, depth)
   if depth ~= recdepth then
     recdepth = depth
     recprefix = rep(" .", depth)
@@ -581,7 +581,6 @@ local function dump_record(tr, func, pc, depth, callee)
     if dumpmode.H then line = gsub(line, "[<>&]", html_escape) end
   else
     line = "0000 "..recprefix.." FUNCC      \n"
-    callee = func
   end
   if pc <= 0 then
     out:write(sub(line, 1, -2), "         ; ", fmtfunc(func), "\n")
@@ -643,7 +642,8 @@ end
 local function dumpon(opt, outfile)
   if active then dumpoff() end
 
-  local colormode = os.getenv("COLORTERM") and "A" or "T"
+  local term = os.getenv("TERM")
+  local colormode = (term and term:match("color") or os.getenv("COLORTERM")) and "A" or "T"
   if opt then
     opt = gsub(opt, "[TAH]", function(mode) colormode = mode; return ""; end)
   end

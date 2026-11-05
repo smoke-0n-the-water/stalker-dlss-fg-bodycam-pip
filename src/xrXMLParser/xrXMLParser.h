@@ -81,7 +81,7 @@ public:
 	XML_NODE* NavigateToNode(XML_NODE* start_node, LPCSTR path, int node_index = 0);
 	XML_NODE* NavigateToNodeWithAttribute(LPCSTR tag_name, LPCSTR attrib_name, LPCSTR attrib_value);
 
-	void SetLocalRoot(XML_NODE* pLocalRoot) { m_pLocalRoot = pLocalRoot; }
+	void SetLocalRoot(XML_NODE* pLocalRoot);
 	XML_NODE* GetLocalRoot() { return m_pLocalRoot; }
 
 	XML_NODE* GetRoot() { return m_root; }
@@ -89,6 +89,7 @@ public:
 protected:
 	XML_NODE* m_root;
 	XML_NODE* m_pLocalRoot;
+	xr_unordered_flat_map<shared_str, XML_NODE*> m_node_path_cache;
 
 #ifdef DEBUG // debug & mixed
 	//буфферный вектор для проверки уникальность аттрибутов
@@ -103,5 +104,10 @@ private:
 	typedef TiXmlElement XML_ELEM;
 	TiXmlDocument m_Doc;
 };
+
+extern XRXMLPARSER_API BOOL psXmlTextCache;
+extern XRXMLPARSER_API BOOL psXmlNodeCache;
+extern XRXMLPARSER_API int psXmlTextCacheMaxMb;
+extern XRXMLPARSER_API void ClearXmlTextCache();
 
 #endif //xrXMLParserH

@@ -12,6 +12,12 @@ CTextConsole::CTextConsole()
 	m_hConsoleWnd = NULL;
 	m_hLogWnd = NULL;
 	m_hLogWndFont = NULL;
+	m_hPrevFont = NULL;
+	m_hBackGroundBrush = NULL;
+	m_hDC_LogWnd = NULL;
+	m_hDC_LogWnd_BackBuffer = NULL;
+	m_hBB_BM = NULL;
+	m_hOld_BM = NULL;
 
 	m_bScrollLog = true;
 	m_dwStartLine = 0;
@@ -177,20 +183,37 @@ void CTextConsole::Destroy()
 {
 	inherited::Destroy();
 
+	if (m_hDC_LogWnd_BackBuffer)
+	{
+		if (m_hPrevFont)
 	SelectObject(m_hDC_LogWnd_BackBuffer, m_hPrevFont);
+		if (m_hOld_BM)
 	SelectObject(m_hDC_LogWnd_BackBuffer, m_hOld_BM);
+	}
 
-	if (m_hBB_BM) DeleteObject(m_hBB_BM);
-	if (m_hOld_BM) DeleteObject(m_hOld_BM);
-	if (m_hLogWndFont) DeleteObject(m_hLogWndFont);
-	if (m_hPrevFont) DeleteObject(m_hPrevFont);
-	if (m_hBackGroundBrush) DeleteObject(m_hBackGroundBrush);
-
-	ReleaseDC(m_hLogWnd, m_hDC_LogWnd_BackBuffer);
+	if (m_hBB_BM)
+		DeleteObject(m_hBB_BM);
+	if (m_hLogWndFont)
+		DeleteObject(m_hLogWndFont);
+	if (m_hDC_LogWnd_BackBuffer)
+		DeleteDC(m_hDC_LogWnd_BackBuffer);
+	if (m_hDC_LogWnd && m_hLogWnd)
 	ReleaseDC(m_hLogWnd, m_hDC_LogWnd);
 
+	if (m_hLogWnd)
 	DestroyWindow(m_hLogWnd);
+	if (m_hConsoleWnd)
 	DestroyWindow(m_hConsoleWnd);
+
+	m_hLogWnd = NULL;
+	m_hConsoleWnd = NULL;
+	m_hLogWndFont = NULL;
+	m_hPrevFont = NULL;
+	m_hBackGroundBrush = NULL;
+	m_hDC_LogWnd = NULL;
+	m_hDC_LogWnd_BackBuffer = NULL;
+	m_hBB_BM = NULL;
+	m_hOld_BM = NULL;
 }
 
 void CTextConsole::OnRender()

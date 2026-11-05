@@ -32,9 +32,18 @@ struct sh_pair
 	{
 		if (texture_name < other.texture_name)
 			return true;
-		else
+		if (other.texture_name < texture_name)
+			return false;
 			return shader_name < other.shader_name;
 	}
+};
+
+struct ui_shader_cache_entry
+{
+	ui_shader shader;
+	u32 last_used_frame;
+
+	ui_shader_cache_entry() : last_used_frame(0) {}
 };
 
 class CUITextureMaster
@@ -44,6 +53,7 @@ public:
 	static void ParseShTexInfo(LPCSTR xml_file);
 	static void FreeTexInfo();
 	static void FreeCachedShaders();
+	static void TrimCachedShaders(u32 current_frame, u32 max_age_frames, u32 max_releases);
 
 	static void InitTexture(const shared_str& texture_name, CUIStaticItem* tc,
 	                        const shared_str& shader_name = "hud\\default");
@@ -59,5 +69,5 @@ protected:
 
 	static xr_map<shared_str, TEX_INFO> m_textures;
 
-	static xr_map<sh_pair, ui_shader> m_shaders;
+	static xr_map<sh_pair, ui_shader_cache_entry> m_shaders;
 };

@@ -1,13 +1,14 @@
 #include "stdafx.h"
 #pragma hdrstop
 
-#include "../xrEngine/xrLevel.h"
+#include "xrEngine/xrLevel.h"
 
 #include "SoundRender_Core.h"
 #include "SoundRender_Source.h"
 #include "SoundRender_Emitter.h"
 
 #include "NotificationClient.h"
+#include "../xrCore/adaptive_memory_policy.h"
 
 #include <AL/efx.h>
 
@@ -15,6 +16,7 @@ float psSpeedOfSound = 1.f;
 int psSoundTargets = 1024;
 Flags32 psSoundFlags = {ss_Hardware | ss_EFX};
 float psSoundOcclusionScale = 0.5f;
+int psSoundOcclusionUpdateMS = 33;
 float psSoundCull = 0.01f;
 float psSoundRolloff = 0.75f;
 u32 psSoundModel = 0;
@@ -49,6 +51,18 @@ CSoundRender_Core::CSoundRender_Core()
 	bListenerMoved = FALSE;
 	bReady = FALSE;
 	bLocked = FALSE;
+	bPendingDefaultDeviceSwitch = FALSE;
+	bPendingDeviceListRefresh = FALSE;
+	m_occlusion_queries = 0;
+	m_occlusion_query_budget = 0;
+	m_occlusion_query_time_ticks = 0;
+	m_occlusion_query_time_budget_ticks = 0;
+	m_occlusion_resume_stagger_pending = FALSE;
+	m_occlusion_resume_stagger_active = false;
+	m_target_buffers_primed = 0;
+	m_target_prime_time_ticks = 0;
+	m_target_prime_time_budget_ticks = 0;
+	m_is_supported = false;
 	fTimer_Value = Timer.GetElapsed_sec();
 	fTimer_Delta = 0.0f;
 	m_iPauseCounter = 1;
@@ -63,8 +77,12 @@ CSoundRender_Core::~CSoundRender_Core()
 #else
 	xr_delete(geom_ENV);
 	xr_delete(geom_SOM);
-	xr_delete(pSysNotification);
 #endif
+	if (pSysNotification)
+	{
+		pSysNotification->Shutdown();
+		pSysNotification = nullptr;
+	}
 }
 
 void CSoundRender_Core::_initialize(int stage)
@@ -76,15 +94,34 @@ void CSoundRender_Core::_initialize(int stage)
 
 	bPresent = TRUE;
 
-	// Cache
+	// Cache. Keep explicit user tuning authoritative, but scale the stock default
+	// with physical/available RAM. This trades a bounded amount of RAM for fewer
+	// runtime decompression/cache misses without changing sound semantics.
+	const bool adaptive_memory = !strstr(Core.Params, "-no_adaptive_memory");
+	const xr_memory_policy::snapshot memory_policy = xr_memory_policy::query();
+	if (adaptive_memory && psSoundCacheSizeMB == 256)
+		psSoundCacheSizeMB = static_cast<int>(xr_memory_policy::sound_cache_mb(memory_policy));
+
+	Msg("* [memory-policy] RAM installed=%lluMB usable=%lluMB available=%lluMB load=%u%% tier=%s sound_cache=%dMB",
+		static_cast<unsigned long long>(memory_policy.installed_mb),
+		static_cast<unsigned long long>(memory_policy.usable_mb),
+		static_cast<unsigned long long>(memory_policy.available_mb), memory_policy.load_percent,
+		xr_memory_policy::tier_name(memory_policy.mode), psSoundCacheSizeMB);
+
 	cache_bytes_per_line = (sdef_target_block / 8) * 276400 / 1000;
 	cache.initialize(psSoundCacheSizeMB * 1024, cache_bytes_per_line);
 
 	bReady = TRUE;
 
-	if (Core.ParamsData.test(ECoreParams::prefetch_sounds))
+	const bool explicit_sound_prewarm = strstr(Core.Params, "-prefetch_sounds") != nullptr;
+	const bool adaptive_sound_prewarm = adaptive_memory &&
+		!strstr(Core.Params, "-no_adaptive_sound_prewarm") &&
+		xr_memory_policy::full_sound_source_prewarm(memory_policy);
+	if (explicit_sound_prewarm || adaptive_sound_prewarm)
 	{
-		i_create_all_sources();
+		Msg("* [memory-policy] sound source prewarm: %s",
+			explicit_sound_prewarm ? "forced" : "adaptive-high-RAM");
+		i_create_all_sources(explicit_sound_prewarm ? 0ull : xr_memory_policy::sound_prewarm_reserve_mb(memory_policy));
 	}
 }
 
@@ -132,6 +169,14 @@ int CSoundRender_Core::pause_emitters(bool val)
 
 	for (u32 it = 0; it < s_emitters.size(); it++)
 		((CSoundRender_Emitter*)s_emitters[it])->pause(val, val ? m_iPauseCounter : m_iPauseCounter + 1);
+
+	// The sound worker continues updating while the game is paused, so its timer
+	// delta cannot identify a focus/pause resume. Publish the actual outermost
+	// unpause explicitly; the worker will retain cached occlusion for one nominal
+	// interval and spread overdue geometry queries instead of issuing them all in
+	// the first active frame.
+	if (!val && m_iPauseCounter == 0)
+		InterlockedExchange(&m_occlusion_resume_stagger_pending, TRUE);
 
 	return m_iPauseCounter;
 }
@@ -203,27 +248,35 @@ void CSoundRender_Core::set_geometry_som(IReader* I)
 		u32 b2sided;
 		float occ;
 	};
+	R_ASSERT2((geom->length() % sizeof(SOM_poly)) == 0, "Corrupted SOM geometry chunk");
+	const u32 polygon_count = static_cast<u32>(geom->length() / sizeof(SOM_poly));
 	// Create AABB-tree
 #ifdef _EDITOR
 	CDB::Collector*	CL			= ETOOLS::create_collector();
-	while (!geom->eof()){
+	for (u32 polygon = 0; polygon < polygon_count; ++polygon)
+	{
 		SOM_poly				P;
-		geom->r					(&P,sizeof(P));
-        ETOOLS::collector_add_face_pd		(CL,P.v1,P.v2,P.v3,*(u32*)&P.occ,0.01f);
+		geom->r(&P, sizeof(P));
+		u32 occlusion_bits = 0;
+		CopyMemory(&occlusion_bits, &P.occ, sizeof(occlusion_bits));
+        ETOOLS::collector_add_face_pd(CL, P.v1, P.v2, P.v3, occlusion_bits, 0.01f);
 		if (P.b2sided)
-			ETOOLS::collector_add_face_pd	(CL,P.v3,P.v2,P.v1,*(u32*)&P.occ,0.01f);
+			ETOOLS::collector_add_face_pd(CL, P.v3, P.v2, P.v1, occlusion_bits, 0.01f);
 	}
 	geom_SOM					= ETOOLS::create_model_cl(CL);
     ETOOLS::destroy_collector	(CL);
 #else
 	CDB::Collector CL;
-	while (!geom->eof())
+	CL.reserve(polygon_count * 2u);
+	for (u32 polygon = 0; polygon < polygon_count; ++polygon)
 	{
 		SOM_poly P;
 		geom->r(&P, sizeof(P));
-		CL.add_face_packed_D(P.v1, P.v2, P.v3, *(u32*)&P.occ, 0.01f);
+		u32 occlusion_bits = 0;
+		CopyMemory(&occlusion_bits, &P.occ, sizeof(occlusion_bits));
+		CL.add_face_packed_D(P.v1, P.v2, P.v3, occlusion_bits, 0.01f);
 		if (P.b2sided)
-			CL.add_face_packed_D(P.v3, P.v2, P.v1, *(u32*)&P.occ, 0.01f);
+			CL.add_face_packed_D(P.v3, P.v2, P.v1, occlusion_bits, 0.01f);
 	}
 	geom_SOM = xr_new<CDB::MODEL>();
 	geom_SOM->build(CL.getV(), int(CL.getVS()), CL.getT(), int(CL.getTS()));

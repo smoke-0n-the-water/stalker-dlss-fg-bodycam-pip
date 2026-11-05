@@ -35,7 +35,13 @@ CALifeSpawnRegistry::~CALifeSpawnRegistry()
 {
 	xr_delete(m_game_graph);
 	xr_free(m_graph_buffer);
+	if (m_chunk)
+	{
 	m_chunk->close();
+		m_chunk = nullptr;
+	}
+
+	if (m_file)
 	FS.r_close(m_file);
 }
 
@@ -57,7 +63,8 @@ void CALifeSpawnRegistry::save(IWriter& memory_stream)
 	memory_stream.close_chunk();
 
 	memory_stream.open_chunk(1);
-	save_updates(memory_stream);
+	// CServerEntityWrapper::save_update is intentionally empty. Preserve the
+	// chunk for format compatibility without emitting one empty child chunk per spawn.
 	memory_stream.close_chunk();
 
 	memory_stream.close_chunk();

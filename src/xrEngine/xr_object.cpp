@@ -450,6 +450,7 @@ CObject::SavedPosition CObject::ps_Element(u32 ID) const
 
 void CObject::renderable_Render(IDSGraphManager* DM)
 {
+
 	MakeMeCrow();
 }
 
@@ -475,8 +476,7 @@ CObject* CObject::H_SetParent(CObject* new_parent, bool just_before_destroy)
 }
 
 void CObject::OnH_A_Chield()
-{
-}
+{}
 
 void CObject::OnH_B_Chield()
 {
@@ -489,8 +489,7 @@ void CObject::OnH_A_Independent()
 }
 
 void CObject::OnH_B_Independent(bool just_before_destroy)
-{
-}
+{}
 
 void CObject::setDestroy(BOOL _destroy)
 {

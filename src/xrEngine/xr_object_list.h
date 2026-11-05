@@ -21,6 +21,9 @@ private:
 	Objects objects_active;
 	Objects objects_sleeping;
 	Objects m_crows[2];
+	// Stable per-frame snapshot. Reusing this allocation avoids a variable-size
+	// stack allocation and preserves UpdateCL iteration if the source list mutates.
+	Objects m_update_workload;
 	u32 m_owner_thread_id;
 
 public:

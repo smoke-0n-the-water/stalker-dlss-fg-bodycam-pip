@@ -10,10 +10,13 @@ class ik_anim_state
 	bool is_idle;
 	bool is_blending;
 	const CBlend* current_blend;
+	u32 current_motion_id;
 public:
-	ik_anim_state(): is_step(false), do_glue(true), is_idle(false), is_blending(false), current_blend(0)
+	ik_anim_state(): is_step(false), do_glue(true), is_idle(false), is_blending(false), current_blend(0),
+	                 current_motion_id(u32(-1))
 	{
 	};
+	void reset();
 	void update(IKinematicsAnimated* K, const CBlend* b, u16 interval);
 	IC bool step() const { return is_step; }
 	IC bool glue() const { return do_glue; }

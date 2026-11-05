@@ -1,10 +1,91 @@
 #include "stdafx.h"
 #pragma hdrstop
 
+#include <cstdint>
+#include <cstring>
+#include <immintrin.h>
+
 #pragma warning(disable:4995)
+
+namespace
+{
+constexpr u32 kAvx2CopyMinimum = 1024;
+constexpr u32 kAvx2CopyMaximum = 16 * 1024;
+constexpr u32 kCopyBlockSize = 256;
+
+__forceinline void copy_block_avx2(u8* destination, const u8* source)
+{
+    const __m256i v0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + 0));
+    const __m256i v1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + 32));
+    const __m256i v2 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + 64));
+    const __m256i v3 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + 96));
+    const __m256i v4 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + 128));
+    const __m256i v5 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + 160));
+    const __m256i v6 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + 192));
+    const __m256i v7 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + 224));
+
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 0), v0);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 32), v1);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 64), v2);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 96), v3);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 128), v4);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 160), v5);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 192), v6);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 224), v7);
+}
+} // namespace
+
 void __stdcall xrMemCopy_x86(LPVOID dest, const void* src, u32 n)
 {
-	memcpy(dest, src, n);
+    memcpy(dest, src, n);
+}
+
+void __stdcall xrMemCopy_AVX2(LPVOID dest, const void* src, u32 n)
+{
+    // Modern CRT implementations are better for tiny copies and for blocks that
+    // escape the private caches. Use the explicit AVX2 loop only in its tested
+    // cache-resident range instead of forcing streaming stores globally.
+    if (n < kAvx2CopyMinimum || n > kAvx2CopyMaximum)
+    {
+        memcpy(dest, src, n);
+        return;
+    }
+
+    u8* __restrict destination = static_cast<u8*>(dest);
+    const u8* __restrict source = static_cast<const u8*>(src);
+    u32 remaining = n;
+
+    const u32 alignmentBytes =
+        (32u - (static_cast<u32>(reinterpret_cast<std::uintptr_t>(destination)) & 31u)) & 31u;
+    if (alignmentBytes != 0)
+    {
+        memcpy(destination, source, alignmentBytes);
+        destination += alignmentBytes;
+        source += alignmentBytes;
+        remaining -= alignmentBytes;
+    }
+
+    while (remaining >= kCopyBlockSize)
+    {
+        copy_block_avx2(destination, source);
+        destination += kCopyBlockSize;
+        source += kCopyBlockSize;
+        remaining -= kCopyBlockSize;
+    }
+
+    while (remaining >= 32)
+    {
+        const __m256i value = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source));
+        _mm256_store_si256(reinterpret_cast<__m256i*>(destination), value);
+        destination += 32;
+        source += 32;
+        remaining -= 32;
+    }
+
+    _mm256_zeroupper();
+
+    if (remaining != 0)
+        memcpy(destination, source, remaining);
 }
 
 #if defined(M_BORLAND) || defined(_M_AMD64)

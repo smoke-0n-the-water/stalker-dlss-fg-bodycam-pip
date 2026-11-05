@@ -10,6 +10,7 @@
 
 #include "xrServer_Objects_ALife.h"
 #include "profiler.h"
+#include <array>
 
 #pragma warning(push)
 #pragma warning(disable:4995)
@@ -24,18 +25,19 @@ public:
 
 protected:
 	OBJECT_REGISTRY m_objects;
+	std::array<CSE_ALifeDynamicObject*, 65536> m_object_by_id{};
 
 private:
 	void save(IWriter& memory_stream, CSE_ALifeDynamicObject* object, u32& object_count);
 
 public:
-	static CSE_ALifeDynamicObject* get_object(IReader& file_stream);
+	static CSE_ALifeDynamicObject* get_object(IReader& file_stream, bool* corrupted = nullptr);
 
 public:
 	CALifeObjectRegistry(LPCSTR section);
 	virtual ~CALifeObjectRegistry();
 	virtual void save(IWriter& memory_stream);
-	void load(IReader& file_stream);
+	bool load(IReader& file_stream);
 	IC void add(CSE_ALifeDynamicObject* object);
 	IC void remove(const ALife::_OBJECT_ID& id, bool no_assert = false);
 	IC CSE_ALifeDynamicObject* object(const ALife::_OBJECT_ID& id, bool no_assert = false) const;

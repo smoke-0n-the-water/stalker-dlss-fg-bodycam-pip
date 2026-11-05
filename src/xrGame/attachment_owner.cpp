@@ -14,8 +14,7 @@
 #include "physicsshellholder.h"
 
 CAttachmentOwner::~CAttachmentOwner()
-{
-}
+{}
 
 void CAttachmentOwner::reload(LPCSTR section)
 {

@@ -25,8 +25,7 @@ int ROR(int a, int n)
 int bit_tobit(lua_State *L)
 {
     LUA_INTEGER n = luaL_checkinteger(L, 1);
-    BYTE len = sizeof(n) * 8;
-    char *s = new char[len + 1];
+    char s[sizeof(n) * 8 + 1];
     _itoa(n, s, 2);
     lua_pushfstring(L, s);
     return 1;
@@ -35,8 +34,7 @@ int bit_tobit(lua_State *L)
 int bit_tohex(lua_State *L)
 {
     LUA_INTEGER n = luaL_checkinteger(L, 1);
-    BYTE len = sizeof(n) * 2;
-    char *s = new char[len + 1];
+    char s[sizeof(n) * 2 + 1];
     _itoa(n, s, 16);
     lua_pushfstring(L, s);
     return 1;

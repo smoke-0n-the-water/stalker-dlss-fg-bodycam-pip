@@ -1,6 +1,6 @@
 /*
 ** Public Lua/C API.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 **
 ** Major portions taken verbatim or adapted from the Lua interpreter.
 ** Copyright (C) 1994-2008 Lua.org, PUC-Rio. See Copyright Notice in lua.h
@@ -841,7 +841,8 @@ LUA_API int lua_next(lua_State *L, int idx)
 LUA_API const char *lua_getupvalue(lua_State *L, int idx, int n)
 {
   TValue *val;
-  const char *name = lj_debug_uvnamev(index2adr(L, idx), (uint32_t)(n-1), &val);
+  GCobj *o;
+  const char *name = lj_debug_uvnamev(index2adr(L, idx), (uint32_t)(n-1), &val, &o);
   if (name) {
     copyTV(L, L->top, val);
     incr_top(L);
@@ -967,13 +968,14 @@ LUA_API int lua_setmetatable(lua_State *L, int idx)
     if (mt)
       lj_gc_objbarriert(L, tabV(o), mt);
   } else if (tvisudata(o)) {
-    setgcref(udataV(o)->metatable, obj2gco(mt));
+    lj_udata_setmetatable(udataV(o), mt);
     if (mt)
       lj_gc_objbarrier(L, udataV(o), mt);
   } else {
     /* Flush cache, since traces specialize to basemt. But not during __gc. */
     if (lj_trace_flushall(L))
       lj_err_caller(L, LJ_ERR_NOGCMM);
+    o = index2adr(L, idx);  /* Stack may have been reallocated. */
     if (tvisbool(o)) {
       /* NOBARRIER: basemt is a GC root. */
       setgcref(basemt_it(g, LJ_TTRUE), obj2gco(mt));
@@ -1014,13 +1016,14 @@ LUA_API const char *lua_setupvalue(lua_State *L, int idx, int n)
 {
   cTValue *f = index2adr(L, idx);
   TValue *val;
+  GCobj *o;
   const char *name;
   api_checknelems(L, 1);
-  name = lj_debug_uvnamev(f, (uint32_t)(n-1), &val);
+  name = lj_debug_uvnamev(f, (uint32_t)(n-1), &val, &o);
   if (name) {
     L->top--;
     copyTV(L, val, L->top);
-    lj_gc_barrier(L, funcV(f), L->top);
+    lj_gc_barrier(L, o, L->top);
   }
   return name;
 }
@@ -1164,7 +1167,7 @@ LUA_API int lua_gc(lua_State *L, int what, int data)
     MSize a = (MSize)data << 10;
     g->gc.threshold = (a <= g->gc.total) ? (g->gc.total - a) : 0;
     while (g->gc.total >= g->gc.threshold)
-      if (lj_gc_step(L) > 0) {
+      if (lj_gc_step_noheadroom(L) > 0) {
 	res = 1;
 	break;
       }

@@ -94,18 +94,19 @@ void CCharacterInfo::load_shared(LPCSTR)
 	CUIXml* pXML = item_data._xml;
 	pXML->SetLocalRoot(pXML->GetRoot());
 
-	XML_NODE* item_node = pXML->NavigateToNode(id_to_index::tag_name, item_data.pos_in_file);
+	XML_NODE* item_node = item_data._node;
 	R_ASSERT3(item_node, "profile id=", *item_data.id);
 
 	pXML->SetLocalRoot(item_node);
+	XML_NODE* const local_root = item_node;
 
 
-	LPCSTR spec_char = pXML->Read("specific_character", 0, NULL);
+	LPCSTR spec_char = pXML->Read(local_root->FirstChild("specific_character"), NULL);
 	if (!spec_char)
 	{
 		data()->m_CharacterId = NULL;
 
-		LPCSTR char_class = pXML->Read("class", 0, NULL);
+		LPCSTR char_class = pXML->Read(local_root->FirstChild("class"), NULL);
 
 		if (char_class)
 		{
@@ -118,8 +119,9 @@ void CCharacterInfo::load_shared(LPCSTR)
 			data()->m_Class = NO_CHARACTER_CLASS;
 
 
-		int min_rank = pXML->ReadAttribInt("rank", 0, "min", NO_RANK);
-		int max_rank = pXML->ReadAttribInt("rank", 0, "max", NO_RANK);
+		XML_NODE* const rank_node = local_root->FirstChild("rank");
+		int min_rank = pXML->ReadAttribInt(rank_node, "min", NO_RANK);
+		int max_rank = pXML->ReadAttribInt(rank_node, "max", NO_RANK);
 		if (min_rank != NO_RANK && max_rank != NO_RANK)
 		{
 			min_rank = _min(min_rank, max_rank);
@@ -130,10 +132,11 @@ void CCharacterInfo::load_shared(LPCSTR)
 				data()->m_Rank = max_rank;
 		}
 		else
-			data()->m_Rank = pXML->ReadInt("rank", 0, NO_RANK);
+			data()->m_Rank = pXML->ReadInt(rank_node, NO_RANK);
 
-		int min_reputation = pXML->ReadAttribInt("reputation", 0, "min", NO_REPUTATION);
-		int max_reputation = pXML->ReadAttribInt("reputation", 0, "max", NO_REPUTATION);
+		XML_NODE* const reputation_node = local_root->FirstChild("reputation");
+		int min_reputation = pXML->ReadAttribInt(reputation_node, "min", NO_REPUTATION);
+		int max_reputation = pXML->ReadAttribInt(reputation_node, "max", NO_REPUTATION);
 		if (min_reputation != NO_REPUTATION && max_reputation != NO_REPUTATION)
 		{
 			min_reputation = _min(min_reputation, max_reputation);
@@ -144,7 +147,7 @@ void CCharacterInfo::load_shared(LPCSTR)
 				data()->m_Reputation = max_reputation;
 		}
 		else
-			data()->m_Reputation = pXML->ReadInt("reputation", 0, NO_REPUTATION);
+			data()->m_Reputation = pXML->ReadInt(reputation_node, NO_REPUTATION);
 	}
 	else
 		data()->m_CharacterId = spec_char;

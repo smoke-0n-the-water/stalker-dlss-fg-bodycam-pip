@@ -28,6 +28,9 @@ CUIActorMenu::CUIActorMenu()
 {
 	m_currMenuMode = mmUndefined;
 	m_trade_partner_inventory_state = 0;
+	m_cached_inventory_owner = NULL;
+	m_cached_inventory_revision = 0;
+	m_inventory_cache_valid = false;
 	Construct();
 }
 

@@ -10,6 +10,9 @@
 
 IC lua_State* CScriptStorage::lua()
 {
+#ifdef DEBUG
+	debug_lua_assert_access();
+#endif
 	return (m_virtual_machine);
 }
 

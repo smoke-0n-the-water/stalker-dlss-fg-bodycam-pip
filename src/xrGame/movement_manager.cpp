@@ -33,6 +33,11 @@ using namespace MovementManager;
 const float verify_distance = 15.f;
 int RESTRICTION_REBUILD_SMOOTH_FRAMES = 20;
 
+// Spike-oriented path scheduling. A value of zero disables the corresponding
+// per-frame admission limit or hitch warning.
+int psAI_LevelPathMaxPerFrame = 4;
+int psAI_DetailPathMaxPerFrame = 2;
+
 CMovementManager::CMovementManager(CCustomMonster* object)
 {
 	VERIFY(object);

@@ -8,14 +8,14 @@ class CNotificationClient;
 
 class CSoundRender_Core : public CSound_manager_interface
 {
-	volatile BOOL bLocked;
+	volatile LONG bLocked;
 protected:
 	virtual void _create_data(ref_sound_data& S, LPCSTR fName, esound_type sound_type, int game_type);
 	virtual void _destroy_data(ref_sound_data& S);
 	CNotificationClient* pSysNotification = nullptr;
 public:
-	volatile BOOL bPendingDefaultDeviceSwitch = FALSE;
-	volatile BOOL bPendingDeviceListRefresh = FALSE;
+	volatile LONG bPendingDefaultDeviceSwitch = FALSE;
+	volatile LONG bPendingDeviceListRefresh = FALSE;
 protected:
 	BOOL bListenerMoved;
 
@@ -44,6 +44,15 @@ protected:
 	CDB::MODEL* geom_SOM;
 	CDB::MODEL* geom_MODEL;
 	CDB::MODEL* geom_ENV;
+	u32 m_occlusion_queries;
+	u32 m_occlusion_query_budget;
+	u64 m_occlusion_query_time_ticks;
+	u64 m_occlusion_query_time_budget_ticks;
+	volatile LONG m_occlusion_resume_stagger_pending;
+	bool m_occlusion_resume_stagger_active;
+	u32 m_target_buffers_primed;
+	u64 m_target_prime_time_ticks;
+	u64 m_target_prime_time_budget_ticks;
 
 	// Containers
 	xr_unordered_map<xr_string, CSoundRender_Source*> s_sources;
@@ -71,6 +80,8 @@ public:
 	virtual void _restart();
 	virtual void switch_device(LPCSTR device_name) {}
 	virtual void refresh_devices() {}
+	void request_default_device_switch() { InterlockedExchange(&bPendingDefaultDeviceSwitch, TRUE); }
+	void request_device_list_refresh() { InterlockedExchange(&bPendingDeviceListRefresh, TRUE); }
 
 	// Sound interface
 	void verify_refsound(ref_sound& S);
@@ -121,14 +132,30 @@ public:
 	void i_stop(CSoundRender_Emitter* E);
 	void i_rewind(CSoundRender_Emitter* E);
 	BOOL i_allow_play(CSoundRender_Emitter* E);
-	virtual BOOL i_locked() { return bLocked; }
+	virtual BOOL i_locked() { return InterlockedCompareExchange(&bLocked, FALSE, FALSE) != FALSE; }
 	virtual BOOL is_ready() { return bReady; }
 
 	virtual void object_relcase(CObject* obj);
-	void i_create_all_sources();
+	void i_create_all_sources(u64 minimum_available_mb = 0);
 
 	virtual float get_occlusion_to(const Fvector& hear_pt, const Fvector& snd_pt, float dispersion = 0.2f);
 	float get_occlusion(Fvector& P, float R, Fvector* occ) override;
+
+	bool occlusion_resume_stagger_active() const { return m_occlusion_resume_stagger_active; }
+
+	bool try_begin_occlusion_query();
+	void finish_occlusion_query(u64 elapsed_ticks)
+	{
+		m_occlusion_query_time_ticks += elapsed_ticks;
+	}
+	bool try_begin_target_prime();
+	void finish_target_prime(u64 elapsed_ticks)
+	{
+		++m_target_buffers_primed;
+		m_target_prime_time_ticks += elapsed_ticks;
+	}
+
+
 	CSoundRender_Environment* get_environment(const Fvector& P);
 
 	void env_load();

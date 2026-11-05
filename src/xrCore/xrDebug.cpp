@@ -4,9 +4,8 @@
 #ifndef _EDITOR
 
 #include "xrdebug.h"
+#include "engine_error_logger.h"
 #include "resource.h"
-#include "dbghelp.h"
-
 #include "dxerr.h"
 
 #ifdef __BORLANDC__
@@ -208,122 +207,21 @@ void __cdecl _terminate()
 	FATAL("Unexpected application termination");
 }
 
-// based on dbghelp.h
-typedef BOOL (WINAPI* MINIDUMPWRITEDUMP)(HANDLE hProcess, DWORD dwPid, HANDLE hFile, MINIDUMP_TYPE DumpType,
-                                         CONST PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam,
-                                         CONST PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam,
-                                         CONST PMINIDUMP_CALLBACK_INFORMATION CallbackParam
-);
-
-
 LONG WINAPI UnhandledFilter(struct _EXCEPTION_POINTERS* pExceptionInfo)
 {
-	LONG retval = EXCEPTION_CONTINUE_SEARCH;
 	bException = TRUE;
-
-	// firstly see if dbghelp.dll is around and has the function we need
-	// look next to the EXE first, as the one in System32 might be old
-	// (e.g. Windows 2000)
-	HMODULE hDll = NULL;
-	string_path szDbgHelpPath;
-
-	if (GetModuleFileName(NULL, szDbgHelpPath, _MAX_PATH))
-	{
-		char* pSlash = strchr(szDbgHelpPath, '\\');
-		if (pSlash)
-		{
-			xr_strcpy(pSlash + 1, "DBGHELP.DLL");
-			hDll = ::LoadLibrary(szDbgHelpPath);
-		}
-	}
-
-	if (hDll == NULL)
-	{
-		// load any version we can
-		hDll = ::LoadLibrary("DBGHELP.DLL");
-	}
-
-	LPCTSTR szResult = NULL;
-
-	if (hDll)
-	{
-		MINIDUMPWRITEDUMP pDump = (MINIDUMPWRITEDUMP)::GetProcAddress(hDll, "MiniDumpWriteDump");
-		if (pDump)
-		{
-			string_path szDumpPath;
-			string_path szScratch;
-			string64 t_stemp;
-
-			// work out a good place for the dump file
-			timestamp(t_stemp);
-			xr_strcpy(szDumpPath, "logs\\");
-			xr_strcat(szDumpPath, Core.ApplicationName);
-			xr_strcat(szDumpPath, "_");
-			xr_strcat(szDumpPath, Core.UserName);
-			xr_strcat(szDumpPath, "_");
-			xr_strcat(szDumpPath, t_stemp);
-			xr_strcat(szDumpPath, ".mdmp");
-
-			// create the file
-			HANDLE hFile = ::CreateFile(szDumpPath, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, CREATE_ALWAYS,
-			                            FILE_ATTRIBUTE_NORMAL, NULL);
-			if (INVALID_HANDLE_VALUE == hFile)
-			{
-				// try to place into current directory
-				MoveMemory(szDumpPath, szDumpPath + 5, strlen(szDumpPath));
-				hFile = ::CreateFile(szDumpPath, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, CREATE_ALWAYS,
-				                     FILE_ATTRIBUTE_NORMAL, NULL);
-			}
-			if (hFile != INVALID_HANDLE_VALUE)
-			{
-				_MINIDUMP_EXCEPTION_INFORMATION ExInfo;
-
-				ExInfo.ThreadId = ::GetCurrentThreadId();
-				ExInfo.ExceptionPointers = pExceptionInfo;
-				ExInfo.ClientPointers = NULL;
-
-				// write the dump
-				MINIDUMP_TYPE dump_flags = MINIDUMP_TYPE(MiniDumpNormal | MiniDumpFilterMemory | MiniDumpScanMemory);
-
-				BOOL bOK = pDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, dump_flags, &ExInfo, NULL, NULL);
-				if (bOK)
-				{
-					xr_sprintf(szScratch, "Saved dump file to '%s'", szDumpPath);
-					szResult = szScratch;
-					retval = EXCEPTION_EXECUTE_HANDLER;
-				}
-				else
-				{
-					xr_sprintf(szScratch, "Failed to save dump file to '%s' (error %d)", szDumpPath, GetLastError());
-					szResult = szScratch;
-				}
-				::CloseHandle(hFile);
-			}
-			else
-			{
-				xr_sprintf(szScratch, "Failed to create dump file '%s' (error %d)", szDumpPath, GetLastError());
-				szResult = szScratch;
-			}
-		}
-		else
-		{
-			szResult = "DBGHELP.DLL too old";
-		}
-	}
-	else
-	{
-		szResult = "DBGHELP.DLL not found";
-	}
+    EngineErrorLogger::ReportUnhandledException(pExceptionInfo);
 
 	if (IsDebuggerPresent())
 		DebugBreak();
 
 	string1024 reason;
-	xr_sprintf(reason, "*** Internal Error ***\n%s", szResult);
+    xr_sprintf(reason,
+        "*** Internal Error ***\nCrash diagnostics were written to the QUARK-ENGINE\\ERROR category log.");
 	bool ref = false;
 	Debug.backend(reason, 0, 0, 0, 0, 0, 0, ref);
 
-	return retval;
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 //////////////////////////////////////////////////////////////////////

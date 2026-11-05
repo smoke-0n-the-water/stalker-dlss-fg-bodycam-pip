@@ -167,24 +167,324 @@ ref_rt& CRenderTarget::phase_upscaler_camera_mv()
 	}
 	return rt_upscaler_camera_mv;
 }
-void CRenderTarget::phase_dlss_postprocess()
+bool CRenderTarget::ScopeAfterUpscale() const
+{
+	// Only the stock 3DSS branch (render_3DSS_reticles) hands its lenses over; the
+	// true-PiP/Reference lens pipeline keeps its own composite in phase_combine,
+	// where s_dlss_scope_resolve de-jitters it for DLSS.
+	return ps_r_upscaler_scope_after && m_is_main_target && dlss::Configured() && s_dlss_display_copy._get() != nullptr;
+}
+
+void CRenderTarget::phase_dlss_native_depth(float jitterX, float jitterY, bool lens)
+{
+	// Scene depth is render-sized and jittered. Reproject it into the existing
+	// native depth buffer before drawing unjittered HUD screens. Keep their
+	// occlusion by hands/casing; never attach a render-sized DSV to a native RT.
+	u_setrt(rt_dlss_post_source, nullptr, nullptr, HW.pBaseZB);
+	const float w = float(Device.dwWidth), h = float(Device.dwHeight);
+	u32 offset;
+	FVF::TL* quad = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, offset);
+	quad[0].set(0, h, EPS_S, 1, 0xffffffff, 0, 1);
+	quad[1].set(0, 0, EPS_S, 1, 0xffffffff, 0, 0);
+	quad[2].set(w, h, EPS_S, 1, 0xffffffff, 1, 1);
+	quad[3].set(w, 0, EPS_S, 1, 0xffffffff, 1, 0);
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+	RCache.set_Geometry(g_combine);
+	RCache.set_Element(s_dlss_ui_depth->E[0]);
+	RCache.set_c("dlss_ui_depth_params", float(dlss::RenderWidth()) / w,
+		float(dlss::RenderHeight()) / h, jitterX, jitterY);
+	RCache.set_c("dlss_ui_depth_lens", lens ? 1.f : 0.f, 0.f, 0.f, 0.f);
+	RCache.set_ZFunc(D3DCMP_ALWAYS);
+	RCache.set_ColorWriteEnable(0);
+	RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+	RCache.set_ColorWriteEnable();
+	RCache.set_CullMode(CULL_CCW);
+}
+
+// Redotix99's 3D shader scopes at display resolution, after reconstruction.
+// The lens shaders are unchanged: their scene inputs are pointed at display-
+// resolution copies for the draw, and screen_res is already the display size.
+void CRenderTarget::phase_dlss_scope(float jitterX, float jitterY)
+{
+	const u32 w = Device.dwWidth, h = Device.dwHeight;
+	if (!rt_dlss_scope_color)
+	{
+		rt_dlss_scope_color.create("$user$dlss_scope_color", w, h, D3DFMT_A16B16G16R16F);
+		rt_dlss_scope_position.create("$user$dlss_scope_position", w, h, D3DFMT_A16B16G16R16F);
+		rt_dlss_scope_heat.create("$user$dlss_scope_heat", w, h, D3DFMT_A8R8G8B8);
+	}
+	if (!reported_native_scope)
+	{
+		Msg("[Upscaler] 3D scope lenses drawn after reconstruction: native=%ux%u, scene=%ux%u",
+			w, h, dlss::RenderWidth(), dlss::RenderHeight());
+		reported_native_scope = true;
+	}
+
+	// Magnify the reconstructed frame, not the jittered render-sized one.
+	HW.pContext->CopyResource(rt_dlss_scope_color->pSurface, rt_dlss_post_source->pSurface);
+
+	// Thermal/night modes Load positions and heat at display pixel coordinates.
+	const float fw = float(w), fh = float(h);
+	u32 offset;
+	FVF::TL* quad = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, offset);
+	quad[0].set(0, fh, EPS_S, 1, 0xffffffff, 0, 1);
+	quad[1].set(0, 0, EPS_S, 1, 0xffffffff, 0, 0);
+	quad[2].set(fw, fh, EPS_S, 1, 0xffffffff, 1, 1);
+	quad[3].set(fw, 0, EPS_S, 1, 0xffffffff, 1, 0);
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_ColorWriteEnable();
+	const ref_rt* copies[] = {&rt_dlss_scope_position, &rt_dlss_scope_heat};
+	for (u32 i = 0; i < 2; ++i)
+	{
+		u_setrt(*copies[i], nullptr, nullptr, nullptr);
+		RCache.set_Geometry(g_combine);
+		RCache.set_Element(s_dlss_display_copy->E[i]);
+		RCache.set_c("dlss_display_copy_params", float(dlss::RenderWidth()) / fw,
+			float(dlss::RenderHeight()) / fh, jitterX, jitterY);
+		RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+	}
+
+	phase_dlss_native_depth(jitterX, jitterY, true);
+	// Reticles mark stencil 254 and cutouts test it.
+	HW.pContext->ClearDepthStencilView(HW.pBaseZB, D3D_CLEAR_STENCIL, 1.f, 0);
+
+	CTexture* inputs[] = {&*rt_Generic_temp->pTexture, &*rt_Generic_2->pTexture, &*rt_Heat->pTexture};
+	ID3DBaseTexture* sources[] = {rt_dlss_scope_color->pSurface, rt_dlss_scope_position->pSurface,
+		rt_dlss_scope_heat->pSurface};
+	ID3DBaseTexture* saved[3];
+	for (u32 i = 0; i < 3; ++i)
+	{
+		saved[i] = inputs[i]->surface_get();
+		inputs[i]->surface_set(sources[i]);
+	}
+	RCache.InvalidateTextures();
+
+	u_setrt(rt_dlss_post_source, nullptr, nullptr, HW.pBaseZB);
+	RCache.set_CullMode(CULL_CCW);
+	RCache.set_Stencil(FALSE);
+	RCache.set_ColorWriteEnable();
+	RImplementation.render_Reticle();
+
+	for (u32 i = 0; i < 3; ++i)
+	{
+		inputs[i]->surface_set(saved[i]);
+		_RELEASE(saved[i]);
+	}
+	RCache.InvalidateTextures();
+}
+
+void CRenderTarget::dlss_post_twin(ref_rt& scene, float divisor, int resample)
+{
+	if (!scene) return;
+	string64 name;
+	xr_sprintf(name, "$user$dlss_display_%u", u32(dlss_post_twins.size()));
+	DlssPostTwin twin{&scene, {}, resample};
+	twin.display.create(name, u32(float(Device.dwWidth) / divisor), u32(float(Device.dwHeight) / divisor), scene->fmt);
+	dlss_post_twins.push_back(twin);
+}
+
+bool CRenderTarget::DlssPostAfterUpscale() const
+{
+	// Frames that are not reconstructed (scope views) keep the render-size chain.
+	if (dlss_post_twins.empty() || !dlss::Active())
+		return false;
+	if (dlss_post_frame != Device.dwFrame)
+	{
+		dlss_post_frame = Device.dwFrame;
+		// Not scope_3D_fake_enabled: 3DSS for GAMMA sets r__3Dfakescope 1 at game start,
+		// so only lens geometry actually drawn says a lens is in use.
+		dlss_post_frame_after = !dlss_post_scope_seen && !Device.m_SecondViewport.IsSVPActive();
+	}
+	return dlss_post_frame_after;
+}
+
+// Reconstruct the scene before sunshafts, fog scattering, motion blur, bloom,
+// DOF and the LUT. They then run at display resolution and stay out of the
+// upscaler's history, so they are no longer reprojected or smeared by it.
+void CRenderTarget::dlss_post_upscale()
 {
 #ifdef XR_DX12_BRIDGE
-    // Main target only. fg::CaptureScene guards with IsSVPFrame(), but upstream
-    // reaches this function for the main target alone, while our base also runs
-    // it for the SVP/scope target - and that is a different test from the
-    // m_render_pass_is_svp one phase_combine uses to gate phase_pp.
-    if (m_is_main_target)
-        fg::CaptureScene();
+	fg::CaptureScene(); // main target only: the twins exist only there
 #endif
-	const auto sceneJitter = dlss::RasterJitter();
+	const auto jitter = dlss::RasterJitter();
+	dlss_post_jitter.set(jitter.x, jitter.y);
+	ID3DTexture2D* color = rt_Generic_0->pSurface;
+	if (dlss_hdr_swapped)
+		color = dlss_hdr_encode(0);
+	dlss_post_output = dlss::Evaluate(color, phase_upscaler_camera_mv()->pSurface);
+	dlss::EndScene();
+	if (!reported_post_chain)
+	{
+		Msg("[Upscaler] Post-processing and volumetric lights drawn after reconstruction: native=%ux%u, scene=%ux%u",
+			Device.dwWidth, Device.dwHeight, dlss::RenderWidth(), dlss::RenderHeight());
+		reported_post_chain = true;
+	}
+
+	const float w = float(Device.dwWidth), h = float(Device.dwHeight);
+	u32 offset;
+	FVF::TL* quad = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, offset);
+	quad[0].set(0, h, EPS_S, 1, 0xffffffff, 0, 1);
+	quad[1].set(0, 0, EPS_S, 1, 0xffffffff, 0, 0);
+	quad[2].set(w, h, EPS_S, 1, 0xffffffff, 1, 1);
+	quad[3].set(w, 0, EPS_S, 1, 0xffffffff, 1, 0);
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+
+	// CAS stays fused into the resolve draw, ahead of bloom, DOF and the LUT.
+	const bool sharpen = dlss_post_output && ps_r_dlss_sharpness > 0.0f;
+	u_setrt(dlss_post_twins[0].display, nullptr, nullptr, nullptr);
+	RImplementation.rmNormal();
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_ColorWriteEnable();
+	if (dlss_post_output && dlss_hdr_swapped)
+	{
+		// Undo the curve and return to display values; CAS is applied in HDR first.
+		RCache.set_Element(s_dlss_hdr->E[1]);
+		RCache.set_c("dlss_sharpening", sharpen ? ps_r_dlss_sharpness : 0.f, 0.f, 0.f, 0.f);
+	}
+	else
+	{
+		RCache.set_Element(s_dlss_copy->E[dlss_post_output ? (sharpen ? 2 : 0) : 4]);
+		if (sharpen) RCache.set_c("dlss_sharpening", ps_r_dlss_sharpness, 0.f, 0.f, 0.f);
+	}
+	RCache.set_Geometry(g_combine);
+	RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+
+	for (DlssPostTwin& twin : dlss_post_twins)
+	{
+		if (twin.resample < 0) continue;
+		u_setrt(twin.display, nullptr, nullptr, nullptr);
+		RCache.set_Element(s_dlss_display_copy->E[twin.resample]);
+		RCache.set_c("dlss_display_copy_params", float(dlss::RenderWidth()) / w,
+			float(dlss::RenderHeight()) / h, jitter.x, jitter.y);
+		RCache.set_Geometry(g_combine);
+		RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+	}
+
+	for (DlssPostTwin& twin : dlss_post_twins)
+		(*twin.scene)->swap_storage(*twin.display);
+	dlss_post_swapped = true;
+	RCache.InvalidateTextures();
+}
+
+void CRenderTarget::dlss_post_restore()
+{
+	if (!dlss_post_swapped) return;
+	for (DlssPostTwin& twin : dlss_post_twins)
+		(*twin.scene)->swap_storage(*twin.display);
+	dlss_post_swapped = false;
+	RCache.InvalidateTextures();
+}
+
+// The finished scene, still in display values, to linear HDR at render size.
+ID3DTexture2D* CRenderTarget::dlss_hdr_encode(u32 element)
+{
+	const float rw = float(rt_dlss_hdr_input->dwWidth), rh = float(rt_dlss_hdr_input->dwHeight);
+	u32 offset;
+	FVF::TL* quad = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, offset);
+	quad[0].set(0, rh, EPS_S, 1, 0xffffffff, 0, 1);
+	quad[1].set(0, 0, EPS_S, 1, 0xffffffff, 0, 0);
+	quad[2].set(rw, rh, EPS_S, 1, 0xffffffff, 1, 1);
+	quad[3].set(rw, 0, EPS_S, 1, 0xffffffff, 1, 0);
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+	u_setrt(rt_dlss_hdr_input, nullptr, nullptr, nullptr);
+	RImplementation.rmNormal();
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_ColorWriteEnable();
+	RCache.set_Element(s_dlss_hdr->E[element]);
+	RCache.set_Geometry(g_combine);
+	RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+	return rt_dlss_hdr_input->pSurface;
+}
+
+// Before the scene is combined: until reconstruction it is kept in floating point.
+// Restored after the post chain's twins, in reverse order.
+void CRenderTarget::dlss_hdr_begin()
+{
+	if (dlss_hdr_twins.empty() || dlss_hdr_swapped) return;
+	for (DlssPostTwin& twin : dlss_hdr_twins)
+		(*twin.scene)->swap_storage(*twin.display);
+	dlss_hdr_swapped = true;
+	RCache.InvalidateTextures();
+}
+
+void CRenderTarget::dlss_hdr_restore()
+{
+	if (!dlss_hdr_swapped) return;
+	for (DlssPostTwin& twin : dlss_hdr_twins)
+		(*twin.scene)->swap_storage(*twin.display);
+	dlss_hdr_swapped = false;
+	RCache.InvalidateTextures();
+}
+
+// Particles and laser beams held out of the scene, over the reconstructed frame.
+// Soft particles and laser dots read the display-size position copy; the depth
+// test uses the scene depth reprojected to display resolution.
+void CRenderTarget::dlss_post_effects()
+{
+	const auto& graph = RImplementation.GMBase.RGraph;
+	if (graph.mapDlssEffects.empty() && graph.mapDlssHudEffects.empty()) return;
+	if (!reported_post_effects)
+	{
+		Msg("[Upscaler] %s drawn after reconstruction: native=%ux%u, scene=%ux%u",
+			ps_r_upscaler_particles_after ? "Particles and laser beams" : "Laser beams",
+			Device.dwWidth, Device.dwHeight, dlss::RenderWidth(), dlss::RenderHeight());
+		reported_post_effects = true;
+	}
+
+	phase_dlss_native_depth(dlss_post_jitter.x, dlss_post_jitter.y);
+	u_setrt(rt_Generic_0, nullptr, nullptr, HW.pBaseZB);
+	RImplementation.rmNormal();
+	RCache.set_CullMode(CULL_CCW);
+	RCache.set_Stencil(FALSE);
+	RCache.set_ColorWriteEnable();
+	RImplementation.GMBase.r_dsgraph_render_dlss_effects();
+}
+
+bool CRenderTarget::DlssSunshaftMaskOverTime() const
+{
+	return dlss_post_swapped && s_dlss_sunshaft_mask._get() != nullptr &&
+		ps_r_upscaler_sunshafts == UPSCALER_SUNSHAFTS_SMOOTHED;
+}
+
+// This frame's mask is in rt_sunshafts_1; the blurs read the result from rt_sunshafts_0.
+// Offset is the phase's full-screen quad.
+void CRenderTarget::dlss_sunshaft_mask(u32 Offset)
+{
+	// A gap in the frames means stale history. Scope views skip every other frame.
+	const bool restart = Device.dwFrame - dlss_sunshaft_frame > 2;
+	dlss_sunshaft_frame = Device.dwFrame;
+	const u32 next = dlss_sunshaft_history ^ 1;
+
+	u_setrt(rt_sunshafts_0, rt_dlss_sunshaft_history[next], nullptr, nullptr);
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_Element(s_dlss_sunshaft_mask->E[dlss_sunshaft_history]);
+	RCache.set_c("dlss_sunshaft_params", restart ? 1.f : 0.1f, 0.f, 0.f, 0.f);
+	RCache.set_c("m_current", Matrix_current);
+	RCache.set_c("m_previous", Matrix_previous);
+	RCache.set_Geometry(g_KD);
+	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+	dlss_sunshaft_history = next;
+}
+
+void CRenderTarget::phase_dlss_postprocess()
+{
+	// With the post chain after reconstruction, the scene targets hold its display-size result.
+	const bool postAfterUpscale = dlss_post_swapped;
+	dlss::Offset sceneJitter{dlss_post_jitter.x, dlss_post_jitter.y};
+	bool dlssOutput = dlss_post_output;
 	// The stock TAA path excludes the already-composited PiP lens. Keep that
 	// contract with temporal upscalers too, without overwriting glass tags in
 	// the motion buffer (NVG and physical-glass consumers still need those).
 	// (shared "Bodycam DLSS Scope Fix"; main-target guard added because this tree's
 	// dlss::Configured() does not check the target itself)
-	const bool resolveScope = dlss::Configured() && this == RImplementation.TargetMain && rt_dlss_scope_mask &&
-		s_dlss_scope_resolve && Device.true_pip_on && Device.m_SecondViewport.IsSVPActive() &&
+	// Never with the post chain after reconstruction: phase_combine keeps scope frames on the old order.
+	const bool resolveScope = !postAfterUpscale && dlss::Configured() && this == RImplementation.TargetMain &&
+		rt_dlss_scope_mask && s_dlss_scope_resolve && Device.true_pip_on && Device.m_SecondViewport.IsSVPActive() &&
 		!RImplementation.GMBase.RGraph.mapScopeHUDSorted.empty();
 	if (resolveScope)
 	{
@@ -202,8 +502,22 @@ void CRenderTarget::phase_dlss_postprocess()
 		// Unbind the mask before sampling it after reconstruction.
 		u_setrt(rt_Color, nullptr, nullptr, nullptr);
 	}
-	const bool dlssOutput = dlss::Evaluate(rt_Color->pSurface, phase_upscaler_camera_mv()->pSurface);
-	dlss::EndScene();
+	// HDR input with the post chain before reconstruction: only its result is converted.
+	const bool hdrResolve = !postAfterUpscale && m_is_main_target && dlss::HdrInput() && dlss::Active();
+	if (!postAfterUpscale)
+	{
+#ifdef XR_DX12_BRIDGE
+		// Main target only. fg::CaptureScene guards with IsSVPFrame(), but upstream
+		// reaches this function for the main target alone, while our base also runs
+		// it for the SVP/scope target - and that is a different test from the
+		// m_render_pass_is_svp one phase_combine uses to gate phase_pp.
+		if (m_is_main_target)
+			fg::CaptureScene();
+#endif
+		sceneJitter = dlss::RasterJitter();
+		dlssOutput = dlss::Evaluate(hdrResolve ? dlss_hdr_encode(2) : rt_Color->pSurface, phase_upscaler_camera_mv()->pSurface);
+		dlss::EndScene();
+	}
 	if (!dlss::Configured()) return;
 
 	// Separate display-resolution overlay buffers. Never feed screen-locked
@@ -223,15 +537,29 @@ void CRenderTarget::phase_dlss_postprocess()
 	RCache.Vertex.Unlock(4, g_combine->vb_stride);
 	// Fuse optional CAS into the existing resolve draw: no extra target or copy.
 	// Zero retains the original copy shader; fallback/scope frames are unsharpened.
-	const bool sharpen = dlssOutput && ps_r_dlss_sharpness > 0.0f;
+	// After an earlier reconstruction this only copies the post chain's result.
+	const bool sharpen = !postAfterUpscale && dlssOutput && ps_r_dlss_sharpness > 0.0f;
 	// r_upscaler_debug: 1 shows the upscaler's input, 2 its motion vectors. DLSS
 	// still evaluates, so its history stays valid when the view is switched off.
-	const u32 element = ps_r_upscaler_debug == 1 ? 1 : ps_r_upscaler_debug == 2 ? 3 :
-		dlssOutput ? (sharpen ? 2 : 0) : 1;
-	RCache.set_Element(s_dlss_copy->E[element]);
-	if (element == 2) RCache.set_c("dlss_sharpening", ps_r_dlss_sharpness, 0.f, 0.f, 0.f);
+	const u32 element = ps_r_upscaler_debug == 1 ? (postAfterUpscale ? 4 : 1) : ps_r_upscaler_debug == 2 ? 3 :
+		!postAfterUpscale && dlssOutput ? (sharpen ? 2 : 0) : 1;
+	// The debug views read the render-size scene targets.
+	if (ps_r_upscaler_debug == 1 || ps_r_upscaler_debug == 2) dlss_post_restore();
+	if (hdrResolve && (element == 0 || element == 2))
+	{
+		// Undo the curve and return to display values; CAS is applied in HDR first.
+		RCache.set_Element(s_dlss_hdr->E[1]);
+		RCache.set_c("dlss_sharpening", sharpen ? ps_r_dlss_sharpness : 0.f, 0.f, 0.f, 0.f);
+	}
+	else
+	{
+		RCache.set_Element(s_dlss_copy->E[element]);
+		if (element == 2) RCache.set_c("dlss_sharpening", ps_r_dlss_sharpness, 0.f, 0.f, 0.f);
+	}
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+	dlss_post_restore();
+	dlss_hdr_restore();
 
 	if (resolveScope && dlssOutput)
 	{
@@ -240,6 +568,13 @@ void CRenderTarget::phase_dlss_postprocess()
 			sceneJitter.y / dlss::RenderHeight(), 0.f, 0.f);
 		RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
 	}
+	// 3D scope lenses magnify the frame around them. In the scene the zoom also
+	// magnified the jitter and was reconstructed with the world's motion vectors.
+	// render_3DSS_reticles left them for this frame; render_Reticle consumes the map.
+	if (dlss_scope_frame == Device.dwFrame && !RImplementation.GMBase.RGraph.mapScopeHUDSorted.empty())
+		phase_dlss_scope(sceneJitter.x, sceneJitter.y);
+	dlss_scope_frame = u32(-1);
+
 	// Lens flares are additive, depth-free sprites that cover the HUD. In the scene
 	// they would be reprojected with the hands' motion vectors and reconstructed as
 	// blocks, so draw them here at display resolution without jitter.
@@ -288,6 +623,7 @@ void CRenderTarget::phase_dlss_postprocess()
 		RCache.set_Element(s_dlss_ui_depth->E[0]);
 		RCache.set_c("dlss_ui_depth_params", float(dlss::RenderWidth()) / w,
 			float(dlss::RenderHeight()) / h, sceneJitter.x, sceneJitter.y);
+		RCache.set_c("dlss_ui_depth_lens", 0.f, 0.f, 0.f, 0.f); // exact edges, not the lenses' widened depth
 		RCache.set_ZFunc(D3DCMP_ALWAYS);
 		RCache.set_ColorWriteEnable(0);
 		RCache.Render(D3DPT_TRIANGLELIST, uiOffset, 0, 4, 0, 2);

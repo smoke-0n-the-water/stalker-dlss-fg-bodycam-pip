@@ -9,6 +9,7 @@ class CMonsterHitMemory
 	TTime time_memory;
 
 	MONSTER_HIT_VECTOR m_hits;
+	SMonsterHit m_last_hit;
 
 public:
 	CMonsterHitMemory();
@@ -31,10 +32,12 @@ public:
 	CObject* get_last_hit_object();
 	Fvector get_last_hit_position();
 
-	void clear() { m_hits.clear(); }
+	void clear();
 
-	void remove_hit_info(const CObject* obj);
+	bool remove_hit_info(const CObject* obj);
 
 private:
 	void remove_non_actual();
+	void reset_last_hit();
+	void refresh_last_hit();
 };

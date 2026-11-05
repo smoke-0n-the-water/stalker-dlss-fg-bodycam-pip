@@ -363,7 +363,6 @@ void CAI_Rat::net_Export(NET_Packet& P)
 	{
 		f1 = Position().distance_to(ai().game_graph().vertex(l_game_vertex_id)->level_point());
 		P.w(&f1, sizeof(f1));
-		f1 = Position().distance_to(ai().game_graph().vertex(l_game_vertex_id)->level_point());
 		P.w(&f1, sizeof(f1));
 	}
 	else
@@ -507,14 +506,15 @@ void CAI_Rat::UpdateCL()
 		)
 			squad->SetLeader(this);
 
+		const u8 squad_size = squad ? squad->squad_alife_count() : u8(0);
 		if (squad &&
-			squad->SquadActive() &&
+			squad_size &&
 			squad->GetLeader() == this &&
-			m_squad_count != squad->squad_alife_count()
+			m_squad_count != squad_size
 		)
 		{
 			squad->set_rat_squad_index(squad->GetLeader());
-			m_squad_count = squad->squad_alife_count();
+			m_squad_count = squad_size;
 		}
 	}
 	else

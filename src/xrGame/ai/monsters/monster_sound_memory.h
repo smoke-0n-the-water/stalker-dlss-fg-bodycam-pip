@@ -115,7 +115,7 @@ public:
 	bool is_loud_sound(float val);
 
 	void clear() { Sounds.clear(); }
-	void remove_links(CObject* O);
+	bool remove_links(CObject* O);
 
 	// help sounds
 	bool hear_help_sound();

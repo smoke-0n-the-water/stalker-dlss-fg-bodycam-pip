@@ -12,6 +12,7 @@
 #include <mmsystem.h>
 
 #include "profiler.h"
+#include "engine_error_logger.h"
 
 // Initialized on startup
 XRCORE_API Fmatrix Fidentity;
@@ -348,6 +349,7 @@ struct THREAD_NAME
 
 void thread_name(const char* name)
 {
+	EngineErrorLogger::SetThreadName(name);
 	THREAD_NAME tn;
 	tn.dwType = 0x1000;
 	tn.szName = name;
@@ -359,6 +361,21 @@ void thread_name(const char* name)
 	}
 	__except (EXCEPTION_CONTINUE_EXECUTION)
 	{
+	}
+
+	// Also publish the name through the modern Windows API. The legacy debugger
+	// exception above is invisible to GetThreadDescription(), which profilers
+	// use when collecting worker-thread metadata. Resolve dynamically to preserve
+	// compatibility with older Windows versions.
+	using set_thread_description_fn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+	HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+	const auto set_description = kernel ? reinterpret_cast<set_thread_description_fn>(
+		GetProcAddress(kernel, "SetThreadDescription")) : nullptr;
+	if (set_description && name && *name)
+	{
+		wchar_t wide_name[128] = {};
+		if (MultiByteToWideChar(CP_UTF8, 0, name, -1, wide_name, _countof(wide_name)) > 0)
+			set_description(GetCurrentThread(), wide_name);
 	}
 }
 #pragma pack(pop)

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "pch_script.h"
+#include <luabind/back_reference.hpp>
 #include "xrServer_Objects.h"
 #include "alife_space.h"
 #include "game_graph_space.h"
@@ -22,6 +23,7 @@
 
 #ifdef XRGAME_EXPORTS
 class CALifeSimulator;
+class CALifeScheduleRegistry;
 #endif
 
 class CSE_ALifeItemWeapon;
@@ -55,6 +57,11 @@ SERVER_ENTITY_DECLARE_BEGIN(CSE_ALifeSchedulable, IPureSchedulableObject)
 	CSE_ALifeItemWeapon* m_tpCurrentBestWeapon;
 	CSE_ALifeDynamicObject* m_tpBestDetector;
 	u64 m_schedule_counter;
+#ifdef XRGAME_EXPORTS
+	// set while the schedule registry holds this object, so the destructor can drop the entry
+	CALifeScheduleRegistry* m_schedule_registry;
+	ALife::_OBJECT_ID m_schedule_id;
+#endif
 
 	CSE_ALifeSchedulable(LPCSTR caSection);
 	virtual ~CSE_ALifeSchedulable();
@@ -330,6 +337,11 @@ SERVER_ENTITY_DECLARE_BEGIN(CSE_ALifeDynamicObject, CSE_ALifeObject)
 #endif
 	virtual CSE_ALifeDynamicObject* cast_alife_dynamic_object() { return this; }
 SERVER_ENTITY_DECLARE_END
+
+// alife():object(id) pushes this type; server entities and their script wrappers
+// have no virtual bases, so luabind may cache its wrap_base cast per vtable.
+template <>
+struct luabind::detail::cache_wrap_base_cast<CSE_ALifeDynamicObject> : std::true_type {};
 
 SERVER_ENTITY_DECLARE_BEGIN2(CSE_ALifeDynamicObjectVisual, CSE_ALifeDynamicObject, CSE_Visual)
 	CSE_ALifeDynamicObjectVisual(LPCSTR caSection);

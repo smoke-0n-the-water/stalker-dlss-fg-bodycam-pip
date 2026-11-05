@@ -16,6 +16,7 @@
 #include "xr_input.h"
 #include "xr_ioconsole.h"
 #include "x_ray.h"
+#include "../xrCore/engine_error_logger.h"
 #include "std_classes.h"
 #include "GameFont.h"
 #include "resource.h"
@@ -24,23 +25,32 @@
 #include "Text_Console.h"
 #include <process.h>
 #include <locale.h>
+#include <objidl.h>
+#include <wincodec.h>
 
 #include <unicode\unistr.h>
 #include <unicode\ucnv.h>
-#include <discord\discord.h>
+#include <discord\types.h>
+#include "DiscordRpcClient.h"
+#include "engine_version.h"
+#include <atomic>
 #include "../xrCore/profiler.h"
 
 #include "xrSash.h"
 #include "MonitorList.h"
 #include "renderdoc_integration.h"
 
-extern "C" void XR_EARLY_INIT();
+#define XRAY_MONOLITH_VERSION "X-Ray Monolith v1.5.3"
+
+extern "C"
+{
+#include "../3rd party/luajit-2/src/xr_alloc.h"
+}
 
 //#include "securom_api.h"
 
-
 //---------------------------------------------------------------------
-#define XRAY_MONOLITH_VERSION "X-Ray Monolith v1.5.3"
+// Version text and Windows file resources share engine_version.h.
 ENGINE_API CInifile* pGameIni = NULL;
 BOOL g_bIntroFinished = FALSE;
 extern void Intro(void* fn);
@@ -56,13 +66,12 @@ XRCORE_API u32 build_id;
 # define NO_MULTI_INSTANCES
 #endif // #ifdef MASTER_GOLD
 
-
 //Discord
-discord::Core* discord_core{};
+static thread_local quark_discord::Client discord_client;
+static std::atomic<bool> discord_clear_requested{false};
 discord::Activity discordPresence{};
 static int64_t StartTime;
-bool use_discord = true;
-#pragma comment(lib, "discord_game_sdk.lib")
+
 rpc_info discord_gameinfo;
 rpc_strings discord_strings;
 float discord_update_rate = .5f;
@@ -73,7 +82,7 @@ float discord_update_rate = .5f;
 //#pragma comment(lib, "sicudt.lib")
 
 //Reshade
-#pragma comment(lib, "reshadecompat.lib")
+#pragma comment(lib, "ReShadeCompat.lib")
 bool use_reshade = false;
 extern bool init_reshade();
 extern void unregister_reshade();
@@ -82,6 +91,10 @@ extern void GetMonitorPosition(int& x, int& y);
 
 //ImGui
 #pragma comment(lib, "imgui.lib")
+
+// Startup splash PNG decoding and high-quality scaling
+#pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "ole32.lib")
 
 static LPSTR month_id[12] =
 {
@@ -143,14 +156,22 @@ void compute_build_id()
 // 2446363
 // umbt@ukr.net
 //////////////////////////////////////////////////////////////////////////
+
 struct _SoundProcessor : public pureFrame
 {
 	virtual void _BCL OnFrame()
 	{
 		//Msg ("------------- sound: %d [%3.2f,%3.2f,%3.2f]",u32(Device.dwFrame),VPUSH(Device.vCameraPosition));
+
 		Device.Statistic->Sound.Begin();
+
+		{
+
 		::Sound->update(Device.vCameraPosition, Device.vCameraDirection, Device.vCameraTop);
+		}
+
 		Device.Statistic->Sound.End();
+
 	}
 } SoundProcessor;
 
@@ -158,12 +179,18 @@ struct _SoundProcessor : public pureFrame
 // global variables
 ENGINE_API CApplication* pApp = NULL;
 static HWND logoWindow = NULL;
+static u32 last_load_draw_time = 0;
+
+bool IsLoadDiagnosticsEnabled()
+{
+	static const bool enabled = Core.Params && strstr(Core.Params, "-load_diagnostics");
+	return enabled;
+}
 
 int doLauncher();
 void doBenchmark(LPCSTR name);
 ENGINE_API bool g_bBenchmark = false;
 string512 g_sBenchmarkName;
-
 
 ENGINE_API string512 g_sLaunchOnExit_params;
 ENGINE_API string512 g_sLaunchOnExit_app;
@@ -184,8 +211,7 @@ struct path_excluder_predicate
 {
 	explicit path_excluder_predicate(xr_auth_strings_t const* ignore) :
 		m_ignore(ignore)
-	{
-	}
+	{}
 
 	bool xr_stdcall is_allow_include(LPCSTR path)
 	{
@@ -211,6 +237,29 @@ PROTECT_API void InitSettings()
 	pSettings = xr_new<CInifile>(fname, TRUE);
 	CHECK_OR_EXIT(0 != pSettings->section_count(),
 	              make_string("Cannot find file %s.\nReinstalling application may fix this problem.", fname));
+
+	FS.update_path(fname, "$game_config$", "game.ltx");
+	pGameIni = xr_new<CInifile>(fname, TRUE);
+	CHECK_OR_EXIT(0 != pGameIni->section_count(),
+	              make_string("Cannot find file %s.\nReinstalling application may fix this problem.", fname));
+
+	g_fTimeFactor = pSettings->r_float("alife", "time_factor");
+}
+
+ENGINE_API void EnsureSettingsAuth()
+{
+#ifdef PROFILE_CRITICAL_SECTIONS
+	static xrCriticalSection settings_auth_lock(MUTEX_PROFILE_ID(settings_auth));
+#else
+	static xrCriticalSection settings_auth_lock;
+#endif
+	xrCriticalSectionGuard guard(settings_auth_lock);
+
+	if (pSettingsAuth)
+		return;
+
+	string_path fname;
+	FS.update_path(fname, "$game_config$", "system.ltx");
 
 	xr_auth_strings_t tmp_ignore_pathes;
 	xr_auth_strings_t tmp_check_pathes;
@@ -332,6 +381,10 @@ void execUserScript()
 {
 	Console->Execute("default_controls");
 	Console->ExecuteScript(Console->ConfigFile);
+    // Older user.ltx files may contain the last active script-owned NVG state.
+    // Clear it before device/game/Lua initialization; later script commands
+    // still enable all NVG modes through the unchanged console interface.
+    Console->Execute("r__nightvision 0");
 	// re-apply -gpu_markers / -shader_debug after user.ltx so a saved cvar value can't override them
 	if (strstr(Core.Params, "-gpu_markers")) Console->Execute("r__gpu_markers 1");
 	if (strstr(Core.Params, "-shader_debug")) Console->Execute("r__shader_debug 1");
@@ -408,16 +461,11 @@ LPCSTR xr_ToUTF8(LPCSTR input, int max_length)
 
 //Discord Rich Presence - Rezy ------------------------------------------------
 
-void DiscordLog(discord::LogLevel level, std::string message)
-{
-	Msg("[Discord RPC]: %s", message.c_str());
-}
-
 void updateDiscordPresence()
 {
 	PROF_EVENT();
 
-	if (!use_discord)
+	if (!discord_client.Ready())
 		return;
 
 	static char details_buffer[128];
@@ -426,7 +474,7 @@ void updateDiscordPresence()
 	// Main Menu
 	if (discord_gameinfo.mainmenu)
 	{
-		snprintf(state_buffer, 128, discord_strings.mainmenu);
+		snprintf(state_buffer, 128, "%s", discord_strings.mainmenu);
 		discordPresence.GetAssets().SetLargeImage("gamelogo");
 		discordPresence.GetAssets().SetLargeText("");
 		discordPresence.GetAssets().SetSmallImage("");
@@ -434,7 +482,7 @@ void updateDiscordPresence()
 			
 		// Pause Menu
 		if (discord_gameinfo.ingame)
-			snprintf(state_buffer, 128, discord_strings.paused);
+			snprintf(state_buffer, 128, "%s", discord_strings.paused);
 		else
 			discordPresence.SetDetails("");
 	}	
@@ -442,7 +490,7 @@ void updateDiscordPresence()
 	// Loading
 	else if (discord_gameinfo.loadscreen)
 	{
-		snprintf(state_buffer, 128, discord_strings.loading);
+		snprintf(state_buffer, 128, "%s", discord_strings.loading);
 		discordPresence.SetDetails("");
 		discordPresence.GetAssets().SetLargeImage("gamelogo");
 		discordPresence.GetAssets().SetLargeText("");
@@ -463,7 +511,7 @@ void updateDiscordPresence()
 		}
 		else if (discord_gameinfo.level_name)
 		{
-			snprintf(levelname_time, 128, discord_gameinfo.level_name);
+			snprintf(levelname_time, 128, "%s", discord_gameinfo.level_name);
 			discordPresence.GetAssets().SetLargeText(levelname_time);
 		}
 		else
@@ -477,7 +525,7 @@ void updateDiscordPresence()
 			if (discord_gameinfo.rank_name && discord_gameinfo.reputation)
 				snprintf(rank_faction_rep, 128, "%s | %s", discord_gameinfo.rank_name, discord_gameinfo.reputation);
 			else
-				snprintf(rank_faction_rep, 128, discord_gameinfo.faction_name);
+				snprintf(rank_faction_rep, 128, "%s", discord_gameinfo.faction_name);
 			discordPresence.GetAssets().SetSmallText(rank_faction_rep);
 		}
 
@@ -487,7 +535,7 @@ void updateDiscordPresence()
 			if (discord_gameinfo.task_name && 0 != xr_strcmp(discord_gameinfo.task_name, ""))
 				snprintf(details_buffer, 128, "%s | %s", discord_gameinfo.gamemode, discord_gameinfo.task_name);
 			else
-				snprintf(details_buffer, 128, discord_gameinfo.gamemode);
+				snprintf(details_buffer, 128, "%s", discord_gameinfo.gamemode);
 			discordPresence.SetDetails(details_buffer);
 		}
 
@@ -539,7 +587,6 @@ void updateDiscordPresence()
 						discord_strings.livesleftsingle);
 			}
 
-
 			// Azazel
 			else if (discord_gameinfo.possessed_lives)
 			{
@@ -568,43 +615,54 @@ void updateDiscordPresence()
 	}
 
 	discordPresence.SetState(state_buffer);
-	discord_core->ActivityManager().UpdateActivity(discordPresence, [](discord::Result result) {});
+	discord_client.Submit(discordPresence);
 }
 
-void Init_Discord()
+ENGINE_API void Init_Discord()
 {
-	auto result = discord::Core::Create(477910171964801060, DiscordCreateFlags_NoRequireDiscord, &discord_core);
-	
-	if (result != discord::Result::Ok)
+    if (!StartTime)
 	{
-		Msg("[Discord RPC] Failed to create Discord RPC");
-		use_discord = false;
-		return;
-	}
-
-	discord_core->SetLogHook(discord::LogLevel::Error, DiscordLog);
-	Msg("[Discord RPC] Created successfully!");
-
-	//Set up basic RPC
 	StartTime = time(0);
+        discordPresence.SetName(quark_discord::application_name);
 	discordPresence.SetType(discord::ActivityType::Playing);
 	discordPresence.GetTimestamps().SetStart(StartTime);
 	discordPresence.GetAssets().SetLargeImage("gamelogo");
-	discord_core->ActivityManager().UpdateActivity(discordPresence, [](discord::Result result) {});
+    }
+    discord_client.Connect();
+}
+
+bool DiscordPresenceReady()
+{
+    return discord_client.Ready();
+}
+
+void PumpDiscordPresence()
+{
+    if (discord_clear_requested.exchange(false, std::memory_order_acq_rel))
+        discord_client.Clear();
+    discord_client.Pump();
+    static bool error_reported = false;
+    if (discord_client.Rejected() && !error_reported)
+        Msg("[Discord RPC] Activity rejected; check the application and its image assets");
+    error_reported = discord_client.Rejected();
+}
+
+void ShutdownDiscordPresence()
+{
+    discord_client.Clear();
+    discord_client.Close();
+    discord_clear_requested.store(false, std::memory_order_release);
 }
 
 void clearDiscordPresence()
 {
-	if (discord_core)
-		discord_core->ActivityManager().ClearActivity([](discord::Result result) {});
+    // Console commands and shutdown run on the game thread. IPC ownership
+    // stays on the Discord worker, including clearing and disconnection.
+    discord_clear_requested.store(true, std::memory_order_release);
 }
 
 void Startup()
 {
-#ifndef DEDICATED_SERVER
-	fill_vid_monitor_list();
-#endif
-
 	InitSound1();
 	execUserScript();
 	InitSound2();
@@ -644,6 +702,11 @@ void Startup()
 		}
 	}
 
+	// Auto uses the cursor/primary monitor and does not require expensive
+	// DisplayConfig/PnP friendly-name discovery during startup.
+	if (!vid_monitor_name.empty() && _stricmp(vid_monitor_name.c_str(), "Auto") != 0)
+		fill_vid_monitor_list();
+
 	ResetStartupMonitor();
 #endif
 
@@ -671,8 +734,8 @@ void Startup()
 	DestroyWindow(logoWindow);
 	logoWindow = NULL;
 
-	//Discord Rich Presence - Rezy
-	Init_Discord();
+	// Discord initialization is performed by the worker on demand so it cannot
+	// delay the first main-menu frame.
 
 	//Reshade
 	use_reshade = init_reshade();
@@ -859,7 +922,6 @@ struct damn_keys_filter
 		dwFilterKeysFlags = 0;
 		dwToggleKeysFlags = 0;
 
-
 		ZeroMemory(&StickyKeysStruct, dwStickyKeysStructSize);
 		ZeroMemory(&FilterKeysStruct, dwFilterKeysStructSize);
 		ZeroMemory(&ToggleKeysStruct, dwToggleKeysStructSize);
@@ -994,7 +1056,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 
 	if (!IsDebuggerPresent())
 	{
-		HMODULE const kernel32 = LoadLibrary("kernel32.dll");
+		HMODULE const kernel32 = GetModuleHandle("kernel32.dll");
 		R_ASSERT(kernel32);
 
 		typedef BOOL (__stdcall*HeapSetInformation_type)(HANDLE, HEAP_INFORMATION_CLASS, PVOID, SIZE_T);
@@ -1131,28 +1193,39 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 #else
 	const char* const binaryVariant = "DX11";
 #endif
-	Msg("[DLSS/FSR] xray-monolith DLSS/FSR 0.63 (%s), built %s", binaryVariant, __DATE__);
+	Msg("[DLSS/FSR] xray-monolith DLSS/FSR 0.71 (%s), built %s", binaryVariant, __DATE__);
+	xr_luajit_pool_stats lua_pool_stats = {};
+	XR_GET_POOL_STATS(&lua_pool_stats);
+	Msg("* LuaJIT low-address pool: reserved=%Iu/%Iu MiB at %p (virtual; committed on demand)",
+		lua_pool_stats.reserved_bytes / (1024u * 1024u),
+		lua_pool_stats.requested_bytes / (1024u * 1024u),
+		lua_pool_stats.base);
+	if (lua_pool_stats.reserved_bytes < lua_pool_stats.requested_bytes)
+	{
+		Msg("! LuaJIT low-address pool is smaller than requested; guarded per-allocation fallback is active");
+	}
 
+	InitSettings();
+	Msg(QUARK_ENGINE_VERSION);
+
+	if (IsLoadDiagnosticsEnabled())
 	{
 		FS_FileSet fset;
 		FS.file_list(fset, "$game_data$", FS_ListFiles, "*");
 
-		// list all files in gamedata folder
 		u32 count = 0;
-		for (FS_FileSet::iterator it = fset.begin(); it != fset.end(); it++)
+		for (FS_FileSet::iterator it = fset.begin(); it != fset.end(); ++it)
 		{
-			// skip virtual files from .db? archives, only interested in loose files
-			if ((*it).attrib != 0) continue;
+			if ((*it).attrib != 0)
+				continue;
 			Msg("gamedata: '%s'", (*it).name.c_str());
 
 			const u32 cutoff = 100;
 			if (++count >= cutoff)
 			{
-				u32 total = fset.size();
+				const u32 total = fset.size();
 				if (total > cutoff)
-				{
 					Msg("gamedata: ... %d more ...", total - cutoff);
-				}
 				break;
 			}
 		}
@@ -1219,20 +1292,9 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 				return 0;
 		};
 
-#ifndef DEDICATED_SERVER
-		if (Core.ParamsData.test(ECoreParams::r2a))
-			Console->Execute("renderer renderer_r2a");
-		else if (Core.ParamsData.test(ECoreParams::r2))
-			Console->Execute("renderer renderer_r2");
-		else
-		{
-			CCC_LoadCFG_custom* pTmp = xr_new<CCC_LoadCFG_custom>("renderer ");
-			pTmp->Execute(Console->ConfigFile);
-			xr_delete(pTmp);
-		}
-#else
-        Console->Execute("renderer renderer_r1");
-#endif
+		// GAMMA's user.ltx and UI scripts use renderer_r4 as a compatibility
+		// contract, even though QUARK ENGINE no longer offers renderer selection.
+		Console->Execute("renderer renderer_r4");
 		//. InitInput ( );
 		Engine.External.Initialize();
 		Console->Execute("stat_memory_async");
@@ -1251,8 +1313,12 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 			ZeroMemory(&pi, sizeof(pi));
 			//We use CreateProcess to setup working folder
 			char const* temp_wf = (xr_strlen(g_sLaunchWorkingFolder) > 0) ? g_sLaunchWorkingFolder : NULL;
-			CreateProcess(g_sLaunchOnExit_app, g_sLaunchOnExit_params, NULL, NULL, FALSE, 0, NULL,
-			              temp_wf, &si, &pi);
+			if (CreateProcess(g_sLaunchOnExit_app, g_sLaunchOnExit_params, NULL, NULL, FALSE, 0, NULL,
+			                  temp_wf, &si, &pi))
+			{
+				CloseHandle(pi.hThread);
+				CloseHandle(pi.hProcess);
+			}
 		}
 #ifndef DEDICATED_SERVER
 #ifdef NO_MULTI_INSTANCES
@@ -1382,6 +1448,7 @@ CApplication::CApplication()
 	ll_dwReference = 0;
 
 	max_load_stage = 0;
+	m_levels_scanned = false;
 
 	// events
 	eQuit = Engine.Event.Handler_Attach("KERNEL:quit", this);
@@ -1391,9 +1458,8 @@ CApplication::CApplication()
 	eConsole = Engine.Event.Handler_Attach("KERNEL:console", this);
 	eStartMPDemo = Engine.Event.Handler_Attach("KERNEL:start_mp_demo", this);
 
-	// levels
+	// Discover level directories only when a level lookup is requested.
 	Level_Current = u32(-1);
-	Level_Scan();
 
 	// Font
 	pFontSystem = NULL;
@@ -1423,7 +1489,6 @@ CApplication::~CApplication()
 	Device.seqFrameMT.Remove(&SoundProcessor);
 	Device.seqFrame.Remove(&SoundProcessor);
 	Device.seqFrame.Remove(this);
-
 
 	// events
 	Engine.Event.Handler_Detach(eConsole, this);
@@ -1479,11 +1544,16 @@ void CApplication::OnEvent(EVENT E, u64 P1, u64 P2)
 			//! this line is commented by Dima
 			//! because I don't see any reason to reset device here
 			//! Device.Reset (false);
+
+			// Register and present the loading screen before any game teardown,
+			// level construction or Lua restart can block the main thread.
+			pApp->LoadBegin();
+			pApp->LoadDraw();
+
 			//-----------------------------------------------------------
 			g_pGamePersistent->PreStart(op_server);
 			//-----------------------------------------------------------
 			g_pGameLevel = (IGame_Level*)NEW_INSTANCE(CLSID_GAME_LEVEL);
-			pApp->LoadBegin();
 			g_pGamePersistent->Start(op_server);
 			g_pGameLevel->net_Start(op_server, op_client);
 			pApp->LoadEnd();
@@ -1530,6 +1600,9 @@ void CApplication::OnEvent(EVENT E, u64 P1, u64 P2)
 		Console->Hide();
 		Device.Reset(false);
 
+		pApp->LoadBegin();
+		pApp->LoadDraw();
+
 		g_pGameLevel = (IGame_Level*)NEW_INSTANCE(CLSID_GAME_LEVEL);
 		shared_str server_options = g_pGameLevel->OpenDemoFile(demo_file);
 
@@ -1537,7 +1610,6 @@ void CApplication::OnEvent(EVENT E, u64 P1, u64 P2)
 		g_pGamePersistent->PreStart(server_options.c_str());
 		//-----------------------------------------------------------
 
-		pApp->LoadBegin();
 		g_pGamePersistent->Start(""); //server_options.c_str()); - no prefetch !
 		g_pGameLevel->net_StartPlayDemo();
 		pApp->LoadEnd();
@@ -1547,7 +1619,7 @@ void CApplication::OnEvent(EVENT E, u64 P1, u64 P2)
 }
 
 static CTimer phase_timer;
-extern ENGINE_API BOOL g_appLoaded = FALSE;
+ENGINE_API BOOL g_appLoaded = FALSE;
 //AVO: used by SPAWN_ANTIFREEZE (by alpet)
 extern ENGINE_API BOOL g_bootComplete = FALSE;
 //-AVO
@@ -1557,6 +1629,7 @@ void CApplication::LoadBegin()
 	ll_dwReference++;
 	if (1 == ll_dwReference)
 	{
+		QUARK_DIAGNOSTIC_BREADCRUMB("loading started");
 		g_appLoaded = FALSE;
 
 		//AVO:
@@ -1570,18 +1643,30 @@ void CApplication::LoadBegin()
 #endif
 		phase_timer.Start();
 		load_stage = 0;
+		last_load_draw_time = Device.TimerAsync() - 16;
 	}
 }
 
 void CApplication::LoadEnd()
 {
+	if (!ll_dwReference)
+	{
+		Msg("! LoadEnd called without a matching LoadBegin");
+		return;
+	}
+
 	ll_dwReference--;
 	if (0 == ll_dwReference)
 	{
+		if (IsLoadDiagnosticsEnabled())
+		{
 		Msg("* phase time: %d ms", phase_timer.GetElapsed_ms());
 		Msg("* phase cmem: %lld K", Memory.mem_usage() / 1024);
 		Console->Execute("stat_memory");
+		}
+
 		g_appLoaded = TRUE;
+		QUARK_DIAGNOSTIC_BREADCRUMB("loading finished");
 		// DUMP_PHASE;
 	}
 }
@@ -1605,9 +1690,13 @@ PROTECT_API void CApplication::LoadDraw()
 {
 	PROF_EVENT();
 
-	if (g_appLoaded) return;
-	Device.dwFrame += 1;
+	// The logical load can finish immediately before precache starts rendering.
+	// Keep the loading overlay drawable while its renderer is registered so the
+	// main menu cannot flash between the two loading phases.
+	if (g_appLoaded && !load_screen_renderer.b_registered && !Device.dwPrecacheFrame)
+		return;
 
+	Device.dwFrame += 1;
 
 	if (!Device.Begin()) return;
 
@@ -1631,29 +1720,50 @@ void CApplication::LoadStage()
 {
 	load_stage++;
 	VERIFY(ll_dwReference);
+
+	if (IsLoadDiagnosticsEnabled())
+	{
 	Msg("* phase time: %d ms", phase_timer.GetElapsed_ms());
 	phase_timer.Start();
-	//Msg("* phase cmem: %lld K", Memory.mem_usage() / 1024);
+		Msg("* phase cmem: %lld K", Memory.mem_usage() / 1024);
+	}
 
 	if (g_pGamePersistent->GameType() == 1 && !xr_strcmp(g_pGamePersistent->m_game_params.m_alife, "alife"))
 		max_load_stage = 17;
 	else
 		max_load_stage = 14;
+
+	// Progress updates can be very frequent while scripts and resources are being
+	// restored. Limit only the intermediate Presents; loading event ordering is
+	// left completely unchanged.
+	const u32 current_time = Device.TimerAsync();
+	if (current_time - last_load_draw_time >= 33)
+	{
 	LoadDraw();
+		last_load_draw_time = current_time;
+	}
 }
 
 void CApplication::LoadSwitch()
-{
-}
+{}
 
 // Sequential
 void CApplication::OnFrame()
 {
 	PROF_EVENT();
 
+	{
+
 	Engine.Event.OnFrame();
+	}
+	{
+
 	g_SpatialSpace->update();
+	}
+	{
+
 	g_SpatialSpacePhysic->update();
+	}
 }
 
 void CApplication::Level_Append(LPCSTR folder)
@@ -1682,6 +1792,7 @@ void CApplication::Level_Append(LPCSTR folder)
 void CApplication::Level_Scan()
 {
 	PROF_EVENT();
+	m_levels_scanned = true;
 
 	//SECUROM_MARKER_PERFORMANCE_ON(8)
 
@@ -1691,7 +1802,6 @@ void CApplication::Level_Scan()
 		xr_free(Levels[i].name);
 	}
 	Levels.clear();
-
 
 	xr_vector<char*>* folder = FS.file_list_open("$game_levels$", FS_ListFolders | FS_RootOnly);
 	//. R_ASSERT (folder&&folder->size());
@@ -1763,6 +1873,9 @@ void CApplication::Level_Set(u32 L)
 int CApplication::Level_ID(LPCSTR name, LPCSTR ver, bool bSet)
 {
 	PROF_EVENT();
+
+	if (!m_levels_scanned)
+		Level_Scan();
 
 	int result = -1;
 
@@ -1933,7 +2046,6 @@ void doBenchmark(LPCSTR name)
 			InitEngine();
 		}
 
-
 		Engine.External.Initialize();
 
 		xr_strcpy(Console->ConfigFile, "user.ltx");
@@ -2005,8 +2117,6 @@ void CApplication::load_draw_internal()
 
 	back_text_coords.lt.x/=tsz.x; back_text_coords.lt.y/=tsz.y; back_text_coords.rb.x/=tsz.x; back_text_coords.rb.y/=tsz.y;
 
-
-
 	u32 v_cnt = 40;
 	pv = (FVF::TL*)RCache.Vertex.Lock (2*(v_cnt+1),ll_hGeom2.stride(),Offset);
 	FVF::TL* _pv = pv;
@@ -2025,7 +2135,6 @@ void CApplication::load_draw_internal()
 	RCache.set_Geometry (ll_hGeom2);
 	RCache.Render (D3DPT_TRIANGLESTRIP, Offset, 2*v_cnt);
 
-
 	// Draw title
 	VERIFY (pFontSystem);
 	pFontSystem->Clear ();
@@ -2033,7 +2142,6 @@ void CApplication::load_draw_internal()
 	pFontSystem->SetAligment (CGameFont::alCenter);
 	pFontSystem->OutI (0.f,0.815f,app_title);
 	pFontSystem->OnRender ();
-
 
 	//draw level-specific screenshot
 	if(hLevelLogo){
@@ -2063,7 +2171,6 @@ u32 calc_progress_color(u32 idx, u32 total, int stage, int max_stage)
 {
 if(idx>(total/2))
 idx = total-idx;
-
 
 float kk = (float(stage+1)/float(max_stage))*(total/2.0f);
 float f = 1/(exp((float(idx)-kk)*0.5f)+1.0f);

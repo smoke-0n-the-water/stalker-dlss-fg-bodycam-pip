@@ -38,7 +38,10 @@
 
  //Alundaio
 
+int g_ui_inventory_cache = 1;
+
 void move_item_from_to(u16 from_id, u16 to_id, u16 what_id);
+
 
 void CUIActorMenu::InitInventoryMode()
 {
@@ -508,6 +511,13 @@ void CUIActorMenu::InitInventoryContents(CUIDragDropListEx* pBagList)
 	}
 
 	m_pQuickSlot->ReloadReferences(m_pActorInvOwner);
+
+	if (m_currMenuMode == mmInventory && pBagList == m_pInventoryBagList)
+	{
+		m_cached_inventory_owner = m_pActorInvOwner;
+		m_cached_inventory_revision = m_pActorInvOwner->inventory().UIRevision();
+		m_inventory_cache_valid = g_ui_inventory_cache != 0;
+	}
 }
 
 #include "ui\UI3tButton.h"
@@ -561,19 +571,21 @@ void CUIActorMenu::FilterActorBagList(int mode)
 
 void CUIActorMenu::sort_button_callback(CUIWindow* w, void* d)
 {
-	if (!strstr(w->WindowName().c_str(), "button_sort_tab_"))
+	if (!w || !strstr(w->WindowName().c_str(), "button_sort_tab_"))
 		return;
 
 	xr_string buttonName = w->WindowName().c_str();
-	int buttonNum = atoi(buttonName.substr(16, 99).c_str());
+	LPCSTR button_suffix = buttonName.c_str() + 16;
+	LPSTR parse_end = NULL;
+	const long buttonNum = strtol(button_suffix, &parse_end, 10);
 
-	if (buttonNum > m_sort_buttons.size())
+	if (parse_end == button_suffix || buttonNum <= 0 || static_cast<u64>(buttonNum) > m_sort_buttons.size())
 		return;
 
-	if (!m_sort_buttons.at(buttonNum - 1)->IsEnabled())
+	if (!m_sort_buttons.at(static_cast<u32>(buttonNum - 1))->IsEnabled())
 		return;
 
-	SelectInventoryTab(buttonNum - 1);
+	SelectInventoryTab(static_cast<int>(buttonNum - 1));
 }
 
 int CUIActorMenu::current_sort_mode()
@@ -585,10 +597,18 @@ int CUIActorMenu::current_sort_mode()
 			return i;
 		}
 	}
+
+	// XML/mod code may temporarily leave every tab enabled.  "All" is the
+	// compatibility-safe default and, unlike falling through, is deterministic.
+	return 0;
 }
 
 void CUIActorMenu::SelectInventoryTab(int tab)
 {
+	if (tab < 0 || static_cast<u32>(tab) >= m_sort_buttons.size() ||
+		static_cast<u32>(tab) >= m_sort_kinds.size())
+		return;
+
 	for (int i = 0; i < m_sort_buttons.size(); i++)
 	{
 		m_sort_buttons.at(i)->Enable(true);

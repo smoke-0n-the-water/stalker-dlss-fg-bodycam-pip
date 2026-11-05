@@ -64,6 +64,29 @@ IC void CSpaceRestriction::add_border(T1 p1, T2 p2)
 #endif
 }
 
+template <typename T1, typename T2>
+IC void CSpaceRestriction::collect_border(T1 p1, T2 p2, xr_vector<u32>& result)
+{
+	if (!initialized())
+		return;
+
+	if (m_out_space_restriction)
+	{
+		result.insert(result.end(), border().begin(), border().end());
+		return;
+	}
+
+#ifdef USE_FREE_IN_RESTRICTIONS
+	FREE_IN_RESTRICTIONS::const_iterator I = m_free_in_restrictions.begin();
+	FREE_IN_RESTRICTIONS::const_iterator E = m_free_in_restrictions.end();
+	for (; I != E; ++I)
+		if (affect((*I).m_restriction, p1, p2))
+			result.insert(result.end(), (*I).m_restriction->border().begin(), (*I).m_restriction->border().end());
+#else
+	result.insert(result.end(), m_in_space_restriction->border().begin(), m_in_space_restriction->border().end());
+#endif
+}
+
 IC bool CSpaceRestriction::applied() const
 {
 	return (m_applied);

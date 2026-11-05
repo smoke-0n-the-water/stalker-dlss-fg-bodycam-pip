@@ -8,9 +8,13 @@ class CNotificationClient :
 public:
     CNotificationClient();
     ~CNotificationClient();
+    void Shutdown();
 
     // IUnknown methods
     STDMETHOD(QueryInterface)(REFIID riid, void** ppvObject) {
+		if (!ppvObject)
+			return E_POINTER;
+		*ppvObject = nullptr;
         if (riid == IID_IUnknown || riid == __uuidof(IMMNotificationClient)) {
             *ppvObject = static_cast<IMMNotificationClient*>(this);
             AddRef();

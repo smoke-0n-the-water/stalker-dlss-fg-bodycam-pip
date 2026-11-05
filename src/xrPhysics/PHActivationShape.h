@@ -40,11 +40,16 @@ public:
 	void Destroy();
 	bool Activate(const Fvector need_size, u16 steps, float max_displacement, float max_rotation,
 	              bool un_freeze_later = false);
+	bool ActivateStaticOnly(const Fvector need_size, u16 steps, float max_displacement, float max_rotation,
+	                        bool un_freeze_later = false);
 	const Fvector& Position();
 	void Size(Fvector& size);
 	dBodyID ODEBody() { return m_body; }
 	void set_rotation(const Fmatrix& rot);
 private:
+	bool ActivateInternal(const Fvector need_size, u16 steps, float max_displacement, float max_rotation,
+	                     bool un_freeze_later, bool static_only);
+	void StepStaticOnly();
 	virtual void PhDataUpdate(dReal step);
 	virtual void PhTune(dReal step);
 	virtual void CutVelocity(float l_limit, float a_limit);

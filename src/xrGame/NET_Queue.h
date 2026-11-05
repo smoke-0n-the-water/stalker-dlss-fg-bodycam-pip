@@ -85,10 +85,13 @@ public:
 public:
 	IC void insert(NET_Packet& P)
 	{
-		NET_Event E;
+		// Construct directly in the queue. NET_Event owns a byte vector, so the
+		// old temporary + push_back(copy) path allocated and copied the packet
+		// payload twice for every incoming event.
+		queue.emplace_back();
+		NET_Event& E = queue.back();
 		E.import(P);
 		//		queue.insert	(E);
-		queue.push_back(E);
 		/*
 		//-------------------------------------------
 #ifdef DEBUG

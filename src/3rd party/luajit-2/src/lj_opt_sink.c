@@ -1,6 +1,6 @@
 /*
 ** SINK: Allocation Sinking and Store Sinking.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #define lj_opt_sink_c
@@ -36,12 +36,14 @@ static IRIns *sink_checkalloc(jit_State *J, IRIns *irs)
 }
 
 /* Recursively check whether a value depends on a PHI. */
-static int sink_phidep(jit_State *J, IRRef ref)
+static int sink_phidep(jit_State *J, IRRef ref, int *workp)
 {
   IRIns *ir = IR(ref);
+  if (!*workp) return 1;  /* Give up and pretend it does. */
+  (*workp)--;
   if (irt_isphi(ir->t)) return 1;
-  if (ir->op1 >= REF_FIRST && sink_phidep(J, ir->op1)) return 1;
-  if (ir->op2 >= REF_FIRST && sink_phidep(J, ir->op2)) return 1;
+  if (ir->op1 >= REF_FIRST && sink_phidep(J, ir->op1, workp)) return 1;
+  if (ir->op2 >= REF_FIRST && sink_phidep(J, ir->op2, workp)) return 1;
   return 0;
 }
 
@@ -56,7 +58,13 @@ static int sink_checkphi(jit_State *J, IRIns *ira, IRRef ref)
       return 1;  /* Sinkable PHI. */
     }
     /* Otherwise the value must be loop-invariant. */
-    return ref < J->loopref && !sink_phidep(J, ref);
+    if (ref < J->loopref) {
+      /* Check for PHI dependencies, but give up after reasonable effort. */
+      int work = 64;
+      return !sink_phidep(J, ref, &work);
+    } else {
+      return 0;  /* Loop-variant. */
+    }
   }
   return 1;  /* Constant (non-PHI). */
 }
@@ -100,8 +108,8 @@ static void sink_mark_ins(jit_State *J)
 	   (LJ_32 && ir+1 < irlast && (ir+1)->o == IR_HIOP &&
 	    !sink_checkphi(J, ir, (ir+1)->op2))))
 	irt_setmark(ir->t);  /* Mark ineligible allocation. */
-      /* fallthrough */
 #endif
+      /* fallthrough */
     case IR_USTORE:
       irt_setmark(IR(ir->op2)->t);  /* Mark stored value. */
       break;
@@ -153,10 +161,9 @@ static void sink_remark_phi(jit_State *J)
     remark = 0;
     for (ir = IR(J->cur.nins-1); ir->o == IR_PHI; ir--) {
       IRIns *irl = IR(ir->op1), *irr = IR(ir->op2);
-      if (((irl->t.irt ^ irr->t.irt) & IRT_MARK))
-	remark = 1;
-      else if (irl->prev == irr->prev)
+      if (!((irl->t.irt ^ irr->t.irt) & IRT_MARK) && irl->prev == irr->prev)
 	continue;
+      remark |= (~(irl->t.irt & irr->t.irt) & IRT_MARK);
       irt_setmark(IR(ir->op1)->t);
       irt_setmark(IR(ir->op2)->t);
     }

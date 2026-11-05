@@ -11,6 +11,8 @@
 #include "movement_manager.h"
 #include "detail_path_manager.h"
 
+extern int psAI_DetailPathMaxPerFrame;
+
 class CDetailPathBuilder
 {
 private:
@@ -38,6 +40,24 @@ public:
 
 	void register_to_process()
 	{
+		// A restriction change or a large combat transition can invalidate paths
+		// for many NPCs in the same frame. The sequential detail-path lane then
+		// materializes every request as one long worker tail. Admit a bounded
+		// number per frame; rejected requests remain in BuildDetailPath state and
+		// are retried by their next scheduler update.
+		static u32 submission_frame = u32(-1);
+		static u32 submissions = 0;
+		if (submission_frame != Device.dwFrame)
+		{
+			submission_frame = Device.dwFrame;
+			submissions = 0;
+		}
+
+		if ((psAI_DetailPathMaxPerFrame > 0) &&
+			(submissions >= static_cast<u32>(psAI_DetailPathMaxPerFrame)))
+			return;
+
+		++submissions;
 		m_object->m_wait_for_distributed_computation = true;
 		Device.seqParallel.push_back(xr_make_delegate(this, &CDetailPathBuilder::process));
 	}
@@ -48,9 +68,15 @@ public:
 		if (separate_computing)
 			m_object->m_wait_for_distributed_computation = false;
 
+		{
+
 		m_object->detail().build_path(*m_level_path, m_path_vertex_index);
+		}
+
+		{
 
 		m_object->on_build_path();
+		}
 
 		if (m_object->detail().failed())
 			m_object->m_path_state = CMovementManager::ePathStateBuildLevelPath;

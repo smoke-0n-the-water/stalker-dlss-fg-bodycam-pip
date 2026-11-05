@@ -2,6 +2,7 @@
 #pragma hdrstop
 
 #include "xrdebug.h"
+#include "engine_error_logger.h"
 #include "os_clipboard.h"
 
 #include <sal.h>
@@ -43,7 +44,7 @@ static BOOL bException = FALSE;
 # endif
 #endif
 
-#include <dbghelp.h> // MiniDump flags
+#include <dbghelp.h> // Stack walking and symbol resolution
 
 #ifdef USE_BUG_TRAP
 # include <BugTrap/source/BugTrap.h> // for BugTrap functionality
@@ -59,13 +60,17 @@ static BOOL bException = FALSE;
 
 #ifdef NO_BUG_TRAP //DEBUG
 # define USE_OWN_ERROR_MESSAGE_WINDOW
-#else
-# define USE_OWN_MINI_DUMP
 #endif //-NO_BUG_TRAP //DEBUG
 
 XRCORE_API xrDebug Debug;
 
 static bool error_after_dialog = false;
+static volatile LONG g_fatal_backend_depth = 0;
+
+bool xrDebug::is_fatal_in_progress() const
+{
+	return InterlockedCompareExchange(&g_fatal_backend_depth, 0, 0) != 0;
+}
 
 namespace crash_saving
 {
@@ -119,8 +124,12 @@ void LogStackTrace(LPCSTR header = nullptr, bool printStack = false)
     if (printStack) {
         printLuaStack();
         Msg("\n");
-        auto s = xr_StackWalker();
-        s.ShowCallstack();
+        if (EngineErrorLogger::TryBeginSymbolWork())
+        {
+            { auto walker = xr_StackWalker(); walker.ShowCallstack(); }
+            EngineErrorLogger::EndSymbolWork();
+        }
+        else Msg("! Native symbols skipped: DbgHelp is busy");
     }
 }
 
@@ -248,6 +257,18 @@ void xrDebug::do_exit(const std::string& message)
 void xrDebug::backend(const char* expression, const char* description, const char* argument0, const char* argument1,
                       const char* file, int line, const char* function, bool& ignore_always)
 {
+	InterlockedIncrement(&g_fatal_backend_depth);
+    EngineErrorLogger::Report(
+        EngineErrorLogger::Severity::Fatal,
+        expression,
+        description,
+        argument0,
+        argument1,
+        file,
+        line,
+        function
+    );
+
     // we save first
     crash_saving::save();
     
@@ -264,11 +285,6 @@ void xrDebug::backend(const char* expression, const char* description, const cha
 	gather_info(expression, description, argument0, argument1, file, line, function, assertion_info,
 	            sizeof(assertion_info));
 
-	LPCSTR endline = "\r\n";
-	LPSTR buffer = assertion_info + xr_strlen(assertion_info);
-	buffer += xr_sprintf(buffer, sizeof(assertion_info) - u32(buffer - &assertion_info[0]),
-	                     "%sPress OK to abort execution%s", endline, endline);
-
 	if (handler)
 		handler();
 
@@ -277,14 +293,8 @@ void xrDebug::backend(const char* expression, const char* description, const cha
     if (IsDebuggerPresent())
         DebugBreak();
 
-	ShowCursor(true);
-	ShowWindow(GetActiveWindow(), SW_FORCEMINIMIZE);
-	MessageBox(
-		NULL,
-		assertion_info,
-		"Fatal Error",
-		MB_OK | MB_ICONERROR | MB_SYSTEMMODAL
-	);
+	// No dialog: the report is already in ERROR, show the player that folder.
+	EngineErrorLogger::OpenLogFolder();
 
 	CS.Leave();
 
@@ -295,6 +305,18 @@ void xrDebug::backend(const char* expression, const char* description, const cha
 #else
 void xrDebug::backend(const char* expression, const char* description, const char* argument0, const char* argument1, const char* file, int line, const char* function, bool& ignore_always)
 {
+	InterlockedIncrement(&g_fatal_backend_depth);
+    EngineErrorLogger::Report(
+        EngineErrorLogger::Severity::Fatal,
+        expression,
+        description,
+        argument0,
+        argument1,
+        file,
+        line,
+        function
+    );
+
     static xrCriticalSection CS
 #ifdef PROFILE_CRITICAL_SECTIONS
         (MUTEX_PROFILE_ID(xrDebug::backend))
@@ -380,37 +402,37 @@ void xrDebug::backend(const char* expression, const char* description, const cha
     if (get_on_dialog())
         get_on_dialog() (false);
 
+	InterlockedDecrement(&g_fatal_backend_depth);
     CS.Leave();
 }
 #endif
 
 LPCSTR xrDebug::error2string(long code)
 {
-	char* result = 0;
-	static string1024 desc_storage;
-
-#ifdef _M_AMD64
-#else
-	WCHAR err_result[1024];
-    DXGetErrorDescription(code,err_result,sizeof(err_result));
-	wcstombs(result, err_result, sizeof(err_result));
-#endif
-	if (0 == result)
-	{
-		FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, 0, code, 0, desc_storage, sizeof(desc_storage) - 1, 0);
-		result = desc_storage;
-	}
-	return result;
+    // Independent per-thread buffer, IGNORE_INSERTS, and a numeric fallback.
+    // FormatMessage does not understand every DXGI HRESULT.
+    static thread_local char description[1024] = {};
+    const DWORD lastError = GetLastError();
+    wchar_t wide[512] = {};
+    if (!FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, static_cast<DWORD>(code), 0, wide, DWORD(_countof(wide)), nullptr) ||
+        !WideCharToMultiByte(CP_UTF8, 0, wide, -1, description, sizeof(description), nullptr, nullptr))
+        _snprintf_s(description, sizeof(description), _TRUNCATE, "HRESULT 0x%08lX (system description unavailable)",
+            static_cast<unsigned long>(code));
+    SetLastError(lastError);
+    return description;
 }
 
 void xrDebug::error(long hr, const char* expr, const char* file, int line, const char* function, bool& ignore_always)
 {
+    EngineErrorLogger::FailureCodeScope diagnosticCode(hr);
 	backend(expr, error2string(hr), 0, 0, file, line, function, ignore_always);
 }
 
 void xrDebug::error(long hr, const char* expr, const char* e2, const char* file, int line, const char* function,
                     bool& ignore_always)
 {
+    EngineErrorLogger::FailureCodeScope diagnosticCode(hr);
 	backend(expr, error2string(hr), e2, 0, file, line, function, ignore_always);
 }
 
@@ -448,40 +470,49 @@ bool ignore_verify = true;
 //AVO: print, dont crash
 void xrDebug::soft_fail(LPCSTR e1, LPCSTR file, int line, LPCSTR function)
 {
+	EngineErrorLogger::Report(EngineErrorLogger::Severity::Error, e1, "VERIFY failed", nullptr, nullptr, file, line, function);
 	if (!ignore_verify)
 	Msg("! VERIFY_FAILED: %s[%d] {%s}  %s", file, line, function, e1);
 }
 
 void xrDebug::soft_fail(LPCSTR e1, const std::string& e2, LPCSTR file, int line, LPCSTR function)
 {
+	EngineErrorLogger::Report(EngineErrorLogger::Severity::Error, e1, "VERIFY failed", e2.c_str(), nullptr, file, line, function);
 	if (!ignore_verify)
 	Msg("! VERIFY_FAILED: %s[%d] {%s}  %s %s", file, line, function, e1, e2.c_str());
 }
 
 void xrDebug::soft_fail(LPCSTR e1, LPCSTR e2, LPCSTR file, int line, LPCSTR function)
 {
+	EngineErrorLogger::Report(EngineErrorLogger::Severity::Error, e1, "VERIFY failed", e2, nullptr, file, line, function);
 	if (!ignore_verify)
 	Msg("! VERIFY_FAILED: %s[%d] {%s}  %s %s", file, line, function, e1, e2);
 }
 
 void xrDebug::soft_fail(LPCSTR e1, LPCSTR e2, LPCSTR e3, LPCSTR file, int line, LPCSTR function)
 {
+	EngineErrorLogger::Report(EngineErrorLogger::Severity::Error, e1, "VERIFY failed", e2, e3, file, line, function);
 	if (!ignore_verify)
 	Msg("! VERIFY_FAILED: %s[%d] {%s}  %s %s %s", file, line, function, e1, e2, e3);
 }
 
 void xrDebug::soft_fail(LPCSTR e1, LPCSTR e2, LPCSTR e3, LPCSTR e4, LPCSTR file, int line, LPCSTR function)
 {
+	string2048 details;
+	xr_sprintf(details, sizeof(details), "%s | %s | %s", (e2 ? e2 : "<none>"), (e3 ? e3 : "<none>"), (e4 ? e4 : "<none>"));
+	EngineErrorLogger::Report(EngineErrorLogger::Severity::Error, e1, "VERIFY failed", details, nullptr, file, line, function);
 	if (!ignore_verify)
 	Msg("! VERIFY_FAILED: %s[%d] {%s}  %s %s %s %s", file, line, function, e1, e2, e3, e4);
 }
 
 void xrDebug::soft_fail(LPCSTR e1, LPCSTR e2, LPCSTR e3, LPCSTR e4, LPCSTR e5, LPCSTR file, int line, LPCSTR function)
 {
+	string2048 details;
+	xr_sprintf(details, sizeof(details), "%s | %s | %s | %s", (e2 ? e2 : "<none>"), (e3 ? e3 : "<none>"), (e4 ? e4 : "<none>"), (e5 ? e5 : "<none>"));
+	EngineErrorLogger::Report(EngineErrorLogger::Severity::Error, e1, "VERIFY failed", details, nullptr, file, line, function);
 	if (!ignore_verify)
 	Msg("! VERIFY_FAILED: %s[%d] {%s}  %s %s %s %s %s", file, line, function, e1, e2, e3, e4, e5);
 }
-
 //-AVO
 
 void __cdecl xrDebug::fatal(const char* file, int line, const char* function, const char* F, ...)
@@ -490,7 +521,7 @@ void __cdecl xrDebug::fatal(const char* file, int line, const char* function, co
 
 	va_list p;
 	va_start(p, F);
-	vsprintf(buffer, F, p);
+	_vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, F, p);
 	va_end(p);
 
 	bool ignore_always = true;
@@ -594,52 +625,7 @@ void SetupExceptionHandler(const bool& dedicated)
     BT_SetReportFormat(BTRF_TEXT);
     BT_SetFlags(/**/BTF_DETAILEDMODE | /**BTF_EDIETMAIL | /**/BTF_ATTACHREPORT /**| BTF_LISTPROCESSES /**| BTF_SHOWADVANCEDUI /**| BTF_SCREENCAPTURE/**/);
 
-    u32 const minidump_flags =
-#ifndef MASTER_GOLD
-        (
-        MiniDumpWithDataSegs |
-        // MiniDumpWithFullMemory |
-// MiniDumpWithHandleData |
-// MiniDumpFilterMemory |
-// MiniDumpScanMemory |
-// MiniDumpWithUnloadedModules |
-# ifndef _EDITOR
-        MiniDumpWithIndirectlyReferencedMemory |
-# endif // _EDITOR
-// MiniDumpFilterModulePaths |
-// MiniDumpWithProcessThreadData |
-// MiniDumpWithPrivateReadWriteMemory |
-// MiniDumpWithoutOptionalData |
-// MiniDumpWithFullMemoryInfo |
-// MiniDumpWithThreadInfo |
-        // MiniDumpWithCodeSegs |
-        0
-        );
-#else // #ifndef MASTER_GOLD
-        dedicated ?
-    MiniDumpNoDump :
-                   (
-                   MiniDumpWithDataSegs |
-                   // MiniDumpWithFullMemory |
-// MiniDumpWithHandleData |
-// MiniDumpFilterMemory |
-// MiniDumpScanMemory |
-// MiniDumpWithUnloadedModules |
-# ifndef _EDITOR
-                   MiniDumpWithIndirectlyReferencedMemory |
-# endif // _EDITOR
-// MiniDumpFilterModulePaths |
-// MiniDumpWithProcessThreadData |
-// MiniDumpWithPrivateReadWriteMemory |
-// MiniDumpWithoutOptionalData |
-// MiniDumpWithFullMemoryInfo |
-// MiniDumpWithThreadInfo |
-                   // MiniDumpWithCodeSegs |
-                   0
-                   );
-#endif // #ifndef MASTER_GOLD
-
-    BT_SetDumpType(minidump_flags);
+    BT_SetDumpType(MiniDumpNoDump);
     BT_SetSupportEMail("cop-crash-report@stalker-game.com");
     // BT_SetSupportServer ("localhost", 9999);
     // BT_SetSupportURL ("www.gsc-game.com");
@@ -653,119 +639,9 @@ extern "C" BOOL __stdcall SetCrashHandlerFilter(PFNCHFILTFN pFn);
 
 static UnhandledExceptionFilterType* previous_filter = 0;
 
-#ifdef USE_OWN_MINI_DUMP
-typedef BOOL (WINAPI* MINIDUMPWRITEDUMP)(HANDLE hProcess, DWORD dwPid, HANDLE hFile, MINIDUMP_TYPE DumpType,
-    CONST PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam,
-    CONST PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam,
-    CONST PMINIDUMP_CALLBACK_INFORMATION CallbackParam
-    );
+// QUARK text crash diagnostics are handled by EngineErrorLogger.
+// Legacy standalone minidump generation is intentionally disabled.
 
-void save_mini_dump (_EXCEPTION_POINTERS* pExceptionInfo)
-{
-    // firstly see if dbghelp.dll is around and has the function we need
-// look next to the EXE first, as the one in System32 might be old
-    // (e.g. Windows 2000)
-    HMODULE hDll = NULL;
-    string_path szDbgHelpPath;
-
-    if (GetModuleFileName( NULL, szDbgHelpPath, _MAX_PATH ))
-    {
-        char* pSlash = strchr( szDbgHelpPath, '\\' );
-        if (pSlash)
-        {
-            xr_strcpy (pSlash+1, sizeof(szDbgHelpPath)-(pSlash - szDbgHelpPath), "DBGHELP.DLL" );
-            hDll = ::LoadLibrary( szDbgHelpPath );
-        }
-    }
-
-    if (hDll==NULL)
-    {
-        // load any version we can
-        hDll = ::LoadLibrary( "DBGHELP.DLL" );
-    }
-
-    LPCTSTR szResult = NULL;
-
-    if (hDll)
-    {
-        MINIDUMPWRITEDUMP pDump = (MINIDUMPWRITEDUMP)::GetProcAddress( hDll, "MiniDumpWriteDump" );
-        if (pDump)
-        {
-            string_path szDumpPath;
-            string_path szScratch;
-            string64 t_stemp;
-
-            timestamp (t_stemp);
-            xr_strcpy ( szDumpPath, Core.ApplicationName);
-            xr_strcat ( szDumpPath, "_" );
-            xr_strcat ( szDumpPath, Core.UserName );
-            xr_strcat ( szDumpPath, "_" );
-            xr_strcat ( szDumpPath, t_stemp );
-            xr_strcat ( szDumpPath, ".mdmp" );
-
-            __try
-            {
-                if (FS.path_exist("$logs$"))
-                    FS.update_path (szDumpPath,"$logs$",szDumpPath);
-            }
-            __except( EXCEPTION_EXECUTE_HANDLER )
-            {
-                string_path temp;
-                xr_strcpy (temp,szDumpPath);
-                xr_strcpy (szDumpPath,"logs/");
-                xr_strcat (szDumpPath,temp);
-            }
-
-            // create the file
-            HANDLE hFile = ::CreateFile( szDumpPath, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
-            if (INVALID_HANDLE_VALUE==hFile)
-            {
-                // try to place into current directory
-                MoveMemory (szDumpPath,szDumpPath+5,strlen(szDumpPath));
-                hFile = ::CreateFile( szDumpPath, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
-            }
-            if (hFile!=INVALID_HANDLE_VALUE)
-            {
-                _MINIDUMP_EXCEPTION_INFORMATION ExInfo;
-
-                ExInfo.ThreadId = ::GetCurrentThreadId();
-                ExInfo.ExceptionPointers = pExceptionInfo;
-                ExInfo.ClientPointers = NULL;
-
-                // write the dump
-                MINIDUMP_TYPE dump_flags = MINIDUMP_TYPE(MiniDumpNormal | MiniDumpFilterMemory | MiniDumpScanMemory );
-
-                BOOL bOK = pDump( GetCurrentProcess(), GetCurrentProcessId(), hFile, dump_flags, &ExInfo, NULL, NULL );
-                if (bOK)
-                {
-                    xr_sprintf( szScratch, "Saved dump file to '%s'", szDumpPath );
-                    szResult = szScratch;
-                    // retval = EXCEPTION_EXECUTE_HANDLER;
-                }
-                else
-                {
-                    xr_sprintf( szScratch, "Failed to save dump file to '%s' (error %d)", szDumpPath, GetLastError() );
-                    szResult = szScratch;
-                }
-                ::CloseHandle(hFile);
-            }
-            else
-            {
-                xr_sprintf( szScratch, "Failed to create dump file '%s' (error %d)", szDumpPath, GetLastError() );
-                szResult = szScratch;
-            }
-        }
-        else
-        {
-            szResult = "DBGHELP.DLL too old";
-        }
-    }
-    else
-    {
-        szResult = "DBGHELP.DLL not found";
-    }
-}
-#endif //-USE_OWN_MINI_DUMP
 
 void format_message(LPSTR buffer, const u32& buffer_size)
 {
@@ -860,25 +736,30 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 # endif // USE_OWN_MINI_DUMP
 
     if (IsDebuggerPresent())
-        DebugBreak();
+        return EXCEPTION_CONTINUE_SEARCH; // pass the original exception to debugger
 
-	ShowCursor(true);
-	ShowWindow(GetActiveWindow(), SW_FORCEMINIMIZE);
-	MessageBox(
-		GetTopWindow(NULL),
-		"Unhandled exception occured. See log for details",
-		"Fatal Error",
-		MB_OK | MB_ICONERROR | MB_SYSTEMMODAL
-	);
-	//    TerminateProcess(GetCurrentProcess(), 1);
+    EngineErrorLogger::OpenLogFolder();
+    return EXCEPTION_CONTINUE_SEARCH; // preserve process termination policy
+}
 
-	return (EXCEPTION_CONTINUE_SEARCH);
+// Windows ends the process on heap corruption without calling the unhandled
+// exception filter, but vectored handlers still see the exception first.
+static LONG CALLBACK heap_corruption_handler(EXCEPTION_POINTERS* pExceptionInfo)
+{
+    static volatile LONG reported = 0;
+    if (pExceptionInfo->ExceptionRecord->ExceptionCode == 0xC0000374 /*STATUS_HEAP_CORRUPTION*/ &&
+        !InterlockedExchange(&reported, 1))
+        UnhandledFilter(pExceptionInfo);
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 //-AVO
 #else
 LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 {
+    if (!error_after_dialog)
+        EngineErrorLogger::ReportUnhandledException(pExceptionInfo);
+
     string256 error_message;
     format_message(error_message, sizeof(error_message));
 
@@ -925,9 +806,6 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
         FlushLog();
 
 #ifndef USE_OWN_ERROR_MESSAGE_WINDOW
-# ifdef USE_OWN_MINI_DUMP
-    save_mini_dump (pExceptionInfo);
-# endif // USE_OWN_MINI_DUMP
 #else // USE_OWN_ERROR_MESSAGE_WINDOW
     if (!error_after_dialog)
     {
@@ -1152,6 +1030,8 @@ static void termination_handler(int signal)
 
 void debug_on_thread_spawn()
 {
+    ULONG crashStackReserve = 64u * 1024u;
+    SetThreadStackGuarantee(&crashStackReserve);
 #ifdef USE_BUG_TRAP
     BT_SetTerminate();
 #else // USE_BUG_TRAP
@@ -1192,6 +1072,9 @@ void xrDebug::_initialize(const bool& dedicated)
     SetupExceptionHandler(is_dedicated);
 #endif // USE_BUG_TRAP
 	previous_filter = ::SetUnhandledExceptionFilter(UnhandledFilter); // exception handler to all "unhandled" exceptions
+#ifdef NO_BUG_TRAP
+	AddVectoredExceptionHandler(1, heap_corruption_handler);
+#endif
 
 #if 0
     struct foo

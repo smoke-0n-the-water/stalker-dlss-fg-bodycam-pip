@@ -398,7 +398,7 @@ HMONITOR ResolveSelectedMonitor()
 {
     const xr_string& name = vid_monitor_name;
 
-    if (name.empty() || name == "Auto")
+    if (name.empty() || _stricmp(name.c_str(), "Auto") == 0)
         return NULL;
 
     if (!vid_monitor_token)

@@ -24,6 +24,7 @@
 #include <luabind/config.hpp>
 #include <luabind/luabind.hpp>
 #include <luabind/detail/find_best_match.hpp>
+#include <luabind/detail/pcall.hpp>
 
 namespace luabind { namespace detail { namespace free_functions {
 
@@ -44,6 +45,7 @@ namespace luabind { namespace detail { namespace free_functions {
         function_rep* rep = static_cast<function_rep*>(
             lua_touserdata(L, lua_upvalueindex(1))
         );
+        lua_to_cpp_profile_scope profile_scope(L, nullptr, rep ? rep->name() : nullptr);
 
         bool ambiguous = false;
         int min_match = std::numeric_limits<int>::max();

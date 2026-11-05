@@ -27,7 +27,7 @@ bool CScriptPropertyEvaluatorWrapper::evaluate()
 {
 	try
 	{
-		return (::luabind::call_member<bool>(this, "evaluate"));
+		return (call_bool_noargs("evaluate"));
 	}
 #ifdef DEBUG
 	catch(::luabind::cast_failed &exception) {

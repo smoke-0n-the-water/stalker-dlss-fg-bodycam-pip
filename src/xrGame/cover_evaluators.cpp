@@ -172,20 +172,22 @@ void CCoverEvaluatorFarFromEnemy::evaluate_smart_cover(smart_cover::cover const*
 bool CCoverEvaluatorBest::threat_on_the_way(Fvector const& cover_position) const
 {
 	Fvector const start_to_cover = Fvector().sub(cover_position, m_start_position);
-	float const start_to_cover_magnitude = start_to_cover.magnitude();
-	if (start_to_cover_magnitude < EPS_L)
+	const float start_to_cover_sqr = start_to_cover.square_magnitude();
+	if (start_to_cover_sqr < _sqr(EPS_L))
 		return (false);
 
 	Fvector const start_to_threat = Fvector().sub(m_enemy_position, m_start_position);
-	Fvector const start_to_cover_direction = Fvector(start_to_cover).normalize();
-	float const projection = start_to_cover_direction.dotproduct(start_to_threat);
-	float const start_to_threat_magnitude = start_to_threat.magnitude();
-	float const cos_alpha = projection / start_to_threat_magnitude;
-	float const angle = acosf(cos_alpha);
-	if (angle >= PI_DIV_6)
+	const float start_to_threat_sqr = start_to_threat.square_magnitude();
+	const float dot = start_to_cover.dotproduct(start_to_threat);
+
+	// angle(start_to_cover, start_to_threat) < 30 degrees:
+	// dot > 0 and dot^2 > |cover|^2 * |threat|^2 * cos^2(30), where cos^2(30) = 3/4.
+	if ((dot <= 0.f) || (dot * dot <= start_to_cover_sqr * start_to_threat_sqr * 0.75f))
 		return (false);
 
-	if (projection > start_to_cover_magnitude * 1.5f)
+	// projection(start_to_threat on start_to_cover) <= 1.5 * |start_to_cover|.
+	// Multiplying by |start_to_cover| removes the square root and normalization.
+	if (dot > start_to_cover_sqr * 1.5f)
 		return (false);
 
 	return (true);
@@ -283,22 +285,28 @@ void CCoverEvaluatorAngle::initialize(const Fvector& start_position, bool fake_c
 {
 	inherited::initialize(start_position, fake_call);
 	m_best_alpha = -1.f;
-	m_direction.sub(m_start_position, m_enemy_position);
-	m_direction.normalize_safe();
+
+	// The 360-direction cover scan depends only on the level vertex. Reuse the
+	// result for the common near/far fallback and subsequent searches on the same vertex.
+	if (m_cached_level_vertex_id == m_level_vertex_id)
+		return;
+
 	float best_value = -1.f;
-	float m_best_angle = 0.f;
+	float best_angle = 0.f;
 	for (float alpha = 0.f, step = PI_MUL_2 / 360.f; alpha < PI_MUL_2; alpha += step)
 	{
-		float high_value = ai().level_graph().compute_high_square(alpha, PI_DIV_2, m_level_vertex_id);
-		float low_value = ai().level_graph().compute_low_square(alpha, PI_DIV_2, m_level_vertex_id);
-		float value = _max(high_value, low_value);
+		const float high_value = ai().level_graph().compute_high_square(alpha, PI_DIV_2, m_level_vertex_id);
+		const float low_value = ai().level_graph().compute_low_square(alpha, PI_DIV_2, m_level_vertex_id);
+		const float value = _max(high_value, low_value);
 		if (value > best_value)
 		{
 			best_value = value;
-			m_best_angle = alpha;
+			best_angle = alpha;
 		}
 	}
-	m_best_direction.setHP(m_best_angle, 0.f);
+
+	m_best_direction.setHP(best_angle, 0.f);
+	m_cached_level_vertex_id = m_level_vertex_id;
 }
 
 void CCoverEvaluatorAngle::evaluate_cover(const CCoverPoint* cover_point, float weight)

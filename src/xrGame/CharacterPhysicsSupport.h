@@ -197,8 +197,9 @@ private:
 	void CreateIKController();
 	void DestroyIKController();
 	bool CollisionCorrectObjPos(const Fvector& start_from, bool character_create = false);
+	bool CollisionCorrectObjPosStaticOnly(const Fvector& start_from);
+	bool CollisionCorrectObjPosImpl(const Fvector& start_from, bool character_create, bool static_only);
 
-	void FlyTo(const Fvector& disp);
 	IC void UpdateDeathAnims();
 	IC bool DoCharacterShellCollide();
 	void UpdateCollisionActivatingDellay();

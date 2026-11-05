@@ -54,6 +54,7 @@ IC void CLevelPathManager::setup(
 	);
 	m_distance_xz = graph->header().cell_size();
 	m_sqr_distance_xz = _sqr(graph->header().cell_size());
+	m_blocked_vertices = parameters.blocked_vertices;
 	//		square_size_y			= _sqr((float)(graph->header().factor_y()/32767.0));
 	//		size_y					= (float)(graph->header().factor_y()/32767.0);
 }
@@ -122,8 +123,10 @@ TEMPLATE_SPECIALIZATION
 IC bool CLevelPathManager::is_accessible(const _index_type& vertex_id) const
 {
 	VERIFY(graph);
-	//	return					(graph->valid_vertex_id(vertex_id));
-	return (graph->is_accessible(vertex_id));
+	if (!graph->valid_vertex_id(vertex_id))
+		return false;
+
+	return !m_blocked_vertices || m_blocked_vertices->find(vertex_id) == m_blocked_vertices->end();
 }
 
 TEMPLATE_SPECIALIZATION

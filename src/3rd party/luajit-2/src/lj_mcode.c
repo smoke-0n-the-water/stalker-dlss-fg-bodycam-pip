@@ -1,6 +1,6 @@
 /*
 ** Machine code management.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #define lj_mcode_c
@@ -68,8 +68,10 @@ static void *mcode_alloc_at(jit_State *J, uintptr_t hint, size_t sz, DWORD prot)
 {
   void *p = VirtualAlloc((void *)hint, sz,
 			 MEM_RESERVE|MEM_COMMIT|MEM_TOP_DOWN, prot);
-  if (!p && !hint)
+  if (!p && !hint) {
+    J->stats_mcode_alloc_failures++;
     lj_trace_err(J, LJ_TRERR_MCODEAL);
+  }
   return p;
 }
 
@@ -101,7 +103,10 @@ static void *mcode_alloc_at(jit_State *J, uintptr_t hint, size_t sz, int prot)
 {
   void *p = mmap((void *)hint, sz, prot, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
   if (p == MAP_FAILED) {
-    if (!hint) lj_trace_err(J, LJ_TRERR_MCODEAL);
+    if (!hint) {
+      J->stats_mcode_alloc_failures++;
+      lj_trace_err(J, LJ_TRERR_MCODEAL);
+    }
     p = NULL;
   }
   return p;
@@ -180,7 +185,7 @@ static void mcode_protect(jit_State *J, int prot)
 #define MCPROT_RUN	MCPROT_RX
 
 /* Protection twiddling failed. Probably due to kernel security. */
-static LJ_NOINLINE void mcode_protfail(jit_State *J)
+static LJ_NORET LJ_NOINLINE void mcode_protfail(jit_State *J)
 {
   lua_CFunction panic = J2G(J)->panic;
   if (panic) {
@@ -188,6 +193,7 @@ static LJ_NOINLINE void mcode_protfail(jit_State *J)
     setstrV(L, L->top++, lj_err_str(L, LJ_ERR_JITPROT));
     panic(L);
   }
+  exit(EXIT_FAILURE);
 }
 
 /* Change protection of MCode area. */
@@ -204,8 +210,8 @@ static void mcode_protect(jit_State *J, int prot)
 
 /* -- MCode area allocation ----------------------------------------------- */
 
-#if LJ_TARGET_X64
-#define mcode_validptr(p)	((p) && (uintptr_t)(p) < (uintptr_t)1<<47)
+#if LJ_64
+#define mcode_validptr(p)	(p)
 #else
 #define mcode_validptr(p)	((p) && (uintptr_t)(p) < 0xffff0000)
 #endif
@@ -230,7 +236,8 @@ static void *mcode_alloc(jit_State *J, size_t sz)
   /* First try a contiguous area below the last one. */
   uintptr_t hint = J->mcarea ? (uintptr_t)J->mcarea - sz : 0;
   int i;
-  for (i = 0; i < 32; i++) {  /* 32 attempts ought to be enough ... */
+  /* Limit probing iterations, depending on the available pool size. */
+  for (i = 0; i < LJ_TARGET_JUMPRANGE; i++) {
     if (mcode_validptr(hint)) {
       void *p = mcode_alloc_at(J, hint, sz, MCPROT_GEN);
 
@@ -239,11 +246,11 @@ static void *mcode_alloc(jit_State *J, size_t sz)
 	return p;
       if (p) mcode_free(J, p, sz);  /* Free badly placed area. */
     }
-    /* Next try probing pseudo-random addresses. */
+    /* Next try probing 64K-aligned pseudo-random addresses. */
     do {
-      hint = (0x78fb ^ LJ_PRNG_BITS(J, 15)) << 16;  /* 64K aligned. */
-    } while (!(hint + sz < range));
-    hint = target + hint - (range>>1);
+      hint = LJ_PRNG_BITS(J, LJ_TARGET_JUMPRANGE-16) << 16;
+    } while (!(hint + sz < range+range));
+    hint = target + hint - range;
   }
   lj_trace_err(J, LJ_TRERR_MCODEAL);  /* Give up. OS probably ignores hints? */
   return NULL;
@@ -270,12 +277,6 @@ static void *mcode_alloc(jit_State *J, size_t sz)
 #endif
 
 /* -- MCode area management ----------------------------------------------- */
-
-/* Linked list of MCode areas. */
-typedef struct MCLink {
-  MCode *next;		/* Next area. */
-  size_t size;		/* Size of current area. */
-} MCLink;
 
 /* Allocate a new MCode area. */
 static void mcode_allocarea(jit_State *J)
@@ -375,10 +376,12 @@ void lj_mcode_limiterr(jit_State *J, size_t need)
   sizemcode = (size_t)J->param[JIT_P_sizemcode] << 10;
   sizemcode = (sizemcode + LJ_PAGESIZE-1) & ~(size_t)(LJ_PAGESIZE - 1);
   maxmcode = (size_t)J->param[JIT_P_maxmcode] << 10;
-  if ((size_t)need > sizemcode)
+  if (need * sizeof(MCode) > sizemcode)
     lj_trace_err(J, LJ_TRERR_MCODEOV);  /* Too long for any area. */
-  if (J->szallmcarea + sizemcode > maxmcode)
+  if (J->szallmcarea + sizemcode > maxmcode) {
+    J->stats_mcode_limit_hits++;
     lj_trace_err(J, LJ_TRERR_MCODEAL);
+  }
   mcode_allocarea(J);
   lj_trace_err(J, LJ_TRERR_MCODELM);  /* Retry with new area. */
 }

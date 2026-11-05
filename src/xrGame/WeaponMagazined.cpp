@@ -706,8 +706,16 @@ void CWeaponMagazined::UpdateSounds()
 	if (Device.dwFrame == dwUpdateSounds_Frame)
 		return;
 
+	const bool sounds_update_initialized = dwUpdateSounds_Frame != 0;
+	dwUpdateSounds_Frame = Device.dwFrame;
+
+	// Most world weapons are silent. Avoid forcing the owner's complete skeleton
+	// update merely to calculate a position that no sound emitter will consume.
+	if (!m_sounds.HasActive3DSounds())
+		return;
+
 	// demonized: put updates of m_sounds into second thread
-	if (g_bootComplete && mt_UpdateWeaponSounds && dwUpdateSounds_Frame != 0 )
+	if (g_bootComplete && mt_UpdateWeaponSounds && sounds_update_initialized)
 	{
 		// Force update of fire dependencies and then put into second thread, fixes flickering limbs
 		get_LastFP();
@@ -717,8 +725,6 @@ void CWeaponMagazined::UpdateSounds()
 	{
 		UpdateSoundsPositions();
 	}
-
-	dwUpdateSounds_Frame = Device.dwFrame;
 }
 
 // demonized: check if cycle_down is enabled and shot num below max possible burst. Adds support for arbitrary burst shot at rpm_mode_2 with cycling down to rpm after maxBurstAmount

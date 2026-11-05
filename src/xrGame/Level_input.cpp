@@ -106,10 +106,11 @@ void CLevel::IR_OnMouseHold(int btn)
 
 void CLevel::IR_OnMouseMove(int dx, int dy)
 {
-    ::luabind::functor<bool> funct;
-    if (ai().script_engine().functor("level_input.on_mouse_move", funct))
+	static cached_script_functor<bool> mouse_move_cache("level_input.on_mouse_move");
+	const ::luabind::functor<bool>* funct = mouse_move_cache.get(ai().script_engine());
+    if (funct)
     {
-        if (funct(dx, dy, g_bDisableAllInput))
+		if ((*funct)(dx, dy, g_bDisableAllInput))
             return;
     }
 
@@ -625,10 +626,11 @@ void CLevel::IR_OnKeyboardRelease(int key)
 
 void CLevel::IR_OnKeyboardHold(int key)
 {
-    ::luabind::functor<bool> funct;
-    if (ai().script_engine().functor("level_input.on_key_hold", funct))
+	static cached_script_functor<bool> key_hold_cache("level_input.on_key_hold");
+	const ::luabind::functor<bool>* funct = key_hold_cache.get(ai().script_engine());
+    if (funct)
     {
-        if (funct(key, get_binded_action(key), g_bDisableAllInput))
+		if ((*funct)(key, get_binded_action(key), g_bDisableAllInput))
             return;
     }
 

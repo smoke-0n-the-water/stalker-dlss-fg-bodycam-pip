@@ -40,7 +40,11 @@ void CSoundRender_Target::start(CSoundRender_Emitter* E)
 	// 5. Deferred-play-signal (emitter-exist, rendering-false)
 	m_pEmitter = E;
 	rendering = FALSE;
-	attach();
+	// Do not open and parse the Ogg stream here. fill_data() can satisfy a target
+	// entirely from the decoded PCM cache; get_data() already opens the stream
+	// lazily on the first real cache miss and the decoder then seeks to the
+	// requested line. This avoids mass resume/start bursts doing redundant file
+	// opens for sources whose startup blocks are already cached.
 }
 
 void CSoundRender_Target::render()

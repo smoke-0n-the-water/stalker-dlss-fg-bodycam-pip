@@ -16,6 +16,10 @@ void xrMemory::mem_free(void* P)
 {
     free(P);
 }
+void* xrMemory::mem_alloc_uninitialized(size_t size)
+{
+    return mem_alloc(size);
+}
 void* xrMemory::mem_realloc(void* P, size_t size)
 {
     void* data = realloc(P, size);

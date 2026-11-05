@@ -19,11 +19,54 @@
 #include "stalker_danger_planner.h"
 #include "stalker_alife_actions.h"
 #include "stalker_combat_planner.h"
+#include "ai_space.h"
+#include "../xrServerEntities/script_engine.h"
 //#include "stalker_combat_planner_new.h"
 
 //#define GOAP_DEBUG
 
 using namespace StalkerDecisionSpace;
+
+namespace
+{
+void record_stalker_brain_stage(void* context, LPCSTR stage, LPCSTR action_name,
+	const u32 action_id, const u64 elapsed_ticks)
+{
+	CStalkerPlanner* planner = static_cast<CStalkerPlanner*>(context);
+	if (!planner || !stage)
+		return;
+
+	CAI_Stalker& stalker = planner->object();
+	string512 phase;
+	if (action_name && action_name[0])
+		_snprintf_s(phase, sizeof(phase), _TRUNCATE, "stalker.brain.%s:%s", stage, action_name);
+	else
+		_snprintf_s(phase, sizeof(phase), _TRUNCATE, "stalker.brain.%s", stage);
+
+	ai().script_engine().record_native_profile("ai_brain", phase,
+		*stalker.cName(), static_cast<u32>(stalker.ID()), elapsed_ticks, action_id);
+}
+
+class CStalkerBrainProfileScope : xray::noncopyable
+{
+public:
+	CStalkerBrainProfileScope(CStalkerPlanner* planner, const bool enabled) :
+		m_planner(enabled ? planner : nullptr)
+	{
+		if (m_planner)
+			m_planner->set_update_profile_callback(m_planner, &record_stalker_brain_stage);
+	}
+
+	~CStalkerBrainProfileScope()
+	{
+		if (m_planner)
+			m_planner->set_update_profile_callback(nullptr, nullptr);
+	}
+
+private:
+	CStalkerPlanner* m_planner;
+};
+}
 
 CStalkerPlanner::CStalkerPlanner()
 {
@@ -78,6 +121,8 @@ void CStalkerPlanner::update(u32 time_delta)
 		set_use_log			(!!psAI_Flags.test(aiGOAP));
 #endif
 
+	const bool record_brain = ai().script_engine().lua_recording() && CPU::qpc_freq;
+	CStalkerBrainProfileScope profile_scope(this, record_brain);
 	inherited::update();
 
 #ifdef GOAP_DEBUG

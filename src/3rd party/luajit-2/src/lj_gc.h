@@ -1,6 +1,6 @@
 /*
 ** Garbage collector.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #ifndef _LJ_GC_H
@@ -55,6 +55,10 @@ LJ_FUNC void lj_gc_finalize_cdata(lua_State *L);
 #endif
 LJ_FUNC void lj_gc_freeall(global_State *g);
 LJ_FUNCA int LJ_FASTCALL lj_gc_step(lua_State *L);
+LJ_FUNC int LJ_FASTCALL lj_gc_step_noheadroom(lua_State *L);
+LJ_FUNC int LJ_FASTCALL lj_gc_step_sized(lua_State *L, MSize stepsize,
+					 MSize stepheadroom);
+LJ_FUNC int LJ_FASTCALL lj_gc_preatomic(lua_State *L, MSize worklimit);
 LJ_FUNCA void LJ_FASTCALL lj_gc_step_fixtop(lua_State *L);
 #if LJ_HASJIT
 LJ_FUNC int LJ_FASTCALL lj_gc_step_jit(global_State *g, MSize steps);

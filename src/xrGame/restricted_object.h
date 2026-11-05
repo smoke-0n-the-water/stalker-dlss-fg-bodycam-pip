@@ -53,6 +53,7 @@ public:
 	virtual void add_border(const Fvector& start_position, const Fvector& dest_position) const;
 	virtual void add_border(u32 start_vertex_id, u32 dest_vertex_id) const;
 	virtual void remove_border() const;
+	virtual void collect_path_border(u32 start_vertex_id, u32 dest_vertex_id, xr_vector<u32>& result) const;
 
 public:
 	u32 accessible_nearest(const Fvector& position, Fvector& result) const;

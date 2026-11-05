@@ -53,21 +53,44 @@ void ActivateShapePhysShellHolder(IPhysicsShellHolder* obj, const Fmatrix& in_xf
 #endif // DEBUG
 }
 
-bool ActivateShapeCharacterPhysicsSupport(Fvector& out_pos, const Fvector& vbox, const Fvector& activation_pos,
+namespace
+{
+bool ActivateShapeCharacterPhysicsSupportImpl(Fvector& out_pos, const Fvector& vbox, const Fvector& activation_pos,
                                           const Fmatrix& mXFORM, bool not_collide_characters, bool set_rotation,
-                                          IPhysicsShellHolder* m_EntityAlife)
+                                               IPhysicsShellHolder* m_EntityAlife, bool static_only)
 {
 	PROF_EVENT("ActivateShapeCharacterPhysicsSupport");
 	CPHActivationShape activation_shape;
 	activation_shape.Create(activation_pos, vbox, m_EntityAlife);
 	if (not_collide_characters)
-	{
 		CPHCollideValidator::SetCharacterClassNotCollide(activation_shape);
-	}
+	if (static_only)
+		CPHCollideValidator::SetDynamicNotCollide(activation_shape);
 	if (set_rotation)
 		activation_shape.set_rotation(mXFORM);
-	bool ret = activation_shape.Activate(vbox, 1, 1.f,M_PI / 8.f);
+
+	const bool ret = static_only
+		? activation_shape.ActivateStaticOnly(vbox, 1, 1.f, M_PI / 8.f)
+		: activation_shape.Activate(vbox, 1, 1.f, M_PI / 8.f);
 	out_pos.set(activation_shape.Position());
 	activation_shape.Destroy();
 	return ret;
+}
+}
+
+bool ActivateShapeCharacterPhysicsSupport(Fvector& out_pos, const Fvector& vbox, const Fvector& activation_pos,
+                                          const Fmatrix& mXFORM, bool not_collide_characters, bool set_rotation,
+                                          IPhysicsShellHolder* m_EntityAlife)
+{
+	return ActivateShapeCharacterPhysicsSupportImpl(out_pos, vbox, activation_pos, mXFORM,
+	                                                not_collide_characters, set_rotation, m_EntityAlife, false);
+}
+
+bool ActivateShapeCharacterPhysicsSupportStaticOnly(Fvector& out_pos, const Fvector& vbox,
+                                                      const Fvector& activation_pos, const Fmatrix& mXFORM,
+                                                      bool not_collide_characters, bool set_rotation,
+                                                      IPhysicsShellHolder* m_EntityAlife)
+{
+	return ActivateShapeCharacterPhysicsSupportImpl(out_pos, vbox, activation_pos, mXFORM,
+	                                                not_collide_characters, set_rotation, m_EntityAlife, true);
 }

@@ -12,6 +12,7 @@ void CThread::startup(void* P)
 {
 	CThread* T = (CThread*)P;
 	T->Execute();
+	SetEvent(T->m_finishedEvent);
 }
 
 static CRITICAL_SECTION CS;
@@ -19,9 +20,8 @@ static CRITICAL_SECTION CS;
 // TShellChangeThread -------------------------------------------------------
 CFS_PathNotificator::CFS_PathNotificator() : CThread(0)
 {
-	FMutex = CreateMutex(NULL, true /* initial owner - must be Release'd by this thread*/, NULL);
-	if (FMutex)
-		WaitForSingleObject(FMutex, INFINITE);
+	FMutex = CreateMutex(NULL, true /* initial owner - must be released by this thread*/, NULL);
+	R_ASSERT(FMutex);
 }
 
 //---------------------------------------------------------------------------
@@ -40,6 +40,11 @@ CFS_PathNotificator::~CFS_PathNotificator(void)
 		}
 	}
 	events.clear();
+	if (FMutex)
+	{
+		CloseHandle(FMutex);
+		FMutex = NULL;
+	}
 }
 
 //---------------------------------------------------------------------------
@@ -127,8 +132,10 @@ void CLocatorAPI::ClearEventNotification()
 	if (FThread)
 	{
 		FThread->Terminate();
-		ReleaseMutex(FThread->FMutex); // this current thread must release the mutex
+		ReleaseMutex(FThread->FMutex); // release initial ownership so the worker can exit
+		FThread->Wait();
 		xr_delete(FThread);
+		FThread = nullptr;
 	}
 	DeleteCriticalSection(&CS);
 }

@@ -64,6 +64,12 @@ CInput::CInput(BOOL bExclusive, int deviceForInit)
 	ZeroMemory(timeSave, sizeof(timeStamp));
 	ZeroMemory(offs, sizeof(offs));
 
+	// DirectInput buffers are reused for the lifetime of the input manager.
+	// Avoiding two heap allocations per frame removes allocator contention from
+	// the latency-sensitive input callback.
+	m_keyboard_events.resize(static_cast<u32>(_max(KEYBOARDBUFFERSIZE, 1)));
+	m_mouse_events.resize(static_cast<u32>(_max(MOUSEBUFFERSIZE, 1)));
+
 	//===================== Dummy pack
 	iCapture(&dummyController);
 
@@ -192,20 +198,23 @@ void CInput::KeyUpdate()
 	if (b_altF4) return;
 
 	HRESULT hr;
-	DWORD dwElements = KEYBOARDBUFFERSIZE;
-	auto od = std::make_unique<DIDEVICEOBJECTDATA[]>(KEYBOARDBUFFERSIZE);
+	const u32 requested_elements = static_cast<u32>(_max(KEYBOARDBUFFERSIZE, 1));
+	if (m_keyboard_events.size() < requested_elements)
+		m_keyboard_events.resize(requested_elements);
+	DWORD dwElements = requested_elements;
+	DIDEVICEOBJECTDATA* const od = m_keyboard_events.data();
 	DWORD key = 0;
 
 	VERIFY(pKeyboard);
 
-	hr = pKeyboard->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), &od[0], &dwElements, 0);
+	hr = pKeyboard->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), od, &dwElements, 0);
 	if ((hr == DIERR_INPUTLOST) || (hr == DIERR_NOTACQUIRED))
 	{
 		hr = pKeyboard->Acquire();
 		if (hr != S_OK)
 			return;
 
-		hr = pKeyboard->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), &od[0], &dwElements, 0);
+		hr = pKeyboard->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), od, &dwElements, 0);
 		if (hr != S_OK)
 			return;
 	}
@@ -434,17 +443,20 @@ BOOL CInput::iGetAsyncBtnState(int btn)
 void CInput::MouseUpdate()
 {
 	HRESULT hr;
-	DWORD dwElements = MOUSEBUFFERSIZE;
-	auto od = std::make_unique<DIDEVICEOBJECTDATA[]>(MOUSEBUFFERSIZE);
+	const u32 requested_elements = static_cast<u32>(_max(MOUSEBUFFERSIZE, 1));
+	if (m_mouse_events.size() < requested_elements)
+		m_mouse_events.resize(requested_elements);
+	DWORD dwElements = requested_elements;
+	DIDEVICEOBJECTDATA* const od = m_mouse_events.data();
 
 	VERIFY(pMouse);
 
-	hr = pMouse->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), &od[0], &dwElements, 0);
+	hr = pMouse->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), od, &dwElements, 0);
 	if ((hr == DIERR_INPUTLOST) || (hr == DIERR_NOTACQUIRED))
 	{
 		hr = pMouse->Acquire();
 		if (hr != S_OK) return;
-		hr = pMouse->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), &od[0], &dwElements, 0);
+		hr = pMouse->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), od, &dwElements, 0);
 		if (hr != S_OK) return;
 	};
 

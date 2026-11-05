@@ -7,6 +7,8 @@
 #include "UIDialogHolder.h"
 #include "xrEngine/CustomHUD.h"
 #include "script_game_object.h"
+#include <luabind/identity_back_reference.hpp>
+#include <luabind/weak_ref.hpp>
 
 // refs
 class CUI;
@@ -28,15 +30,28 @@ struct StaticDrawableWrapper : public IPureDestroyableObject
 	CUIStatic* m_static;
 	float m_endTime;
 	shared_str m_name;
+	mutable luabind::weak_ref m_lua_instance_ref;
 
 	StaticDrawableWrapper();
 	virtual void destroy();
+	bool extract_lua_instance(lua_State* L) const;
+	void store_lua_instance(lua_State* L, int index) const;
 	void Draw();
 	void Update();
 	CUIStatic* wnd() { return m_static; }
 	bool IsActual() const;
 	void SetText(const char* text);
 };
+
+namespace luabind
+{
+	template <>
+	struct identity_back_reference<StaticDrawableWrapper>
+	{
+		static bool extract(lua_State* L, const StaticDrawableWrapper* object);
+		static void store(lua_State* L, const StaticDrawableWrapper* object, int index);
+	};
+}
 
 struct MPLevelDesc
 {
@@ -90,6 +105,7 @@ protected:
 	CUIActorMenu* ActorMenu;
 	CUIPdaWnd* PdaMenu;
 	bool showGameIndicators;
+	mutable luabind::weak_ref m_lua_instance_ref;
 
 public:
 	// XXX nitrocaster: make not public
@@ -98,6 +114,8 @@ public:
 
 	CUIGameCustom();
 	virtual ~CUIGameCustom();
+	bool extract_lua_instance(lua_State* L) const;
+	void store_lua_instance(lua_State* L, int index) const;
 	virtual void SetClGame(game_cl_GameState* gameState);
 	virtual void OnInventoryAction(PIItem item, u16 actionType);
 
@@ -153,5 +171,15 @@ public:
 	void enable_fake_indicators(bool enable);
 DECLARE_SCRIPT_REGISTER_FUNCTION
 };
+
+namespace luabind
+{
+	template <>
+	struct identity_back_reference<CUIGameCustom>
+	{
+		static bool extract(lua_State* L, const CUIGameCustom* object);
+		static void store(lua_State* L, const CUIGameCustom* object, int index);
+	};
+}
 
 extern CUIGameCustom* CurrentGameUI();

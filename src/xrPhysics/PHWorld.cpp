@@ -23,6 +23,8 @@
 #include "../xrengine/defines.h"
 #include "../xrcdb/xr_area.h"
 #include "../xrcore/fs_internal.h"
+#include "../xrCore/profiler.h"
+#include "../xrCore/job_system.h"
 #ifdef	DEBUG
 //				void DBG_ObjAfterPhDataUpdate	( CPHObject *obj );
 //				void DBG_ObjBeforePhDataUpdate	( CPHObject *obj );
@@ -90,6 +92,8 @@ void __stdcall set_mtl_lib(CGameMtlLibrary* l)
 void __stdcall destroy_object_space(CObjectSpace* & os)
 {
 	xr_delete(os);
+	xr_delete(g_SpatialSpace);
+	xr_delete(g_SpatialSpacePhysic);
 }
 
 void CPHMesh::Create(dSpaceID space, dWorldID world)
@@ -107,7 +111,6 @@ void CPHMesh::Destroy()
 	dGeomDestroy(Geom);
 	dTriListClass = -1;
 }
-
 
 ////////////////////////////////////////////////////////////////////////////
 ///////////CPHWorld/////////////////////////////////////////////////////////
@@ -130,14 +133,11 @@ static struct sempty_update_callback :
 	public IPHWorldUpdateCallbck
 {
 	void update_step()
-	{
-	};
+	{};
 
 	void phys_shell_relcase(CPhysicsShell* sh)
-	{
-	};
+	{};
 } empty_update_callback;
-
 
 CPHWorld::CPHWorld(): // IPHWorldUpdateCallbck		*_update_callback
 	m_update_callback(&empty_update_callback),
@@ -302,6 +302,32 @@ void CPHWorld::OnFrame()
 //////////////////////////////////////////////////////////////////////////////
 //static dReal frame_time=0.f;
 
+namespace
+{
+struct SPhysicsIslandBatch
+{
+	const xr_vector<CPHIsland*>* islands;
+	dReal step;
+	__declspec(align(64)) volatile LONG next_index;
+};
+
+void solve_physics_islands(void* raw_context)
+{
+	SPhysicsIslandBatch& context = *static_cast<SPhysicsIslandBatch*>(raw_context);
+	for (;;)
+	{
+		const LONG index = InterlockedIncrement(&context.next_index) - 1;
+		if (index < 0 || static_cast<u32>(index) >= context.islands->size())
+			return;
+
+		CPHIsland* island = (*context.islands)[index];
+
+		PROF_EVENT("CPHIsland::Step");
+		island->Step(context.step);
+	}
+}
+}
+
 void CPHWorld::Step()
 {
 	PROF_EVENT("CPHWorld::Step");
@@ -331,7 +357,7 @@ void CPHWorld::Step()
 	++m_steps_num;
 	++m_steps_short_num;
 	Device().StatPhysics()->ph_collision.Begin();
-
+	{
 
 	for (i_object = m_objects.begin(); m_objects.end() != i_object;)
 	{
@@ -345,7 +371,7 @@ void CPHWorld::Step()
 #endif
 		++i_object;
 	}
-
+	}
 
 	Device().StatPhysics()->ph_collision.End();
 
@@ -358,6 +384,8 @@ void CPHWorld::Step()
 		++i_object;
 	}
 #endif
+
+	{
 
 	for (i_object = m_objects.begin(); m_objects.end() != i_object;)
 	{
@@ -381,6 +409,7 @@ void CPHWorld::Step()
 		++i_update_object;
 		obj->PhTune(fixed_step);
 	}
+	}
 
 	Device().StatPhysics()->ph_core.Begin();
 
@@ -389,23 +418,31 @@ void CPHWorld::Step()
 	debug_output().dbg_joints_num()=0;
 	debug_output().dbg_islands_num()=0;
 #endif
+	xr_vector<CPHIsland*>& active_islands = m_step_islands;
+	u32 island_work = 0;
+	{
+
 	//////////////////////////////////////////////////////////////////////
 	VERIFY(m_update_callback);
 	m_update_callback->update_step();
 	//	m_commander						->update();
 	//////////////////////////////////////////////////////////////////////
+		active_islands.clear_not_free();
+		if (active_islands.capacity() < m_objects.count())
+			active_islands.reserve(m_objects.count());
 	for (i_object = m_objects.begin(); m_objects.end() != i_object;)
 	{
 		CPHObject* obj = (*i_object);
 		++i_object;
+			CPHIsland& island = obj->Island();
 #ifdef DEBUG
 		if(debug_output().ph_dbg_draw_mask().test(phDbgDrawObjectStatistics))
 		{
-			if(obj->Island().IsActive())
+				if(island.IsActive())
 			{
 				debug_output().dbg_islands_num()++;
-				debug_output().dbg_joints_num()+=obj->Island().nj;
-				debug_output().dbg_bodies_num()+=obj->Island().nb;
+					debug_output().dbg_joints_num()+=island.nj;
+					debug_output().dbg_bodies_num()+=island.nb;
 			}
 		}
 #endif
@@ -413,15 +450,60 @@ void CPHWorld::Step()
 #ifdef	DEBUG
 		debug_output().DBG_ObjBeforeStep( obj );
 #endif
-		obj->IslandStep(fixed_step);
+			if (island.IsActive())
+			{
+				active_islands.push_back(&island);
+				island_work += u32(_max(0, island.nb)) + 4u * u32(_max(0, island.nj));
+			}
+		}
+	}
+
+	// Fork/join and ODE cache warm-up cost more than a handful of tiny contact
+	// islands. Keep ordinary character/contact traffic on the current physics
+	// worker and fan out only a genuinely heavy solver batch.
+	const u32 parallel_min_work = 96;
+	const u32 target_work_per_lane = 64;
+	const bool parallel_islands = psDeviceFlags.test(mtPhysics) &&
+		xr_jobs::worker_count() > 1 && active_islands.size() > 1 && island_work >= parallel_min_work;
+	{
+
+		if (parallel_islands)
+		{
+			std::sort(active_islands.begin(), active_islands.end(), [](const CPHIsland* left, const CPHIsland* right)
+			{
+				return left->nj * 4 + left->nb > right->nj * 4 + right->nb;
+			});
+
+			SPhysicsIslandBatch context = {&active_islands, fixed_step, 0};
+			xr_jobs::task_group group;
+			const u32 useful_lanes = _max(2u, (island_work + target_work_per_lane - 1) / target_work_per_lane);
+			const u32 lane_count = _min(u32(active_islands.size()), _min(xr_jobs::worker_count(), useful_lanes));
+			// The current physics worker is already available: let it consume one
+			// lane instead of publishing an extra nested job and waiting idly.
+			xr_jobs::submit_many(&solve_physics_islands, &context,
+				lane_count - 1, &group, xr_jobs::priority::high);
+			solve_physics_islands(&context);
+			xr_jobs::wait(group);
+		}
+		else
+		{
+			for (u32 island_index = 0; island_index < active_islands.size(); ++island_index)
+			{
+				CPHIsland* island = active_islands[island_index];
+
+				island->Step(fixed_step);
+			}
+		}
+	}
 
 #ifdef	DEBUG
-		debug_output().DBG_ObjAfterStep( obj );
+	for (i_object = m_objects.begin(); m_objects.end() != i_object; ++i_object)
+		debug_output().DBG_ObjAfterStep(*i_object);
 #endif
-	}
 
 	Device().StatPhysics()->ph_core.End();
 
+	{
 
 	for (i_object = m_objects.begin(); m_objects.end() != i_object;)
 	{
@@ -448,15 +530,17 @@ void CPHWorld::Step()
 		++i_update_object;
 		obj->PhDataUpdate(fixed_step);
 	}
-
+	}
 
 #ifdef DEBUG
 	debug_output().dbg_contacts_num()=ContactGroup->num;
 #endif
+	{
+
 	dJointGroupEmpty(ContactGroup); //this is to be called after PhDataUpdate!!!-the order is critical!!!
 	ContactFeedBacks.empty();
 	ContactEffectors.empty();
-
+	}
 }
 
 void CPHWorld::StepTouch()
@@ -604,7 +688,6 @@ void CPHWorld::Freeze()
 
 	PH_OBJECT_I iter = m_freezed_objects.begin(),
 	            e = m_freezed_objects.end();
-
 
 	for (; e != iter; ++iter)
 		(*iter)->FreezeContent();

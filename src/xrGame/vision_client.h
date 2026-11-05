@@ -29,6 +29,7 @@ private:
 private:
 	u32 m_state;
 	u32 m_time_stamp;
+	u32 m_last_trace_time;
 	Fvector m_position;
 
 private:

@@ -29,6 +29,7 @@ protected:
 	_iterator m_next_iterator;
 	CTimer m_timer;
 	float m_max_process_time;
+	u64 m_process_deadline;
 	bool m_first_update;
 
 protected:
@@ -45,6 +46,7 @@ public:
 	template <typename _update_predicate>
 	IC u32 update(const _update_predicate& predicate, bool const iterate_as_first_time_next_time);
 	IC void set_process_time(const float& process_time);
+	IC void set_process_deadline(u64 deadline);
 	IC const _REGISTRY& objects() const;
 	IC void clear();
 	IC bool empty() const;

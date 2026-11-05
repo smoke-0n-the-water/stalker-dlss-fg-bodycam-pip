@@ -26,6 +26,8 @@ void CMonsterSquad::RegisterMember(CEntity* pE)
 	SSquadCommand C;
 	C.type = SC_NONE;
 	m_commands.insert(mk_pair(pE, C));
+	m_idle_side_indices.resize(m_goals.size());
+	m_idle_member_slots.reserve(m_goals.size());
 
 	// установить лидера
 	if (!leader) leader = pE;
@@ -37,6 +39,7 @@ void CMonsterSquad::RemoveMember(CEntity* pE)
 	MEMBER_GOAL_MAP_IT it_goal = m_goals.find(pE);
 	if (it_goal == m_goals.end()) return;
 	m_goals.erase(it_goal);
+	m_idle_member_slots.clear();
 
 	// удалить из команд
 	MEMBER_COMMAND_MAP_IT it_command = m_commands.find(pE);
@@ -224,13 +227,18 @@ u8 CMonsterSquad::get_index(CEntity* m_object)
 u8 CMonsterSquad::get_count(const CEntity* object, float radius)
 {
 	u8 count = 0;
+	if (!(radius > 0.f))
+		return count;
+
+	const Fvector object_position = object->Position();
+	const float radius_sqr = _sqr(radius);
 
 	for (MEMBER_GOAL_MAP_IT it_goal = m_goals.begin(); it_goal != m_goals.end(); ++it_goal)
 	{
 		SMemberGoal goal = it_goal->second;
 		if ((goal.entity != 0) && (goal.entity != object) && (goal.entity->g_Alive()))
 		{
-			if (goal.entity->Position().distance_to(object->Position()) < radius) count++;
+			if (goal.entity->Position().distance_to_sqr(object_position) < radius_sqr) count++;
 		}
 	}
 

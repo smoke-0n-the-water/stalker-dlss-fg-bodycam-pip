@@ -21,6 +21,7 @@
 #include "alife_monster_brain.h"
 #include "alife_monster_movement_manager.h"
 #include "alife_monster_detail_path_manager.h"
+#include "../xrServerEntities/script_engine.h"
 
 void CSE_ALifeMonsterAbstract::add_online(const bool& update_registries)
 {
@@ -37,8 +38,21 @@ void CSE_ALifeMonsterAbstract::add_offline(const xr_vector<ALife::_OBJECT_ID>& s
 
 void CSE_ALifeMonsterAbstract::on_register()
 {
+	const bool record = ai().script_engine().lua_recording() && CPU::qpc_freq;
+	LPCSTR record_name = name();
+	const u32 record_id = static_cast<u32>(ID);
+	CScopedLuaRecordPhase total_phase(ai().script_engine(), "alife_register", "monster.total",
+		record_name, record_id, 0, record);
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "alife_register", "monster.inherited_dynamic",
+			record_name, record_id, 0, record);
 	inherited1::on_register();
+	}
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "alife_register", "monster.brain_on_register",
+			record_name, record_id, 0, record);
 	brain().on_register();
+	}
 }
 
 void CSE_ALifeMonsterAbstract::on_unregister()

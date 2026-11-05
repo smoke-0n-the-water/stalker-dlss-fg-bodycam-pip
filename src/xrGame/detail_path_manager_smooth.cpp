@@ -431,64 +431,171 @@ bool CDetailPathManager::compute_path(
 	const u32 straight_line_index_negative
 )
 {
-	STrajectoryPoint start = _start;
-	STrajectoryPoint dest = _dest;
-	float min_time = flt_max, time;
-	u32 size = m_tpTravelLine ? m_tpTravelLine->size() : 0;
-	u32 real_straight_line_index;
-	xr_vector<STravelParamsIndex>::const_iterator I = start_params.begin();
-	xr_vector<STravelParamsIndex>::const_iterator E = start_params.end();
-	for (; I != E; ++I)
+	struct SBestVelocityPair
 	{
-		EDirectionType direction_type = eDirectionTypePP;
-		start = _start;
-		(STravelParams&)start = (*I);
-		real_straight_line_index = straight_line_index;
+		u32 start_index;
+		u32 dest_index;
+		u32 straight_index;
+		EDirectionType direction_type;
+		float time;
+		bool valid;
+
+		SBestVelocityPair() :
+			start_index(u32(-1)),
+			dest_index(u32(-1)),
+			straight_index(u32(-1)),
+			direction_type(eDirectionTypePP),
+			time(flt_max),
+			valid(false)
+		{
+		}
+	};
+
+	const u32 original_size = m_tpTravelLine ? static_cast<u32>(m_tpTravelLine->size()) : 0;
+	SBestVelocityPair best;
+
+	for (u32 start_index = 0, start_count = static_cast<u32>(start_params.size());
+		start_index < start_count; ++start_index)
+	{
+		STrajectoryPoint start = _start;
+		(STravelParams&)start = start_params[start_index];
+
+		u32 real_straight_line_index = straight_line_index;
+		EDirectionType start_direction_type = eDirectionTypePP;
 		if (is_negative(start.linear_velocity))
 		{
 			real_straight_line_index = straight_line_index_negative;
-			direction_type = EDirectionType(direction_type | eDirectionTypeFN);
+			start_direction_type = EDirectionType(start_direction_type | eDirectionTypeFN);
 			start.direction.mul(-1.f);
 		}
-		xr_vector<STravelParamsIndex>::const_iterator i = dest_params.begin();
-		xr_vector<STravelParamsIndex>::const_iterator e = dest_params.end();
-		for (; i != e; ++i)
-		{
-			dest = _dest;
-			(STravelParams&)dest = (*i);
 
+		for (u32 dest_index = 0, dest_count = static_cast<u32>(dest_params.size());
+			dest_index < dest_count; ++dest_index)
+		{
+			STrajectoryPoint dest = _dest;
+			(STravelParams&)dest = dest_params[dest_index];
+
+			// Direction flags are pair-local. The old loop kept the negative-destination
+			// bit after the first reverse velocity and corrupted all following pairs.
+			EDirectionType direction_type = start_direction_type;
 			if (is_negative(dest.linear_velocity))
 				direction_type = EDirectionType(direction_type | eDirectionTypeSN);
 
 			if (direction_type & eDirectionTypeFN)
 				dest.direction.mul(-1.f);
 
-			m_temp_path.clear();
-			if (compute_trajectory(start, dest, m_tpTravelLine ? &m_temp_path : 0, time, (*I).index,
-			                       real_straight_line_index, (*i).index, direction_type))
+			float time = flt_max;
+			if (!m_try_min_time)
 			{
-				if (!m_try_min_time || (time < min_time))
-				{
-					min_time = time;
-					if (m_tpTravelLine)
-					{
-						m_tpTravelLine->resize(size);
-						m_tpTravelLine->insert(m_tpTravelLine->end(), m_temp_path.begin(), m_temp_path.end());
+				// compute_trajectory() restores the original output size after every
+				// failed tangent, so the first successful pair can append directly.
+				if (compute_trajectory(start, dest, m_tpTravelLine, time,
+					start_params[start_index].index, real_straight_line_index,
+					dest_params[dest_index].index, direction_type))
+					return (true);
+				continue;
+			}
 
-						if (!m_try_min_time)
-							return (true);
-					}
-					else
-						return (true);
+			// Min-time mode used to materialize a complete detailed path for every
+			// velocity pair and then discard almost all of them. Probe geometry and
+			// travel time without writing the path, and remember only the best pair.
+			if (!compute_trajectory(start, dest, 0, time,
+				start_params[start_index].index, real_straight_line_index,
+				dest_params[dest_index].index, direction_type))
+				continue;
+
+			if (!best.valid || (time < best.time))
+			{
+				best.start_index = start_index;
+				best.dest_index = dest_index;
+				best.straight_index = real_straight_line_index;
+				best.direction_type = direction_type;
+				best.time = time;
+				best.valid = true;
+			}
+		}
+	}
+
+	if (!m_try_min_time)
+		return (false);
+
+	if (!best.valid)
+		return (false);
+
+	{
+		STrajectoryPoint start = _start;
+		STrajectoryPoint dest = _dest;
+		(STravelParams&)start = start_params[best.start_index];
+		(STravelParams&)dest = dest_params[best.dest_index];
+		if (best.direction_type & eDirectionTypeFN)
+		{
+			start.direction.mul(-1.f);
+			dest.direction.mul(-1.f);
+		}
+
+		float materialized_time = flt_max;
+		if (compute_trajectory(start, dest, m_tpTravelLine, materialized_time,
+			start_params[best.start_index].index, best.straight_index,
+			dest_params[best.dest_index].index, best.direction_type))
+		{
+			// A pathful straight-path check may reject the first tangent accepted by
+			// the cheap probe and fall through to a slower tangent. In that rare case
+			// its time is no longer globally comparable, so use the exact fallback.
+			if (!m_tpTravelLine || fsimilar(materialized_time, best.time))
+				return (true);
+			m_tpTravelLine->resize(original_size);
+		}
+	}
+
+	// A pathless line probe and create_straight_path() should agree. Preserve a
+	// conservative exact fallback for malformed level geometry where they do not.
+	float min_time = flt_max;
+	for (u32 start_index = 0, start_count = static_cast<u32>(start_params.size());
+		start_index < start_count; ++start_index)
+	{
+		STrajectoryPoint base_start = _start;
+		(STravelParams&)base_start = start_params[start_index];
+		u32 real_straight_line_index = straight_line_index;
+		EDirectionType start_direction_type = eDirectionTypePP;
+		if (is_negative(base_start.linear_velocity))
+		{
+			real_straight_line_index = straight_line_index_negative;
+			start_direction_type = EDirectionType(start_direction_type | eDirectionTypeFN);
+			base_start.direction.mul(-1.f);
+		}
+
+		for (u32 dest_index = 0, dest_count = static_cast<u32>(dest_params.size());
+			dest_index < dest_count; ++dest_index)
+		{
+			STrajectoryPoint start = base_start;
+			STrajectoryPoint dest = _dest;
+			(STravelParams&)dest = dest_params[dest_index];
+			EDirectionType direction_type = start_direction_type;
+			if (is_negative(dest.linear_velocity))
+				direction_type = EDirectionType(direction_type | eDirectionTypeSN);
+			if (direction_type & eDirectionTypeFN)
+				dest.direction.mul(-1.f);
+
+			m_temp_path.clear();
+			float time = flt_max;
+			if (!compute_trajectory(start, dest, &m_temp_path, time,
+				start_params[start_index].index, real_straight_line_index,
+				dest_params[dest_index].index, direction_type))
+				continue;
+
+			if (time < min_time)
+			{
+				min_time = time;
+				if (m_tpTravelLine)
+				{
+					m_tpTravelLine->resize(original_size);
+					m_tpTravelLine->insert(m_tpTravelLine->end(), m_temp_path.begin(), m_temp_path.end());
 				}
 			}
 		}
 	}
 
-	if (fsimilar(min_time,flt_max))
-		return (false);
-
-	return (true);
+	return (!fsimilar(min_time, flt_max));
 }
 
 void CDetailPathManager::validate_vertex_position(STrajectoryPoint& point) const
@@ -562,6 +669,8 @@ bool CDetailPathManager::init_build(
 	straight_line_index = u32(-1);
 	straight_line_index_negative = u32(-1);
 	m_start_params.clear();
+	if (m_start_params.capacity() < m_movement_params.size())
+		m_start_params.reserve(m_movement_params.size());
 	VELOCITIES::const_iterator I = m_movement_params.begin();
 	VELOCITIES::const_iterator E = m_movement_params.end();
 	for (; I != E; ++I)
@@ -593,6 +702,8 @@ bool CDetailPathManager::init_build(
 		return (false);
 
 	m_dest_params.clear();
+	if (!m_dest_params.capacity())
+		m_dest_params.reserve(1);
 	m_dest_params.push_back(STravelParamsIndex(0.f, PI_MUL_2, u32(-1)));
 
 	return (true);
@@ -763,7 +874,7 @@ void CDetailPathManager::build_path_via_key_points(
 		{
 			(STravelPoint&)d = *I;
 			d.direction.sub((I + 1)->position, d.position);
-			VERIFY(!fis_zero(d.direction.magnitude()));
+			VERIFY(!fis_zero(d.direction.square_magnitude()));
 			d.direction.normalize();
 		}
 		else
@@ -787,7 +898,7 @@ void CDetailPathManager::build_path_via_key_points(
 			ai().level_graph().v2d(m_path[m_path.size() - 2].position)
 		);
 
-		while (fis_zero(s.direction.magnitude()))
+		while (fis_zero(s.direction.square_magnitude()))
 		{
 			m_path.pop_back();
 			VERIFY(m_path.size() > 1);
@@ -797,7 +908,7 @@ void CDetailPathManager::build_path_via_key_points(
 			);
 		}
 
-		VERIFY(!fis_zero(s.direction.magnitude()));
+		VERIFY(!fis_zero(s.direction.square_magnitude()));
 		s.direction.normalize();
 		m_path.pop_back();
 
@@ -808,7 +919,7 @@ void CDetailPathManager::build_path_via_key_points(
 				s.direction.mul(-1.f);
 		}
 
-		VERIFY(!fis_zero(s.direction.magnitude()));
+		VERIFY(!fis_zero(s.direction.square_magnitude()));
 	}
 
 	if ((B == E) && !compute_path(s, dest, &m_path, m_start_params, finish_params, straight_line_index,
@@ -845,38 +956,6 @@ void CDetailPathManager::postprocess_key_points(
 		                                                   false);
 		STravelPoint key_point1 = compute_better_key_point(m_key_points[i + 1], m_key_points[i], m_key_points[i - 1],
 		                                                   true);
-		{
-			u32 vertex_id = ai().level_graph().check_position_in_direction(
-				m_key_points[i - 1].vertex_id, m_key_points[i - 1].position, key_point0.position);
-			if (!ai().level_graph().valid_vertex_id(vertex_id))
-			{
-				vertex_id = vertex_id;
-			}
-		}
-		{
-			u32 vertex_id = ai().level_graph().check_position_in_direction(
-				m_key_points[i - 1].vertex_id, m_key_points[i - 1].position, key_point1.position);
-			if (!ai().level_graph().valid_vertex_id(vertex_id))
-			{
-				vertex_id = vertex_id;
-			}
-		}
-		{
-			u32 vertex_id = ai().level_graph().check_position_in_direction(
-				key_point0.vertex_id, key_point0.position, m_key_points[i + 1].position);
-			if (!ai().level_graph().valid_vertex_id(vertex_id))
-			{
-				vertex_id = vertex_id;
-			}
-		}
-		{
-			u32 vertex_id = ai().level_graph().check_position_in_direction(
-				key_point1.vertex_id, key_point1.position, m_key_points[i + 1].position);
-			if (!ai().level_graph().valid_vertex_id(vertex_id))
-			{
-				vertex_id = vertex_id;
-			}
-		}
 		if (better_key_point(m_key_points[i - 1], m_key_points[i + 1], key_point0, key_point1))
 			m_key_points[i] = key_point0;
 		else
@@ -894,7 +973,7 @@ void CDetailPathManager::add_patrol_point()
 		Fvector v;
 		v.sub(m_path.back().position, m_path[m_last_patrol_point - 1].position);
 		v.y = 0.f;
-		if (v.magnitude() > EPS_S)
+		if (v.square_magnitude() > EPS_S * EPS_S)
 			v.normalize();
 		else
 			return;

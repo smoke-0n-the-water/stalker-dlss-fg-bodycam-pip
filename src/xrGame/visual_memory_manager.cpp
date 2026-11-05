@@ -17,6 +17,7 @@
 #include "../xrEngine/gamemtllib.h"
 #include "agent_manager.h"
 #include "agent_member_manager.h"
+#include "agent_memory_manager.h"
 #include "ai_space.h"
 #include "profiler.h"
 #include "actor.h"
@@ -41,6 +42,99 @@ float g_ai_vision_speed_boost = 1.0f;
  //Alundaio
 //-Alundaio
 
+namespace
+{
+constexpr u32 visual_memory_initial_reserve = 32;
+constexpr u32 visual_memory_trim_threshold = 256;
+
+template <typename T>
+void clear_and_trim_visual_vector(T& values)
+{
+	values.clear_not_free();
+	if (values.capacity() > visual_memory_trim_threshold)
+	{
+		values.clear_and_free();
+		values.reserve(visual_memory_initial_reserve);
+	}
+}
+
+template <typename T>
+void reset_visual_index_cache(T& cache)
+{
+	T compact;
+	compact.reserve(visual_memory_initial_reserve);
+	cache.swap(compact);
+}
+
+const ::luabind::functor<float>* visible_value_script_callback()
+{
+	static cached_script_functor<float> callback_cache("visual_memory_manager.get_visible_value");
+	return callback_cache.get(ai().script_engine());
+}
+
+float call_visible_value_script_callback(const ::luabind::functor<float>& callback,
+	CScriptGameObject* observer, CScriptGameObject* target, const float time_delta,
+	const float time_quant, const float luminocity, const float velocity_factor,
+	const float object_velocity, const float distance, const float object_distance,
+	const float always_visible_distance)
+{
+	lua_State* const lua = callback.lua_state();
+#ifndef LUABIND_NO_ERROR_CHECKING
+	if (!lua)
+	{
+#ifndef LUABIND_NO_EXCEPTIONS
+		throw ::luabind::error(lua);
+#else
+		::luabind::error_callback_fun e = ::luabind::get_error_callback();
+		if (e) e(lua);
+		assert(0 && "tried to call uninitialized functor object");
+#endif
+	}
+#endif
+
+	::luabind::detail::default_policy::generate_converter<float,
+		::luabind::detail::Direction::lua_to_cpp>::type converter;
+	::luabind::detail::stack_pop result_pop(lua, 1);
+
+	callback.pushvalue();
+	::luabind::detail::convert_to_lua(lua, observer);
+	::luabind::detail::convert_to_lua(lua, target);
+	lua_pushnumber(lua, time_delta);
+	lua_pushnumber(lua, time_quant);
+	lua_pushnumber(lua, luminocity);
+	lua_pushnumber(lua, velocity_factor);
+	lua_pushnumber(lua, object_velocity);
+	lua_pushnumber(lua, distance);
+	lua_pushnumber(lua, object_distance);
+	lua_pushnumber(lua, always_visible_distance);
+
+	if (::luabind::detail::pcall(lua, 10, 1))
+	{
+#ifndef LUABIND_NO_EXCEPTIONS
+		throw ::luabind::error(lua);
+#else
+		::luabind::error_callback_fun e = ::luabind::get_error_callback();
+		if (e) e(lua);
+		assert(0 && "the lua function threw an error and exceptions are disabled");
+#endif
+	}
+
+#ifndef LUABIND_NO_ERROR_CHECKING
+	if (converter.match(lua, LUABIND_DECORATE_TYPE(float), -1) < 0)
+	{
+#ifndef LUABIND_NO_EXCEPTIONS
+		throw ::luabind::cast_failed(lua, LUABIND_TYPEID(float));
+#else
+		::luabind::cast_failed_callback_fun e = ::luabind::get_cast_failed_callback();
+		if (e) e(lua, LUABIND_TYPEID(float));
+		assert(0 && "the lua function's return value could not be converted");
+#endif
+	}
+#endif
+	return converter.apply(lua, LUABIND_DECORATE_TYPE(float), -1);
+}
+}
+
 void SetActorVisibility(u16 who, float value);
 
 struct SRemoveOfflinePredicate
@@ -55,37 +149,6 @@ struct SRemoveOfflinePredicate
 	{
 		VERIFY(object.m_object);
 		return (!!object.m_object->getDestroy() || object.m_object->H_Parent());
-	}
-};
-
-struct CVisibleObjectPredicate
-{
-	u32 m_id;
-
-	CVisibleObjectPredicate(u32 id) :
-		m_id(id)
-	{
-	}
-
-	bool operator()(const CObject* object) const
-	{
-		VERIFY(object);
-		return (object->ID() == m_id);
-	}
-};
-
-struct CNotYetVisibleObjectPredicate
-{
-	const CGameObject* m_game_object;
-
-	IC CNotYetVisibleObjectPredicate(const CGameObject* game_object)
-	{
-		m_game_object = game_object;
-	}
-
-	IC bool operator()(const CNotYetVisibleObject& object) const
-	{
-		return (object.m_object->ID() == m_game_object->ID());
 	}
 };
 
@@ -113,6 +176,7 @@ CVisualMemoryManager::CVisualMemoryManager(vision_client* client)
 	initialize();
 
 	m_objects = xr_new<VISIBLES>();
+	m_objects->reserve(visual_memory_initial_reserve);
 }
 
 void CVisualMemoryManager::initialize()
@@ -120,6 +184,53 @@ void CVisualMemoryManager::initialize()
 	m_max_object_count = 128;
 	m_enabled = true;
 	m_objects = 0;
+	m_squad_merge_index = 0;
+
+	m_visible_objects.reserve(visual_memory_initial_reserve);
+	m_not_yet_visible_objects.reserve(visual_memory_initial_reserve);
+	m_visible_object_indices.reserve(visual_memory_initial_reserve);
+	m_not_yet_visible_object_indices.reserve(visual_memory_initial_reserve);
+}
+
+void CVisualMemoryManager::set_squad_objects(VISIBLES* squad_objects)
+{
+	set_squad_objects(squad_objects, 0);
+}
+
+void CVisualMemoryManager::set_squad_objects(VISIBLES* squad_objects, CAgentMemoryManager* merge_index)
+{
+	if (m_squad_merge_index)
+	{
+		m_squad_merge_index->invalidate_visual_object_index();
+		m_squad_merge_index->invalidate_visual_merge_candidates();
+	}
+
+	m_objects = squad_objects;
+	m_squad_merge_index = merge_index;
+	m_visible_object_indices.clear();
+	if (m_squad_merge_index)
+	{
+		m_squad_merge_index->invalidate_visual_object_index();
+		m_squad_merge_index->invalidate_visual_merge_candidates();
+	}
+
+	if (!m_objects)
+	{
+		m_not_yet_visible_objects.clear_not_free();
+		m_not_yet_visible_object_indices.clear();
+	}
+}
+
+void CVisualMemoryManager::refresh_visible_objects() const
+{
+	m_visible_objects.clear_not_free();
+	if (m_object)
+		m_object->feel_vision_get(m_visible_objects);
+	else
+	{
+		VERIFY(m_client);
+		m_client->feel_vision_get(m_visible_objects);
+	}
 }
 
 CVisualMemoryManager::~CVisualMemoryManager()
@@ -135,18 +246,31 @@ CVisualMemoryManager::~CVisualMemoryManager()
 void CVisualMemoryManager::reinit()
 {
 	if (!m_client)
+	{
+		if (m_squad_merge_index)
+		{
+			m_squad_merge_index->invalidate_visual_object_index();
+			m_squad_merge_index->invalidate_visual_merge_candidates();
+		}
 		m_objects = 0;
+		m_squad_merge_index = 0;
+	}
 	else
 	{
 		VERIFY(m_objects);
 		m_objects->clear();
 	}
 
-	m_visible_objects.clear();
-	//	m_visible_objects.reserve			(100);
+	clear_and_trim_visual_vector(m_visible_objects);
+	clear_and_trim_visual_vector(m_not_yet_visible_objects);
+	reset_visual_index_cache(m_visible_object_indices);
+	reset_visual_index_cache(m_not_yet_visible_object_indices);
 
-	m_not_yet_visible_objects.clear();
-	//	m_not_yet_visible_objects.reserve	(100);
+	if (m_client && m_objects && m_objects->capacity() > visual_memory_trim_threshold)
+	{
+		m_objects->clear_and_free();
+		m_objects->reserve(visual_memory_initial_reserve);
+	}
 
 	if (m_object)
 		m_object->feel_vision_clear();
@@ -190,13 +314,113 @@ IC const CVisionParameters& CVisualMemoryManager::current_state() const
 	}
 }
 
+CVisualMemoryManager::VISIBLES::iterator CVisualMemoryManager::find_visible_object(u16 id, bool use_shared_index)
+{
+	VERIFY(m_objects);
+	u32 shared_index;
+	if (use_shared_index && m_squad_merge_index &&
+		m_squad_merge_index->try_visual_object_index(*m_objects, id, shared_index))
+		return shared_index != u32(-1) ? m_objects->begin() + shared_index : m_objects->end();
+
+	OBJECT_INDEX_CACHE::iterator cached = m_visible_object_indices.find(id);
+	if (cached != m_visible_object_indices.end())
+	{
+		const u32 index = cached->second;
+		if (index < m_objects->size())
+		{
+			CVisibleObject& object = (*m_objects)[index];
+			if (object.m_object && object.m_object->ID() == id)
+				return m_objects->begin() + index;
+		}
+		m_visible_object_indices.erase(id);
+	}
+
+	VISIBLES::iterator found = std::find(m_objects->begin(), m_objects->end(), id);
+	if (found == m_objects->end())
+		return found;
+
+	if (m_visible_object_indices.size() >= m_max_object_count * 2)
+		m_visible_object_indices.clear();
+	m_visible_object_indices[id] = u32(found - m_objects->begin());
+	return found;
+}
+
+CVisualMemoryManager::VISIBLES::const_iterator CVisualMemoryManager::find_visible_object(u16 id) const
+{
+	VERIFY(m_objects);
+	const VISIBLES& values = *m_objects;
+	u32 shared_index;
+	if (m_squad_merge_index && m_squad_merge_index->try_visual_object_index(values, id, shared_index))
+		return shared_index != u32(-1) ? values.begin() + shared_index : values.end();
+
+	OBJECT_INDEX_CACHE::iterator cached = m_visible_object_indices.find(id);
+	if (cached != m_visible_object_indices.end())
+	{
+		const u32 index = cached->second;
+		if (index < values.size())
+		{
+			const CVisibleObject& object = values[index];
+			if (object.m_object && object.m_object->ID() == id)
+				return values.begin() + index;
+		}
+		m_visible_object_indices.erase(id);
+	}
+
+	VISIBLES::const_iterator found = std::find(values.begin(), values.end(), id);
+	if (found == values.end())
+		return found;
+
+	if (m_visible_object_indices.size() >= m_max_object_count * 2)
+		m_visible_object_indices.clear();
+	m_visible_object_indices[id] = u32(found - values.begin());
+	return found;
+}
+
+CVisualMemoryManager::NOT_YET_VISIBLES::iterator CVisualMemoryManager::find_not_yet_visible_object(u16 id)
+{
+	OBJECT_INDEX_CACHE::iterator cached = m_not_yet_visible_object_indices.find(id);
+	if (cached != m_not_yet_visible_object_indices.end())
+	{
+		const u32 index = cached->second;
+		if (index < m_not_yet_visible_objects.size())
+		{
+			CNotYetVisibleObject& object = m_not_yet_visible_objects[index];
+			if (object.m_object && object.m_object->ID() == id)
+				return m_not_yet_visible_objects.begin() + index;
+		}
+		m_not_yet_visible_object_indices.erase(id);
+	}
+
+	NOT_YET_VISIBLES::iterator found = std::find_if(
+		m_not_yet_visible_objects.begin(),
+		m_not_yet_visible_objects.end(),
+		[id](const CNotYetVisibleObject& object)
+		{
+			return object.m_object && object.m_object->ID() == id;
+		});
+	if (found == m_not_yet_visible_objects.end())
+		return found;
+
+	if (m_not_yet_visible_object_indices.size() >= m_max_object_count * 2)
+		m_not_yet_visible_object_indices.clear();
+	m_not_yet_visible_object_indices[id] = u32(found - m_not_yet_visible_objects.begin());
+	return found;
+}
+
+const CVisualMemoryManager::CVisibleObject* CVisualMemoryManager::object_by_id(u16 id) const
+{
+	if (!m_objects)
+		return nullptr;
+	VISIBLES::const_iterator found = find_visible_object(id);
+	return found != m_objects->end() ? &*found : nullptr;
+}
+
 u32 CVisualMemoryManager::visible_object_time_last_seen(const CObject* object) const
 {
-	VISIBLES::iterator I = std::find(m_objects->begin(), m_objects->end(), object_id(object));
-	if (I != m_objects->end())
-		return (I->m_level_time);
-	else
+	if (!m_objects || !object)
 		return u32(-1);
+	VISIBLES::const_iterator found = find_visible_object(object->ID());
+	return found != m_objects->end() ? found->m_level_time : u32(-1);
 }
 
 bool CVisualMemoryManager::visible_right_now(const CGameObject* game_object) const
@@ -212,17 +436,17 @@ bool CVisualMemoryManager::visible_right_now(const CGameObject* game_object) con
 		return false;
 	}
 
-	VISIBLES::const_iterator I = std::find(objects().begin(), objects().end(), object_id(game_object));
-	if ((objects().end() == I))
+	VISIBLES::const_iterator I = find_visible_object(game_object->ID());
+	if (objects().end() == I)
+		return false;
+
+	if (!I->visible(mask()))
 		return (false);
 
-	if (!(*I).visible(mask()))
-		return (false);
+	if (I->m_level_time < m_last_update_time)
+		return false;
 
-	if ((*I).m_level_time < m_last_update_time)
-		return (false);
-
-	return (true);
+	return true;
 }
 
 bool CVisualMemoryManager::visible_now(const CGameObject* game_object) const
@@ -238,169 +462,225 @@ bool CVisualMemoryManager::visible_now(const CGameObject* game_object) const
 		return false;
 	}
 
-	VISIBLES::const_iterator I = std::find(objects().begin(), objects().end(), object_id(game_object));
-	return ((objects().end() != I) && (*I).visible(mask()));
+	VISIBLES::const_iterator I = find_visible_object(game_object->ID());
+	return objects().end() != I && I->visible(mask());
 }
 
 void CVisualMemoryManager::enable(const CObject* object, bool enable)
 {
-	VISIBLES::iterator J = std::find(m_objects->begin(), m_objects->end(), object_id(object));
+	if (!m_objects || !object)
+		return;
+	VISIBLES::iterator J = find_visible_object(object->ID());
 	if (J == m_objects->end())
 		return;
-	(*J).m_enabled = enable;
+	const bool old_enabled = !!J->m_enabled;
+	if (old_enabled == enable)
+		return;
+	const squad_mask_type old_mask = J->m_squad_mask.get();
+	const u32 index = static_cast<u32>(J - m_objects->begin());
+	J->m_enabled = enable;
+	if (m_squad_merge_index)
+		m_squad_merge_index->visual_object_filter_changed(index, old_mask, old_enabled);
 }
 
-float CVisualMemoryManager::object_visible_distance(const CGameObject* game_object, float& object_distance) const
+void CVisualMemoryManager::build_observer_context(SVisionObserverContext& context) const
 {
-	Fvector eye_position = Fvector().set(0.f, 0.f, 0.f), eye_direction;
-	Fmatrix eye_matrix;
-	float object_range = flt_max, object_fov = flt_max;
+	context.eye_position.set(0.f, 0.f, 0.f);
+	context.eye_direction.set(0.f, 0.f, 1.f);
+	context.object_range = flt_max;
+	float object_fov = flt_max;
 
 	if (m_object)
 	{
-		eye_matrix =
-			smart_cast<IKinematics*>(
-				m_object->Visual()
-			)
-			->LL_GetTransform(
-				u16(m_object->eye_bone)
-			);
+		IKinematics* kinematics = smart_cast<IKinematics*>(m_object->Visual());
+		VERIFY(kinematics);
 
-		Fvector temp;
-		eye_matrix.transform_tiny(temp, eye_position);
-		m_object->XFORM().transform_tiny(eye_position, temp);
+		const Fmatrix& eye_matrix = kinematics->LL_GetTransform(u16(m_object->eye_bone));
+		Fvector local_eye_position;
+		eye_matrix.transform_tiny(local_eye_position, context.eye_position);
+		m_object->XFORM().transform_tiny(context.eye_position, local_eye_position);
 
 		if (m_stalker)
 		{
-			eye_direction.setHP(-m_stalker->movement().m_head.current.yaw, -m_stalker->movement().m_head.current.pitch);
+			context.eye_direction.setHP(-m_stalker->movement().m_head.current.yaw,
+			                            -m_stalker->movement().m_head.current.pitch);
 #ifdef HOLDERCUSTOM_NEW
 			if (m_stalker->Holder())
-			{
-				eye_direction.set(m_stalker->Direction());
-			}
+				context.eye_direction.set(m_stalker->Direction());
 #endif
 		}
 		else
 		{
-			// if its a monster
 			const MonsterSpace::SBoneRotation& head_orient = m_object->head_orientation();
-			eye_direction.setHP(-head_orient.current.yaw, -head_orient.current.pitch);
+			context.eye_direction.setHP(-head_orient.current.yaw, -head_orient.current.pitch);
 		}
+
+		m_object->update_range_fov(context.object_range, object_fov, m_object->eye_range,
+		                           deg2rad(m_object->eye_fov));
 	}
 	else
 	{
 		Fvector dummy;
-		float _0, _1;
-		m_client->camera(eye_position, eye_direction, dummy, object_fov, _0, _1, object_range);
+		float zero0, zero1;
+		m_client->camera(context.eye_position, context.eye_direction, dummy, object_fov, zero0, zero1,
+		                 context.object_range);
 	}
 
+	context.half_fov = object_fov * .5f;
+	context.cos_half_fov = _cos(context.half_fov);
+}
+
+float CVisualMemoryManager::object_visible_distance(const CGameObject* game_object, float& object_distance,
+                                                     const SVisionObserverContext& context,
+                                                     const CVisionParameters& parameters) const
+{
 	Fvector object_direction;
 	game_object->Center(object_direction);
-	object_distance = object_direction.distance_to(eye_position);
-	object_direction.sub(eye_position);
-	object_direction.normalize_safe();
+	object_direction.sub(context.eye_position);
 
-	if (m_object)
-		m_object->update_range_fov(object_range, object_fov, m_object->eye_range, deg2rad(m_object->eye_fov));
+	const float distance_sqr = object_direction.square_magnitude();
+	object_distance = _sqrt(distance_sqr);
+	if (object_distance > EPS_S)
+		object_direction.div(object_distance);
+	else
+		object_direction.set(0.f, 0.f, 0.f);
 
-	float fov = object_fov * .5f;
-	float cos_alpha = eye_direction.dotproduct(object_direction);
+	float cos_alpha = context.eye_direction.dotproduct(object_direction);
 	clamp(cos_alpha, -.99999f, .99999f);
-	float alpha = acosf(cos_alpha);
-	clamp(alpha, 0.f, fov);
 
-	float max_view_distance = object_range, min_view_distance = object_range;
-	max_view_distance *= current_state().m_max_view_distance;
-	min_view_distance *= current_state().m_min_view_distance;
+	float alpha;
+	if (context.half_fov > EPS_S && context.half_fov < PI && cos_alpha <= context.cos_half_fov)
+	{
+		// Outside the FOV the original code clamps acos() to half_fov.
+		alpha = context.half_fov;
+	}
+	else
+	{
+		alpha = acosf(cos_alpha);
+		clamp(alpha, 0.f, context.half_fov);
+	}
 
-	float distance = (1.f - alpha / fov) * (max_view_distance - min_view_distance) + min_view_distance;
+	const float max_view_distance = context.object_range * parameters.m_max_view_distance;
+	const float min_view_distance = context.object_range * parameters.m_min_view_distance;
+	if (context.half_fov <= EPS_S)
+		return min_view_distance;
 
-	return (distance * m_view_distance_factor);
+	return ((1.f - alpha / context.half_fov) * (max_view_distance - min_view_distance) + min_view_distance) *
+		m_view_distance_factor;
+}
+
+float CVisualMemoryManager::object_visible_distance(const CGameObject* game_object, float& object_distance) const
+{
+	SVisionObserverContext context;
+	build_observer_context(context);
+	const CVisionParameters& parameters = current_state();
+	return object_visible_distance(game_object, object_distance, context, parameters);
+}
+
+float CVisualMemoryManager::object_luminocity(const CGameObject* game_object,
+                                              const CVisionParameters& parameters) const
+{
+	if (!const_cast<CGameObject*>(game_object)->cast_entity_alive())
+		return 1.f;
+
+	const float luminocity = const_cast<CGameObject*>(game_object)->ROS()->get_luminocity();
+	const float power = log(luminocity > .001f ? luminocity : .001f) * parameters.m_luminocity_factor;
+	return exp(power);
 }
 
 float CVisualMemoryManager::object_luminocity(const CGameObject* game_object) const
 {
-	if (!smart_cast<CEntityAlive const*>(game_object)) //Alundaio
-		return (1.f);
-	float luminocity = const_cast<CGameObject*>(game_object)->ROS()->get_luminocity();
-	float power = log(luminocity > .001f ? luminocity : .001f) * current_state().m_luminocity_factor;
-	return (exp(power));
+	return object_luminocity(game_object, current_state());
 }
 
 float CVisualMemoryManager::get_object_velocity(const CGameObject* game_object,
                                                 const CNotYetVisibleObject& not_yet_visible_object) const
 {
-	//Alundaio: no need to check velocity on anything but stalkers, mutants and actor
 	if (!const_cast<CGameObject*>(game_object)->cast_entity_alive())
-		return (0.f);
-	//-Alundaio
+		return 0.f;
 
-	if ((game_object->ps_Size() < 2) || (not_yet_visible_object.m_prev_time == game_object
-	                                                                           ->ps_Element(game_object->ps_Size() - 2).
-	                                                                           dwTime))
-		return (0.f);
+	if ((game_object->ps_Size() < 2) ||
+	    (not_yet_visible_object.m_prev_time == game_object->ps_Element(game_object->ps_Size() - 2).dwTime))
+		return 0.f;
 
-	CObject::SavedPosition pos0 = game_object->ps_Element(game_object->ps_Size() - 2);
-	CObject::SavedPosition pos1 = game_object->ps_Element(game_object->ps_Size() - 1);
+	const CObject::SavedPosition pos0 = game_object->ps_Element(game_object->ps_Size() - 2);
+	const CObject::SavedPosition pos1 = game_object->ps_Element(game_object->ps_Size() - 1);
+	return pos1.vPosition.distance_to(pos0.vPosition) /
+	       (float(pos1.dwTime) / 1000.f - float(pos0.dwTime) / 1000.f);
+}
 
-	return (
-		pos1.vPosition.distance_to(pos0.vPosition) /
-		(
-			float(pos1.dwTime) / 1000.f -
-			float(pos0.dwTime) / 1000.f
-		)
-	);
+float CVisualMemoryManager::get_visible_value(const CGameObject* game_object, float distance, float object_distance,
+                                              float time_delta, float object_velocity, float luminocity,
+                                              const CVisionParameters& parameters,
+                                              const ::luabind::functor<float>* callback) const
+{
+	const float always_visible_distance = parameters.m_always_visible_distance;
+	if (distance <= always_visible_distance + EPS_L)
+		return parameters.m_visibility_threshold;
+
+	if (callback)
+	{
+		const bool record = m_stalker && ai().script_engine().lua_recording() && CPU::qpc_freq;
+		const u64 started = record ? CPU::QPC() : 0;
+		const float result = call_visible_value_script_callback(*callback,
+		                   m_object ? m_object->lua_game_object() : 0,
+		                   game_object ? game_object->lua_game_object() : 0,
+		                   time_delta, parameters.m_time_quant, luminocity, parameters.m_velocity_factor,
+		                   object_velocity, distance, object_distance, always_visible_distance) *
+		       g_ai_vision_speed_boost * m_vision_speed;
+		if (started)
+		{
+			const u64 elapsed = CPU::QPC() - started;
+			const u64 threshold_ticks = (static_cast<u64>(ai().script_engine().lua_record_threshold_us()) *
+				CPU::qpc_freq) / 1000000ull;
+			if (elapsed >= threshold_ticks)
+				ai().script_engine().record_native_profile("ai_visual", "visual.callback.get_visible_value",
+					game_object ? *game_object->cName() : "<visual_target>",
+					game_object ? static_cast<u32>(game_object->ID()) : 0u, elapsed,
+					m_object ? static_cast<u32>(m_object->ID()) : 0u);
+		}
+		return result;
+	}
+
+	return (time_delta / parameters.m_time_quant * luminocity *
+	        (1.f + parameters.m_velocity_factor * object_velocity) *
+	        (distance - object_distance) / (distance - always_visible_distance)) *
+	       g_ai_vision_speed_boost * m_vision_speed;
 }
 
 float CVisualMemoryManager::get_visible_value(const CGameObject* game_object, float distance, float object_distance,
                                               float time_delta, float object_velocity, float luminocity) const
 {
-	float always_visible_distance = current_state().m_always_visible_distance;
-
-	if (distance <= always_visible_distance + EPS_L)
-		return (current_state().m_visibility_threshold);
-
-	//Alundaio: hijack not_yet_visible_object to lua
-	::luabind::functor<float> funct;
-	if (ai().script_engine().functor("visual_memory_manager.get_visible_value", funct))
-		return (funct(m_object ? m_object->lua_game_object() : 0, game_object ? game_object->lua_game_object() : 0,
-		              time_delta, current_state().m_time_quant, luminocity, current_state().m_velocity_factor,
-		              object_velocity, distance, object_distance, always_visible_distance)) * g_ai_vision_speed_boost * m_vision_speed;
-	//-Alundaio
-
-	return (
-		time_delta /
-		current_state().m_time_quant *
-		luminocity *
-		(1.f + current_state().m_velocity_factor * object_velocity) *
-		(distance - object_distance) /
-		(distance - always_visible_distance)
-	) * g_ai_vision_speed_boost * m_vision_speed;
+	const ::luabind::functor<float>* callback_ptr = visible_value_script_callback();
+	return get_visible_value(game_object, distance, object_distance, time_delta, object_velocity, luminocity,
+	                         current_state(), callback_ptr);
 }
 
 CNotYetVisibleObject* CVisualMemoryManager::not_yet_visible_object(const CGameObject* game_object)
 {
 	START_PROFILE("Memory Manager/visuals/not_yet_visible_object")
-		xr_vector<CNotYetVisibleObject>::iterator I = std::find_if(
-			m_not_yet_visible_objects.begin(),
-			m_not_yet_visible_objects.end(),
-			CNotYetVisibleObjectPredicate(game_object)
-		);
-		if (I == m_not_yet_visible_objects.end())
-			return (0);
-		return (&*I);
+		NOT_YET_VISIBLES::iterator found = find_not_yet_visible_object(game_object->ID());
+		if (found == m_not_yet_visible_objects.end())
+			return 0;
+		return &*found;
 	STOP_PROFILE
 }
 
 void CVisualMemoryManager::add_not_yet_visible_object(const CNotYetVisibleObject& not_yet_visible_object)
 {
-    xr_vector<CNotYetVisibleObject>::iterator I = std::find_if(
-        m_not_yet_visible_objects.begin(),
-        m_not_yet_visible_objects.end(),
-        CNotYetVisibleObjectPredicate(not_yet_visible_object.m_object)
-    );
-    if (I == m_not_yet_visible_objects.end())
-        m_not_yet_visible_objects.push_back(not_yet_visible_object);
+	// upstream MT: never store the same object twice; Quark: O(1) lookup by id
+	if (not_yet_visible_object.m_object &&
+		find_not_yet_visible_object(not_yet_visible_object.m_object->ID()) != m_not_yet_visible_objects.end())
+		return;
+
+	m_not_yet_visible_objects.push_back(not_yet_visible_object);
+	if (not_yet_visible_object.m_object)
+	{
+		if (m_not_yet_visible_object_indices.size() >= m_max_object_count * 2)
+			m_not_yet_visible_object_indices.clear();
+		m_not_yet_visible_object_indices[not_yet_visible_object.m_object->ID()] =
+			m_not_yet_visible_objects.size() - 1;
+	}
 }
 
 u32 CVisualMemoryManager::get_prev_time(const CGameObject* game_object) const
@@ -412,39 +692,36 @@ u32 CVisualMemoryManager::get_prev_time(const CGameObject* game_object) const
 	return (game_object->ps_Element(game_object->ps_Size() - 2).dwTime);
 }
 
-bool CVisualMemoryManager::visible(const CGameObject* game_object, float time_delta)
+bool CVisualMemoryManager::visible(const CGameObject* game_object, float time_delta,
+                                   const SVisionObserverContext& context,
+                                   const ::luabind::functor<float>* callback)
 {
 	VERIFY(game_object);
 
-	if (should_ignore_object(game_object))
-	{
+	if (should_ignore_object(game_object) || game_object->getDestroy())
 		return false;
-	}
-
-	if (game_object->getDestroy())
-		return (false);
 
 #ifndef USE_STALKER_VISION_FOR_MONSTERS
 	if (!m_stalker && !m_client)
-		return					(true);
+		return true;
 #endif
 
-	float object_distance, distance = object_visible_distance(game_object, object_distance);
-
+	const CVisionParameters& parameters = current_state();
+	float object_distance = 0.f;
+	const float distance = object_visible_distance(game_object, object_distance, context, parameters);
 	CNotYetVisibleObject* object = not_yet_visible_object(game_object);
 
 	if (distance < object_distance)
 	{
-		if (object)
-		{
-			object->m_value -= current_state().m_decrease_value;
+		if (!object)
+			return false;
+
+		object->m_value -= parameters.m_decrease_value;
 			if (object->m_value < 0.f)
 				object->m_value = 0.f;
 			else
 				object->m_update_time = Device.dwTimeGlobal;
-			return (object->m_value >= current_state().m_visibility_threshold);
-		}
-		return (false);
+		return object->m_value >= parameters.m_visibility_threshold;
 	}
 
 	if (!object)
@@ -454,21 +731,31 @@ bool CVisualMemoryManager::visible(const CGameObject* game_object, float time_de
 		new_object.m_prev_time = 0;
 		new_object.m_value = get_visible_value(game_object, distance, object_distance, time_delta,
 		                                       get_object_velocity(game_object, new_object),
-		                                       object_luminocity(game_object));
-		clamp(new_object.m_value, 0.f, current_state().m_visibility_threshold + EPS_L);
+		                                         object_luminocity(game_object, parameters), parameters, callback);
+		const CVisionParameters& result_parameters = current_state();
+		clamp(new_object.m_value, 0.f, result_parameters.m_visibility_threshold + EPS_L);
 		new_object.m_update_time = Device.dwTimeGlobal;
 		new_object.m_prev_time = get_prev_time(game_object);
 		add_not_yet_visible_object(new_object);
-		return (new_object.m_value >= current_state().m_visibility_threshold);
+		return new_object.m_value >= result_parameters.m_visibility_threshold;
 	}
 
 	object->m_update_time = Device.dwTimeGlobal;
 	object->m_value += get_visible_value(game_object, distance, object_distance, time_delta,
-	                                     get_object_velocity(game_object, *object), object_luminocity(game_object));
-	clamp(object->m_value, 0.f, current_state().m_visibility_threshold + EPS_L);
+	                                     get_object_velocity(game_object, *object),
+	                                     object_luminocity(game_object, parameters), parameters, callback);
+	const CVisionParameters& result_parameters = current_state();
+	clamp(object->m_value, 0.f, result_parameters.m_visibility_threshold + EPS_L);
 	object->m_prev_time = get_prev_time(game_object);
+	return object->m_value >= result_parameters.m_visibility_threshold;
+}
 
-	return (object->m_value >= current_state().m_visibility_threshold);
+bool CVisualMemoryManager::visible(const CGameObject* game_object, float time_delta)
+{
+	SVisionObserverContext context;
+	build_observer_context(context);
+	const ::luabind::functor<float>* callback_ptr = visible_value_script_callback();
+	return visible(game_object, time_delta, context, callback_ptr);
 }
 
 bool CVisualMemoryManager::should_ignore_object(CObject const* object) const
@@ -499,31 +786,99 @@ bool CVisualMemoryManager::should_ignore_object(CObject const* object) const
 
 void CVisualMemoryManager::add_visible_object(const CObject* object, float time_delta, bool fictitious)
 {
-	if (!fictitious && should_ignore_object(object))
+	SVisionObserverContext context;
+	if (fictitious)
 	{
+		context.eye_position.set(0.f, 0.f, 0.f);
+		context.eye_direction.set(0.f, 0.f, 1.f);
+		context.object_range = 0.f;
+		context.half_fov = 0.f;
+		context.cos_half_fov = 1.f;
+		add_visible_object(object, time_delta, true, context, 0);
 		return;
 	}
 
-	xr_vector<CVisibleObject>::iterator J;
-	const CGameObject* game_object;
-	const CGameObject* self;
+	build_observer_context(context);
+	const ::luabind::functor<float>* callback_ptr = visible_value_script_callback();
+	add_visible_object(object, time_delta, false, context, callback_ptr);
+}
 
-	//	START_PROFILE("Memory Manager/visuals/update/add_visibles/visible")
-	game_object = smart_cast<const CGameObject*>(object);
-	if (!game_object || (!fictitious && !visible(game_object, time_delta)))
+u32 CVisualMemoryManager::add_fictitious_visible_mask(const CObject* object, squad_mask_type knowledge_mask)
+{
+	if (!object || !knowledge_mask || !m_objects)
+		return u32(-1);
+
+	const CGameObject* game_object = smart_cast<const CGameObject*>(object);
+	if (!game_object)
+		return u32(-1);
+
+	VISIBLES::iterator found = find_visible_object(game_object->ID());
+	if (m_objects->end() == found)
+	{
+		// Keep the legacy fictitious-insert path authoritative for timestamps,
+		// replacement policy, index caches and merge-index notifications.
+		const squad_mask_type observer_mask = mask();
+		add_visible_object(object, .001f, true);
+
+		found = find_visible_object(game_object->ID());
+		if (m_objects->end() == found)
+			return u32(-1);
+
+		// make_object_visible_somewhen() historically restored the observer's
+		// visibility bit immediately after the fictitious insertion.
+		found->visible(observer_mask, false);
+	}
+
+	const u32 index = static_cast<u32>(found - m_objects->begin());
+	const squad_mask_type old_mask = found->m_squad_mask.get();
+	const bool old_enabled = !!found->m_enabled;
+	const squad_mask_type new_mask = old_mask | knowledge_mask;
+
+	if ((new_mask != old_mask) || !old_enabled)
+	{
+		found->m_squad_mask.assign(new_mask);
+		found->m_enabled = true;
+		if (m_squad_merge_index)
+			m_squad_merge_index->visual_object_filter_changed(index, old_mask, old_enabled);
+	}
+
+	return index;
+}
+
+void CVisualMemoryManager::add_visible_object(const CObject* object, float time_delta, bool fictitious,
+                                              const SVisionObserverContext& context,
+                                              const ::luabind::functor<float>* callback)
+{
+	if (!fictitious && should_ignore_object(object))
 		return;
-	//	STOP_PROFILE
 
-	//	START_PROFILE("Memory Manager/visuals/update/add_visibles/find_object_by_id")
-	self = m_object;
-	J = std::find(m_objects->begin(), m_objects->end(), object_id(game_object));
-	//	STOP_PROFILE
+	const CGameObject* game_object = smart_cast<const CGameObject*>(object);
+	if (!game_object)
+		return;
+	if (!fictitious)
+	{
+		const bool record = m_stalker && ai().script_engine().lua_recording() && CPU::qpc_freq;
+		const u64 started = record ? CPU::QPC() : 0;
+		const bool is_visible = visible(game_object, time_delta, context, callback);
+		if (started)
+		{
+			const u64 elapsed = CPU::QPC() - started;
+			const u64 threshold_ticks = (static_cast<u64>(ai().script_engine().lua_record_threshold_us()) *
+				CPU::qpc_freq) / 1000000ull;
+			if (elapsed >= threshold_ticks)
+				ai().script_engine().record_native_profile("ai_visual", "visual.add_visible_object.visible_check",
+					*game_object->cName(), static_cast<u32>(game_object->ID()), elapsed,
+					m_object ? static_cast<u32>(m_object->ID()) : 0u);
+		}
+		if (!is_visible)
+			return;
+	}
 
-	//	START_PROFILE("Memory Manager/visuals/update/add_visibles/fill")
-	if (m_objects->end() == J)
+	const CGameObject* self = m_object;
+	VISIBLES::iterator found = find_visible_object(game_object->ID());
+	if (m_objects->end() == found)
 	{
 		CVisibleObject visible_object;
-
 		visible_object.fill(game_object, self, mask(), mask());
 #ifdef USE_FIRST_GAME_TIME
 		visible_object.m_first_game_time	= Level().GetGameTime();
@@ -534,26 +889,52 @@ void CVisualMemoryManager::add_visible_object(const CObject* object, float time_
 
 		if (m_max_object_count <= m_objects->size())
 		{
-			xr_vector<CVisibleObject>::iterator I = std::min_element(m_objects->begin(), m_objects->end(),
+			VISIBLES::iterator oldest = std::min_element(m_objects->begin(), m_objects->end(),
 			                                                         SLevelTimePredicate<CGameObject>());
-			VERIFY(m_objects->end() != I);
-			*I = visible_object;
+			VERIFY(m_objects->end() != oldest);
+			const squad_mask_type old_mask = oldest->m_squad_mask.get();
+			const bool old_enabled = !!oldest->m_enabled;
+			const u32 index = static_cast<u32>(oldest - m_objects->begin());
+			const u16 old_id = object_id(oldest->m_object);
+			*oldest = visible_object;
+			if (m_squad_merge_index)
+				m_squad_merge_index->visual_object_replaced(index, old_id, old_mask, old_enabled);
+			if (!m_squad_merge_index || !m_squad_merge_index->visual_object_index_ready())
+				m_visible_object_indices.clear();
 		}
 		else
+		{
 			m_objects->push_back(visible_object);
+			const u32 index = static_cast<u32>(m_objects->size() - 1);
+			if (m_squad_merge_index)
+				m_squad_merge_index->visual_object_appended(index);
+			if (!m_squad_merge_index || !m_squad_merge_index->visual_object_index_ready())
+			{
+				if (m_visible_object_indices.size() >= m_max_object_count * 2)
+					m_visible_object_indices.clear();
+				m_visible_object_indices[game_object->ID()] = index;
+			}
+		}
 	}
 	else
 	{
+		const squad_mask_type old_mask = found->m_squad_mask.get();
+		const bool old_enabled = !!found->m_enabled;
+		const u32 index = static_cast<u32>(found - m_objects->begin());
 		if (!fictitious)
-			(*J).fill(game_object, self, (*J).m_squad_mask.get() | mask(), (*J).m_visible.get() | mask());
+			found->fill(game_object, self, found->m_squad_mask.get() | mask(), found->m_visible.get() | mask());
 		else
 		{
-			(*J).m_visible.assign((*J).m_visible.get() | mask());
-			(*J).m_squad_mask.assign((*J).m_squad_mask.get() | mask());
-			(*J).m_enabled = true;
+			found->m_visible.assign(found->m_visible.get() | mask());
+			found->m_squad_mask.assign(found->m_squad_mask.get() | mask());
+			found->m_enabled = true;
+		}
+		if (m_squad_merge_index &&
+			(old_mask != found->m_squad_mask.get() || old_enabled != !!found->m_enabled))
+		{
+			m_squad_merge_index->visual_object_filter_changed(index, old_mask, old_enabled);
 		}
 	}
-	//	STOP_PROFILE
 }
 
 void CVisualMemoryManager::add_visible_object(const CVisibleObject visible_object)
@@ -564,19 +945,44 @@ void CVisualMemoryManager::add_visible_object(const CVisibleObject visible_objec
 	}
 
 	VERIFY(m_objects);
-	xr_vector<CVisibleObject>::iterator J = std::find(m_objects->begin(), m_objects->end(),
-	                                                  object_id(visible_object.m_object));
-	if (m_objects->end() != J)
-		*J = visible_object;
+	VISIBLES::iterator found = find_visible_object(visible_object.m_object->ID());
+	if (m_objects->end() != found)
+	{
+		const squad_mask_type old_mask = found->m_squad_mask.get();
+		const bool old_enabled = !!found->m_enabled;
+		const u32 index = static_cast<u32>(found - m_objects->begin());
+		*found = visible_object;
+		if (m_squad_merge_index)
+			m_squad_merge_index->visual_object_filter_changed(index, old_mask, old_enabled);
+	}
 	else if (m_max_object_count <= m_objects->size())
 	{
-		xr_vector<CVisibleObject>::iterator I = std::min_element(m_objects->begin(), m_objects->end(),
+		VISIBLES::iterator oldest = std::min_element(m_objects->begin(), m_objects->end(),
 		                                                         SLevelTimePredicate<CGameObject>());
-		VERIFY(m_objects->end() != I);
-		*I = visible_object;
+		VERIFY(m_objects->end() != oldest);
+		const squad_mask_type old_mask = oldest->m_squad_mask.get();
+		const bool old_enabled = !!oldest->m_enabled;
+		const u32 index = static_cast<u32>(oldest - m_objects->begin());
+		const u16 old_id = object_id(oldest->m_object);
+		*oldest = visible_object;
+		if (m_squad_merge_index)
+			m_squad_merge_index->visual_object_replaced(index, old_id, old_mask, old_enabled);
+		if (!m_squad_merge_index || !m_squad_merge_index->visual_object_index_ready())
+			m_visible_object_indices.clear();
 	}
 	else
+	{
 		m_objects->push_back(visible_object);
+		const u32 index = static_cast<u32>(m_objects->size() - 1);
+		if (m_squad_merge_index)
+			m_squad_merge_index->visual_object_appended(index);
+		if (!m_squad_merge_index || !m_squad_merge_index->visual_object_index_ready())
+		{
+			if (m_visible_object_indices.size() >= m_max_object_count * 2)
+				m_visible_object_indices.clear();
+			m_visible_object_indices[visible_object.m_object->ID()] = index;
+		}
+	}
 }
 
 #ifdef DEBUG
@@ -634,59 +1040,66 @@ float CVisualMemoryManager::feel_vision_mtl_transp(CObject* O, u32 element)
 	return vis;
 }
 
-struct CVisibleObjectPredicateEx
-{
-	const CObject* m_object;
-
-	CVisibleObjectPredicateEx(const CObject* object) :
-		m_object(object)
-	{
-	}
-
-	bool operator()(const MemorySpace::CVisibleObject& visible_object) const
-	{
-		if (!m_object)
-			return (!visible_object.m_object);
-		if (!visible_object.m_object)
-			return (false);
-		return (m_object->ID() == visible_object.m_object->ID());
-	}
-
-	bool operator()(const MemorySpace::CNotYetVisibleObject& not_yet_visible_object) const
-	{
-		if (!m_object)
-			return (!not_yet_visible_object.m_object);
-		if (!not_yet_visible_object.m_object)
-			return (false);
-		return (m_object->ID() == not_yet_visible_object.m_object->ID());
-	}
-};
-
 void CVisualMemoryManager::remove_links(CObject* object)
 {
-	if (m_objects)
+	if (!m_objects)
+		return;
+	if (!object)
 	{
-		VISIBLES::iterator I = std::find_if(m_objects->begin(), m_objects->end(), CVisibleObjectPredicateEx(object));
-		if (I != m_objects->end())
-			m_objects->erase(I);
+		const u32 visible_size = m_objects->size();
+		m_objects->erase(
+			std::remove_if(m_objects->begin(), m_objects->end(),
+			               [](const CVisibleObject& value) { return !value.m_object; }),
+			m_objects->end());
+		if (visible_size != m_objects->size())
+		{
+			m_visible_object_indices.clear();
+			if (m_squad_merge_index)
+			{
+				m_squad_merge_index->invalidate_visual_object_index();
+				m_squad_merge_index->invalidate_visual_merge_candidates();
+			}
+		}
+
+		const u32 pending_size = m_not_yet_visible_objects.size();
+		m_not_yet_visible_objects.erase(
+			std::remove_if(m_not_yet_visible_objects.begin(), m_not_yet_visible_objects.end(),
+			               [](const CNotYetVisibleObject& value) { return !value.m_object; }),
+			m_not_yet_visible_objects.end());
+		if (pending_size != m_not_yet_visible_objects.size())
+			m_not_yet_visible_object_indices.clear();
+		return;
 	}
+
+	// A relcase burst must not rebuild the shared lookup index between individual
+	// erases. Use the legacy local cache here; normal perception queries will
+	// rebuild its index only when enough subsequent lookups can amortize the cost.
+	VISIBLES::iterator visible = find_visible_object(object->ID(), false);
+	if (visible != m_objects->end())
 	{
-		NOT_YET_VISIBLES::iterator I = std::find_if(m_not_yet_visible_objects.begin(), m_not_yet_visible_objects.end(),
-		                                            CVisibleObjectPredicateEx(object));
-		if (I != m_not_yet_visible_objects.end())
-			m_not_yet_visible_objects.erase(I);
+		m_objects->erase(visible);
+		m_visible_object_indices.clear();
+		if (m_squad_merge_index)
+		{
+			m_squad_merge_index->invalidate_visual_object_index();
+			m_squad_merge_index->invalidate_visual_merge_candidates();
+		}
+	}
+
+	NOT_YET_VISIBLES::iterator pending = find_not_yet_visible_object(object->ID());
+	if (pending != m_not_yet_visible_objects.end())
+	{
+		m_not_yet_visible_objects.erase(pending);
+		m_not_yet_visible_object_indices.clear();
 	}
 }
 
 CVisibleObject* CVisualMemoryManager::visible_object(const CGameObject* game_object)
 {
-    if (!m_objects)
-        return nullptr;
-
-	VISIBLES::iterator I = std::find_if(m_objects->begin(), m_objects->end(), CVisibleObjectPredicateEx(game_object));
-	if (I == m_objects->end())
-		return (0);
-	return (&*I);
+	if (!m_objects || !game_object)
+		return 0;
+	VISIBLES::iterator found = find_visible_object(game_object->ID());
+	return found == m_objects->end() ? 0 : &*found;
 }
 
 IC squad_mask_type CVisualMemoryManager::mask() const
@@ -711,39 +1124,83 @@ void CVisualMemoryManager::update(float time_delta)
             return;
 
 		squad_mask_type mask = this->mask();
-		m_visible_objects.clear();
+		VERIFY(m_objects);
 
-		START_PROFILE("Memory Manager/visuals/update/feel_vision_get")
-			if (m_object)
-				m_object->feel_vision_get(m_visible_objects);
+		const Feel::Vision::VISIBLE_ITEMS& visible_items =
+			m_object ? m_object->feel_vision_items() : m_client->feel_vision_items();
+		bool has_visible_items = false;
+		for (Feel::Vision::VISIBLE_ITEMS::const_iterator item = visible_items.begin(); item != visible_items.end(); ++item)
+		{
+			if (positive(item->fuzzy))
+			{
+				has_visible_items = true;
+				break;
+			}
+		}
+
+		bool needs_observer_context = !!m_stalker || !!m_client;
+#ifdef USE_STALKER_VISION_FOR_MONSTERS
+		needs_observer_context = true;
+#endif
+
+		const ::luabind::functor<float>* visible_value_callback_ptr =
+			needs_observer_context && has_visible_items ? visible_value_script_callback() : nullptr;
+
+		SVisionObserverContext observer_context;
+		if (needs_observer_context && !visible_value_callback_ptr && has_visible_items)
+			build_observer_context(observer_context);
 			else
 			{
-				VERIFY(m_client);
-				m_client->feel_vision_get(m_visible_objects);
+			observer_context.eye_position.set(0.f, 0.f, 0.f);
+			observer_context.eye_direction.set(0.f, 0.f, 1.f);
+			observer_context.object_range = 0.f;
+			observer_context.half_fov = 0.f;
+			observer_context.cos_half_fov = 1.f;
 			}
-		STOP_PROFILE
+		const CVisionParameters& update_parameters = current_state();
 
 		START_PROFILE("Memory Manager/visuals/update/make_invisible")
 			{
+
 				xr_vector<CVisibleObject>::iterator I = m_objects->begin();
 				xr_vector<CVisibleObject>::iterator E = m_objects->end();
 				for (; I != E; ++I)
-					if ((*I).m_level_time + current_state().m_still_visible_time < Device.dwTimeGlobal)
-						(*I).visible(mask, false);
+					if (I->m_level_time + update_parameters.m_still_visible_time < Device.dwTimeGlobal)
+						I->visible(mask, false);
 			}
 		STOP_PROFILE
 
 		START_PROFILE("Memory Manager/visuals/update/add_visibles")
 			{
-				xr_vector<CObject*>::const_iterator I = m_visible_objects.begin();
-				xr_vector<CObject*>::const_iterator E = m_visible_objects.end();
-				for (; I != E; ++I)
-					add_visible_object(*I, time_delta);
+
+				if (visible_value_callback_ptr)
+				{
+					// Preserve the legacy pointer snapshot when Lua is involved: a mod callback
+					// can mutate object state and must not invalidate the source vision vector.
+					refresh_visible_objects();
+					for (RAW_VISIBLES::const_iterator object = m_visible_objects.begin();
+						 object != m_visible_objects.end(); ++object)
+					{
+						SVisionObserverContext live_context;
+						build_observer_context(live_context);
+						add_visible_object(*object, time_delta, false, live_context, visible_value_callback_ptr);
+					}
+				}
+				else
+				{
+					for (Feel::Vision::VISIBLE_ITEMS::const_iterator item = visible_items.begin();
+						 item != visible_items.end(); ++item)
+					{
+						if (positive(item->fuzzy))
+							add_visible_object(item->O, time_delta, false, observer_context, 0);
+					}
+				}
 			}
 		STOP_PROFILE
 
 		START_PROFILE("Memory Manager/visuals/update/make_not_yet_visible")
 			{
+
 				xr_vector<CNotYetVisibleObject>::iterator I = m_not_yet_visible_objects.begin();
 				xr_vector<CNotYetVisibleObject>::iterator E = m_not_yet_visible_objects.end();
 				for (; I != E; ++I)
@@ -753,8 +1210,10 @@ void CVisualMemoryManager::update(float time_delta)
 		STOP_PROFILE
 
 		START_PROFILE("Memory Manager/visuals/update/removing_offline")
+
 			// verifying if object is online
 			{
+				const u32 old_size = m_objects->size();
 				m_objects->erase(
 					std::remove_if(
 						m_objects->begin(),
@@ -763,10 +1222,20 @@ void CVisualMemoryManager::update(float time_delta)
 					),
 					m_objects->end()
 				);
+				if (old_size != m_objects->size())
+				{
+					m_visible_object_indices.clear();
+					if (m_squad_merge_index)
+					{
+						m_squad_merge_index->invalidate_visual_object_index();
+						m_squad_merge_index->invalidate_visual_merge_candidates();
+					}
+				}
 			}
 
 			// verifying if object is online
 			{
+				const u32 old_size = m_not_yet_visible_objects.size();
 				m_not_yet_visible_objects.erase(
 					std::remove_if(
 						m_not_yet_visible_objects.begin(),
@@ -775,6 +1244,8 @@ void CVisualMemoryManager::update(float time_delta)
 					),
 					m_not_yet_visible_objects.end()
 				);
+				if (old_size != m_not_yet_visible_objects.size())
+					m_not_yet_visible_object_indices.clear();
 			}
 		STOP_PROFILE
 
@@ -789,11 +1260,8 @@ void CVisualMemoryManager::update(float time_delta)
 
 		if (m_object && g_actor && m_object->is_relation_enemy(Actor()))
 		{
-			xr_vector<CNotYetVisibleObject>::iterator I = std::find_if(
-				m_not_yet_visible_objects.begin(),
-				m_not_yet_visible_objects.end(),
-				CNotYetVisibleObjectPredicate(Actor())
-			);
+
+			NOT_YET_VISIBLES::iterator I = find_not_yet_visible_object(Actor()->ID());
 			if (I != m_not_yet_visible_objects.end())
 			{
 				SetActorVisibility(

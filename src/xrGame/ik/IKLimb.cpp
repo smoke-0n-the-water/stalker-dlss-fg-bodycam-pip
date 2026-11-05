@@ -792,7 +792,9 @@ static const s32 unstuck_time_delta_max = 1200;
 IC void new_foot_matrix(const ik_goal_matrix& m, SCalculateData& cd)
 {
 	cd.state.collide_pos = m;
-	cd.state.unstuck_time = Device.dwTimeGlobal + Random.randI(unstuck_time_delta_min, unstuck_time_delta_max);
+	const u32 unstuck_span = u32(unstuck_time_delta_max - unstuck_time_delta_min);
+	const u32 unstuck_seed = u32((size_t(&cd) >> 4) ^ (Device.dwFrame * 2654435761u));
+	cd.state.unstuck_time = Device.dwTimeGlobal + unstuck_time_delta_min + unstuck_seed % unstuck_span;
 	reset_blend_speed(cd);
 }
 

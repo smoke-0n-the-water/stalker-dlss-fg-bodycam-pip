@@ -27,6 +27,10 @@ public:
 	virtual void shedule_Update(u32 dt);
 	virtual shared_str shedule_Name() const { return shared_str("unknown"); };
 	virtual bool shedule_Needed() = 0;
+	// Deferred scheduler execution is opt-in. Most game callbacks may touch Lua,
+	// physics, rendering or other main-thread-owned state indirectly. Only classes
+	// audited as worker-safe may override this and return true.
+	virtual bool shedule_AllowDeferred() const { return false; }
 };
 
 #endif // #ifndef XRENGINE_ISHEDULED_H_INCLUDED

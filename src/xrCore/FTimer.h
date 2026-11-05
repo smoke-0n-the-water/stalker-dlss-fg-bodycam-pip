@@ -204,6 +204,12 @@ public:
 	CStatTimer();
 	void FrameStart();
 	void FrameEnd();
+	ICF void Add(u64 elapsed_ticks)
+	{
+		if (!g_bEnableStatGather) return;
+		InterlockedIncrement(reinterpret_cast<volatile LONG*>(&count));
+		InterlockedExchangeAdd64(reinterpret_cast<volatile LONG64*>(&accum), static_cast<LONG64>(elapsed_ticks));
+	}
 
 	ICF void Begin()
 	{

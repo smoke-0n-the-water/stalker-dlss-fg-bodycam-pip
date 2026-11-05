@@ -1,6 +1,6 @@
 /*
 ** Lua parser (source code -> bytecode).
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 **
 ** Major portions taken verbatim or adapted from the Lua interpreter.
 ** Copyright (C) 1994-2008 Lua.org, PUC-Rio. See Copyright Notice in lua.h
@@ -851,9 +851,12 @@ static void bcemit_comp(FuncState *fs, BinOpr opr, ExpDesc *e1, ExpDesc *e2)
       e1 = e2; e2 = eret;  /* Swap operands. */
       op = ((op-BC_ISLT)^3)+BC_ISLT;
       expr_toval(fs, e1);
+      ra = expr_toanyreg(fs, e1);
+      rd = expr_toanyreg(fs, e2);
+    } else {
+      rd = expr_toanyreg(fs, e2);
+      ra = expr_toanyreg(fs, e1);
     }
-    rd = expr_toanyreg(fs, e2);
-    ra = expr_toanyreg(fs, e1);
     ins = BCINS_AD(op, ra, rd);
   }
   /* Using expr_free might cause asserts if the order is wrong. */
@@ -948,22 +951,22 @@ static void bcemit_unop(FuncState *fs, BCOp op, ExpDesc *e)
 #if LJ_HASFFI
       if (e->k == VKCDATA) {  /* Fold in-place since cdata is not interned. */
 	GCcdata *cd = cdataV(&e->u.nval);
-	int64_t *p = (int64_t *)cdataptr(cd);
+	uint64_t *p = (uint64_t *)cdataptr(cd);
 	if (cd->ctypeid == CTID_COMPLEX_DOUBLE)
-	  p[1] ^= (int64_t)U64x(80000000,00000000);
+	  p[1] ^= U64x(80000000,00000000);
 	else
-	  *p = -*p;
+	  *p = ~*p+1u;
 	return;
       } else
 #endif
       if (expr_isnumk(e) && !expr_numiszero(e)) {  /* Avoid folding to -0. */
 	TValue *o = expr_numtv(e);
 	if (tvisint(o)) {
-	  int32_t k = intV(o);
-	  if (k == -k)
+	  int32_t k = intV(o), negk = (int32_t)(~(uint32_t)k+1u);
+	  if (k == negk)
 	    setnumV(o, -(lua_Number)k);
 	  else
-	    setintV(o, -k);
+	    setintV(o, negk);
 	  return;
 	} else {
 	  o->u64 ^= U64x(80000000,00000000);
@@ -1280,12 +1283,14 @@ static void fscope_end(FuncState *fs)
       MSize idx = gola_new(ls, NAME_BREAK, VSTACK_LABEL, fs->pc);
       ls->vtop = idx;  /* Drop break label immediately. */
       gola_resolve(ls, bl, idx);
+    } else {  /* Need the fixup step to propagate the breaks. */
+      gola_fixup(ls, bl);
       return;
-    }  /* else: need the fixup step to propagate the breaks. */
-  } else if (!(bl->flags & FSCOPE_GOLA)) {
-    return;
+    }
   }
-  gola_fixup(ls, bl);
+  if ((bl->flags & FSCOPE_GOLA)) {
+    gola_fixup(ls, bl);
+  }
 }
 
 /* Mark scope as having an upvalue. */
@@ -1524,23 +1529,11 @@ static void fs_fixup_var(LexState *ls, GCproto *pt, uint8_t *p, size_t ofsvar)
 
 #endif
 
-/* Check if bytecode op returns. */
-static int bcopisret(BCOp op)
-{
-  switch (op) {
-  case BC_CALLMT: case BC_CALLT:
-  case BC_RETM: case BC_RET: case BC_RET0: case BC_RET1:
-    return 1;
-  default:
-    return 0;
-  }
-}
-
 /* Fixup return instruction for prototype. */
 static void fs_fixup_ret(FuncState *fs)
 {
   BCPos lastpc = fs->pc;
-  if (lastpc <= fs->lasttarget || !bcopisret(bc_op(fs->bcbase[lastpc-1].ins))) {
+  if (lastpc <= fs->lasttarget || !bc_isret_or_tail(bc_op(fs->bcbase[lastpc-1].ins))) {
     if ((fs->bl->flags & FSCOPE_UPVAL))
       bcemit_AJ(fs, BC_UCLO, 0, 0);
     bcemit_AD(fs, BC_RET0, 0, 1);  /* Need final return. */
@@ -1565,7 +1558,7 @@ static void fs_fixup_ret(FuncState *fs)
 	/* Replace with UCLO plus branch. */
 	fs->bcbase[pc].ins = BCINS_AD(BC_UCLO, 0, offset);
 	break;
-      case BC_UCLO:
+      case BC_FNEW:
 	return;  /* We're done. */
       default:
 	break;
@@ -2207,6 +2200,8 @@ static void assign_adjust(LexState *ls, BCReg nvars, BCReg nexps, ExpDesc *e)
       bcemit_nil(fs, reg, (BCReg)extra);
     }
   }
+  if (nexps > nvars)
+    ls->fs->freereg -= nexps - nvars;  /* Drop leftover regs. */
 }
 
 /* Recursively parse assignment statement. */
@@ -2240,8 +2235,6 @@ static void parse_assignment(LexState *ls, LHSVarList *lh, BCReg nvars)
       return;
     }
     assign_adjust(ls, nvars, nexps, &e);
-    if (nexps > nvars)
-      ls->fs->freereg -= nexps - nvars;  /* Drop leftover regs. */
   }
   /* Assign RHS to LHS and recurse downwards. */
   expr_init(&e, VNONRELOC, ls->fs->freereg-1);
@@ -2527,6 +2520,7 @@ static int predict_next(LexState *ls, FuncState *fs, BCPos pc)
   cTValue *o;
   switch (bc_op(ins)) {
   case BC_MOV:
+    if (bc_d(ins) >= fs->nactvar) return 0;
     name = gco2str(gcref(var_get(ls, fs, bc_d(ins)).name));
     break;
   case BC_UGET:
@@ -2571,7 +2565,7 @@ static void parse_for_iter(LexState *ls, GCstr *indexname)
   line = ls->linenumber;
   assign_adjust(ls, 3, expr_list(ls, &e), &e);
   bcreg_bump(fs, 3);  /* The iterator needs another 3 slots (func + 2 args). */
-  isnext = (nvars <= 5 && predict_next(ls, fs, exprpc));
+  isnext = (nvars <= 5 && fs->pc > exprpc && predict_next(ls, fs, exprpc));
   var_add(ls, 3);  /* Hidden control variables. */
   lex_check(ls, TK_do);
   loop = bcemit_AJ(fs, isnext ? BC_ISNEXT : BC_JMP, base, NO_JMP);
@@ -2694,7 +2688,8 @@ static int parse_stmt(LexState *ls)
       lj_lex_next(ls);
       parse_goto(ls);
       break;
-    }  /* else: fallthrough */
+    }
+    /* fallthrough */
   default:
     parse_call_assign(ls);
     break;

@@ -10,6 +10,7 @@ CMonsterSquadManager* g_monster_squad = 0;
 
 CMonsterSquadManager::CMonsterSquadManager()
 {
+	m_relcase_object_ids.reserve(128);
 }
 
 CMonsterSquadManager::~CMonsterSquadManager()
@@ -88,7 +89,11 @@ void CMonsterSquadManager::register_member(u8 team_id, u8 squad_id, u8 group_id,
 
 void CMonsterSquadManager::remove_member(u8 team_id, u8 squad_id, u8 group_id, CEntity* e)
 {
-	get_squad(team_id, squad_id, group_id)->RemoveMember(e);
+	// net_Destroy after a failed net_Spawn comes here without register_member
+	if (team_id >= team.size() || squad_id >= team[team_id].size() || group_id >= team[team_id][squad_id].size())
+		return;
+	if (CMonsterSquad* squad = team[team_id][squad_id][group_id])
+		squad->RemoveMember(e);
 }
 
 CMonsterSquad* CMonsterSquadManager::get_squad(u8 team_id, u8 squad_id, u8 group_id)
@@ -105,7 +110,7 @@ CMonsterSquad* CMonsterSquadManager::get_squad(const CEntity* entity)
 void CMonsterSquadManager::update(CEntity* entity)
 {
 	CMonsterSquad* squad = monster_squad().get_squad(entity);
-	if (squad && squad->SquadActive() && (squad->GetLeader() == entity))
+	if (squad && (squad->GetLeader() == entity) && squad->SquadActive())
 	{
 		squad->UpdateSquadCommands();
 	}
@@ -113,6 +118,22 @@ void CMonsterSquadManager::update(CEntity* entity)
 
 void CMonsterSquadManager::remove_links(CObject* O)
 {
+	if (O)
+	{
+		if (m_relcase_frame != Device.dwFrame)
+		{
+			m_relcase_frame = Device.dwFrame;
+			m_relcase_object_ids.clear_not_free();
+		}
+
+		const u16 object_id = O->ID();
+		auto processed = std::lower_bound(m_relcase_object_ids.begin(), m_relcase_object_ids.end(), object_id);
+		if (processed != m_relcase_object_ids.end() && *processed == object_id)
+			return;
+
+		m_relcase_object_ids.insert(processed, object_id);
+	}
+
 	for (u32 team_id = 0; team_id < team.size(); team_id++)
 	{
 		for (u32 squad_id = 0; squad_id < team[team_id].size(); squad_id++)
@@ -124,4 +145,5 @@ void CMonsterSquadManager::remove_links(CObject* O)
 			}
 		}
 	}
+
 }

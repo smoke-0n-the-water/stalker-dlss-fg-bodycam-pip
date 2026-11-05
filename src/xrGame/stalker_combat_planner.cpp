@@ -43,6 +43,21 @@
 using namespace StalkerSpace;
 using namespace StalkerDecisionSpace;
 
+namespace
+{
+const ::luabind::functor<void>* combat_action_changed_callback()
+{
+	static cached_script_functor<void> callback_cache("_G.CAI_Stalker__OnCombatActionChanged");
+	return callback_cache.get(ai().script_engine());
+}
+
+const ::luabind::functor<bool>* allow_combat_action_switch_callback()
+{
+	static cached_script_functor<bool> callback_cache("_G.CAI_Stalker__AllowCombatActionSwitch");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 CStalkerCombatPlanner::CStalkerCombatPlanner(CAI_Stalker* object, LPCSTR action_name) :
 	inherited(object, action_name)
 {
@@ -106,9 +121,8 @@ void CStalkerCombatPlanner::update()
 
 	if (was_initialized && initialized() && current_action_id() != previous_action_id)
 	{
-		::luabind::functor<void> funct;
-		if (ai().script_engine().functor("_G.CAI_Stalker__OnCombatActionChanged", funct))
-			funct(object().lua_game_object(), previous_action_id, current_action_id());
+		if (const auto* funct = combat_action_changed_callback())
+			(*funct)(object().lua_game_object(), previous_action_id, current_action_id());
 	}
 
 	object().react_on_grenades();
@@ -127,9 +141,8 @@ bool CStalkerCombatPlanner::allow_action_switch(const _action_id_type& from_acti
 	// take_cover <-> look_out oscillation); no subscriber = vanilla. Re-asked each brain update while
 	// the proposed switch stays denied. A denied swap produces no transition, so the changed-callback
 	// stays silent for it.
-	luabind::functor<bool> funct;
-	if (ai().script_engine().functor("_G.CAI_Stalker__AllowCombatActionSwitch", funct))
-		return (funct(object().lua_game_object(), (u32)from_action_id, (u32)to_action_id));
+	if (const auto* funct = allow_combat_action_switch_callback())
+		return ((*funct)(object().lua_game_object(), (u32)from_action_id, (u32)to_action_id));
 
 	return (true);
 }

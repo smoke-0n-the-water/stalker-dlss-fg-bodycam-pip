@@ -1,14 +1,31 @@
 #ifndef _XR_POOL_H
 #define _XR_POOL_H
 
-// В сталкере x64 беда с luajit`ом - из-за того, что луаджит непременно требуется память из младших адресов,
-// на больших локациях луаджит не может выделить память, так как она уже занята под другие ресурсы игры.
-// Как вариант попробую выделить большой кусок памяти(128МБ) в начале игры и буду его потихоньку выдавать луаджиту
+#include <stddef.h>
 
-void XR_INIT();
+/* LuaJIT 2.0 x64 low-address allocator.
+** The engine reserves up to 1664 MiB in the lower 2 GB during WinMain and
+** commits/decommits 64 KiB chunks on demand. This preserves the address-space
+** requirement without committing the entire pool to the system pagefile.
+*/
+typedef struct xr_luajit_pool_stats
+{
+    void* base;
+    size_t requested_bytes;
+    size_t reserved_bytes;
+    size_t committed_bytes;
+    size_t peak_committed_bytes;
+    size_t fallback_bytes;
+    size_t peak_fallback_bytes;
+    size_t fallback_active_allocations;
+    size_t fallback_total_allocations;
+    size_t allocation_failures;
+} xr_luajit_pool_stats;
+
+void XR_INIT(void);
 void* XR_MMAP(size_t size);
-void XR_DESTROY(void* p, size_t size);
-
-void XR_EARLY_INIT();
+int XR_DESTROY(void* p, size_t size);
+void XR_EARLY_INIT(void);
+void XR_GET_POOL_STATS(xr_luajit_pool_stats* stats);
 
 #endif

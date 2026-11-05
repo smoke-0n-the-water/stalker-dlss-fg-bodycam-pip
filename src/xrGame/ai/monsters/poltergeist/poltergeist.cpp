@@ -331,7 +331,7 @@ void CPoltergeist::UpdateCL()
 	ability()->update_frame();
 
 	if (Actor()->memory().visual().visible_now(this) &&
-		Actor()->Position().distance_to(Position()) < 85.f)
+		Actor()->Position().distance_to_sqr(Position()) < _sqr(85.f))
 	{
 		MakeMeCrow();
 	}

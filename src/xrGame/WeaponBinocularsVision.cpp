@@ -394,5 +394,6 @@ void CBinocularsVision::remove_links(CObject* object)
 	if (I == m_active_objects.end())
 		return;
 
+	xr_delete(*I);
 	m_active_objects.erase(I);
 }

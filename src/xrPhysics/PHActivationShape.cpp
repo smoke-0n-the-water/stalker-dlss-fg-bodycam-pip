@@ -11,6 +11,7 @@
 #include "../xrEngine/gamemtllib.h"
 //#include "Level.h"
 #include "PHWorld.h"
+#include "PHCollideValidator.h"
 #include "../3rd party/ode/ode/src/util.h"
 
 #ifdef DEBUG
@@ -56,7 +57,6 @@ static void ActivateTestDepthCallback(bool& do_colide, bool bo1, dContact& c, SG
 	c.surface.soft_cfm = cfm;
 	c.surface.soft_erp = erp;
 	/*
-	
 	
 		VERIFY(dTriListClass != dGeomGetClass(c.geom.g2));
 		bool cl_statics = (dTriListClass == dGeomGetClass(c.geom.g1));
@@ -225,6 +225,45 @@ void CPHActivationShape::Destroy()
 bool CPHActivationShape::Activate(const Fvector need_size, u16 steps, float max_displacement, float max_rotation,
                                   bool un_freeze_later/*	=false*/)
 {
+	return ActivateInternal(need_size, steps, max_displacement, max_rotation, un_freeze_later, false);
+}
+
+bool CPHActivationShape::ActivateStaticOnly(const Fvector need_size, u16 steps, float max_displacement,
+                                             float max_rotation, bool un_freeze_later/*=false*/)
+{
+	return ActivateInternal(need_size, steps, max_displacement, max_rotation, un_freeze_later, true);
+}
+
+void CPHActivationShape::StepStaticOnly()
+{
+	// Death-ragdoll placement only needs the activation proxy to separate from
+	// static level geometry. Keep the global physics world frozen and solve only
+	// this proxy island; dynamic neighbours remain untouched and cannot be pulled
+	// into the temporary island through NearCallback()/EnableObject().
+	IslandReinit();
+	dJointGroupEmpty(ContactGroup);
+	ContactFeedBacks.empty();
+	ContactEffectors.empty();
+
+	if (CPHCollideValidator::DoCollideStatic(*this))
+		CollideStatic(dSpacedGeom(), this);
+
+	PhTune(fixed_step);
+	IslandStep(fixed_step);
+	IslandReinit();
+	PhDataUpdate(fixed_step);
+	spatial_move();
+
+	dJointGroupEmpty(ContactGroup);
+	ContactFeedBacks.empty();
+	ContactEffectors.empty();
+}
+
+bool CPHActivationShape::ActivateInternal(const Fvector need_size, u16 steps, float max_displacement,
+                                           float max_rotation, bool un_freeze_later, bool static_only)
+{
+
+	u32 correction_steps = 0;
 #ifdef	DEBUG
 	if(debug_output().ph_dbg_draw_mask().test(phDbgDrawDeathActivationBox))
 	{
@@ -292,8 +331,15 @@ bool CPHActivationShape::Activate(const Fvector need_size, u16 steps, float max_
 			for (int i = 0; num_it > i; ++i)
 			{
 				max_depth = 0.f;
+				if (static_only)
+					StepStaticOnly();
+				else
 				ph_world->Step();
-				CHECK_POS(Position(), "pos after ph_world->Step()", false);
+				++correction_steps;
+				CHECK_POS(Position(), "pos after activation correction step", false);
+				if (static_only)
+					CutVelocity(max_vel, max_a_vel);
+				else
 				ph_world->CutVelocity(max_vel, max_a_vel);
 				CHECK_POS(Position(), "pos after CutVelocity", true);
 				//if(m==0&&i==0)ph_world->GetState(temp_state);
@@ -324,6 +370,7 @@ bool CPHActivationShape::Activate(const Fvector need_size, u16 steps, float max_
 		debug_output().DBG_ClosedCashedDraw(30000);
 	}
 #endif
+
 	return ret;
 }
 
@@ -343,8 +390,7 @@ void CPHActivationShape::PhDataUpdate(dReal step)
 }
 
 void CPHActivationShape::PhTune(dReal step)
-{
-}
+{}
 
 dGeomID CPHActivationShape::dSpacedGeom()
 {
@@ -357,8 +403,7 @@ void CPHActivationShape::get_spatial_params()
 }
 
 void CPHActivationShape::InitContact(dContact* c, bool& do_collide, u16, u16)
-{
-}
+{}
 
 void CPHActivationShape::CutVelocity(float l_limit, float /*a_limit*/)
 {
@@ -380,7 +425,6 @@ void CPHActivationShape::set_rotation(const Fmatrix& sof)
 	dBodySetRotation(ODEBody(), rot);
 	m_safe_state.set_rotation(rot);
 }
-
 
 #ifdef		DEBUG
 IPhysicsShellHolder* CPHActivationShape::ref_object	()

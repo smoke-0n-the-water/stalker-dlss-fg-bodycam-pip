@@ -10,6 +10,30 @@
 #include "alife_object_registry.h"
 #include "ai_debug.h"
 
+namespace
+{
+bool read_saved_packet(IReader& file_stream, NET_Packet& packet, LPCSTR packet_name)
+{
+	if (file_stream.elapsed() < int(sizeof(u16)))
+	{
+		Msg("! Corrupted saved game: missing %s packet size", packet_name);
+		return false;
+	}
+
+	const u16 packet_size = file_stream.r_u16();
+	if (packet_size < sizeof(u16) || packet_size > NET_PacketSizeLimit || int(packet_size) > file_stream.elapsed())
+	{
+		Msg("! Corrupted saved game: invalid %s packet size %u (remaining %d)",
+			packet_name, packet_size, file_stream.elapsed());
+		return false;
+	}
+
+	packet.B.count = packet_size;
+	file_stream.r(packet.B.data, packet_size);
+	return true;
+}
+}
+
 CALifeObjectRegistry::CALifeObjectRegistry(LPCSTR section)
 {
 }
@@ -93,18 +117,42 @@ void CALifeObjectRegistry::save(IWriter& memory_stream)
 	Msg("* %d objects are successfully saved", object_count);
 }
 
-CSE_ALifeDynamicObject* CALifeObjectRegistry::get_object(IReader& file_stream)
+CSE_ALifeDynamicObject* CALifeObjectRegistry::get_object(IReader& file_stream, bool* corrupted)
 {
+	if (corrupted)
+		*corrupted = false;
+
 	NET_Packet tNetPacket;
 	u16 u_id;
 	// Spawn
-	tNetPacket.B.count = file_stream.r_u16();
-	file_stream.r(tNetPacket.B.data, tNetPacket.B.count);
+	if (!read_saved_packet(file_stream, tNetPacket, "spawn"))
+	{
+		if (corrupted)
+			*corrupted = true;
+		return nullptr;
+	}
+
 	tNetPacket.r_begin(u_id);
-	R_ASSERT2(M_SPAWN==u_id, "Invalid packet ID (!= M_SPAWN)");
+	if (M_SPAWN != u_id)
+	{
+		Msg("! Corrupted saved game: invalid spawn packet ID %u", u_id);
+		if (corrupted)
+			*corrupted = true;
+		return nullptr;
+	}
 
 	string64 s_name;
-	tNetPacket.r_stringZ(s_name);
+	const u8* section_begin = tNetPacket.B.data + tNetPacket.r_pos;
+	const void* section_end = memchr(section_begin, 0, tNetPacket.r_elapsed());
+	if (!tNetPacket.r_elapsed() || !section_end ||
+		u32(static_cast<const u8*>(section_end) - section_begin) >= sizeof(s_name))
+	{
+		Msg("! Corrupted saved game: unterminated entity section name");
+		if (corrupted)
+			*corrupted = true;
+		return nullptr;
+	}
+	tNetPacket.r_stringZ_s(s_name);
 #ifdef DEBUG
 	if (psAI_Flags.test(aiALife)) {
 		Msg					("Loading object %s [%d]b", s_name, tNetPacket.B.count);
@@ -115,35 +163,74 @@ CSE_ALifeDynamicObject* CALifeObjectRegistry::get_object(IReader& file_stream)
 	if (!tpSE_Abstract)
 	{
 		Msg("! Can't create entity '%s'", s_name);
-		tNetPacket.B.count = file_stream.r_u16();
-		file_stream.advance(tNetPacket.B.count);
+		if (!read_saved_packet(file_stream, tNetPacket, "update"))
+		{
+			if (corrupted)
+				*corrupted = true;
+		}
 		return nullptr;
 	}
 	CSE_ALifeDynamicObject* tpALifeDynamicObject = smart_cast<CSE_ALifeDynamicObject*>(tpSE_Abstract);
-	R_ASSERT2(tpALifeDynamicObject, "Non-ALife object in the saved game!");
+	if (!tpALifeDynamicObject)
+	{
+		Msg("! Corrupted saved game: non-ALife object '%s'", s_name);
+		F_entity_Destroy(tpSE_Abstract);
+		if (corrupted)
+			*corrupted = true;
+		return nullptr;
+	}
 	tpALifeDynamicObject->Spawn_Read(tNetPacket);
 
 	// Update
-	tNetPacket.B.count = file_stream.r_u16();
-	file_stream.r(tNetPacket.B.data, tNetPacket.B.count);
+	if (!read_saved_packet(file_stream, tNetPacket, "update"))
+	{
+		F_entity_Destroy(tpSE_Abstract);
+		if (corrupted)
+			*corrupted = true;
+		return nullptr;
+	}
+
 	tNetPacket.r_begin(u_id);
-	R_ASSERT2(M_UPDATE==u_id, "Invalid packet ID (!= M_UPDATE)");
+	if (M_UPDATE != u_id)
+	{
+		Msg("! Corrupted saved game: invalid update packet ID %u", u_id);
+		F_entity_Destroy(tpSE_Abstract);
+		if (corrupted)
+			*corrupted = true;
+		return nullptr;
+	}
 	tpALifeDynamicObject->UPDATE_Read(tNetPacket);
 
 	return (tpALifeDynamicObject);
 }
 
-void CALifeObjectRegistry::load(IReader& file_stream)
+bool CALifeObjectRegistry::load(IReader& file_stream)
 {
 	Msg("* Loading objects...");
-	R_ASSERT2(file_stream.find_chunk(OBJECT_CHUNK_DATA), "Can't find chunk OBJECT_CHUNK_DATA!");
+	if (!file_stream.find_chunk(OBJECT_CHUNK_DATA) || file_stream.elapsed() < int(sizeof(u32)))
+	{
+		Msg("! Corrupted saved game: cannot find valid OBJECT_CHUNK_DATA");
+		return false;
+	}
 
 	m_objects.clear();
+	m_object_by_id.fill(nullptr);
 
 	u32 count = file_stream.r_u32();
+	constexpr u32 minimum_serialized_object_size = 2u * sizeof(u16) + 2u * sizeof(u16);
+	if (count > u32(file_stream.elapsed()) / minimum_serialized_object_size)
+	{
+		Msg("! Corrupted saved game: invalid object count %u", count);
+		return false;
+	}
+
 	for (u32 I = 0; I < count; ++I)
 	{
-		CSE_ALifeDynamicObject* tpSE_Abstract = get_object(file_stream);
+		bool corrupted = false;
+		CSE_ALifeDynamicObject* tpSE_Abstract = get_object(file_stream, &corrupted);
+		if (corrupted)
+			return false;
+
 		if (!tpSE_Abstract)
 			continue;
 
@@ -151,4 +238,5 @@ void CALifeObjectRegistry::load(IReader& file_stream)
 	}
 
 	Msg("* %d objects are successfully loaded", m_objects.size());
+	return true;
 }

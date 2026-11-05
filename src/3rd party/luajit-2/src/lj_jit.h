@@ -1,6 +1,6 @@
 /*
 ** Common definitions for the JIT compiler.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #ifndef _LJ_JIT_H
@@ -86,8 +86,8 @@
 #define JIT_F_OPT_DEFAULT	JIT_F_OPT_3
 
 #if LJ_TARGET_WINDOWS || LJ_64
-/* See: http://blogs.msdn.com/oldnewthing/archive/2003/10/08/55239.aspx */
-#define JIT_P_sizemcode_DEFAULT		64
+/* See: https://devblogs.microsoft.com/oldnewthing/20031008-00/?p=42223 */
+#define JIT_P_sizemcode_DEFAULT		256
 #else
 /* Could go as low as 4K, but the mmap() overhead would be rather high. */
 #define JIT_P_sizemcode_DEFAULT		32
@@ -95,7 +95,7 @@
 
 /* Optimization parameters and their defaults. Length is a char in octal! */
 #define JIT_PARAMDEF(_) \
-  _(\010, maxtrace,	1000)	/* Max. # of traces in cache. */ \
+  _(\010, maxtrace,	4096)	/* Max. # of traces in cache. */ \
   _(\011, maxrecord,	4000)	/* Max. # of recorded IR instructions. */ \
   _(\012, maxirconst,	500)	/* Max. # of IR constants of a trace. */ \
   _(\007, maxside,	100)	/* Max. # of side traces of a root trace. */ \
@@ -113,7 +113,7 @@
   /* Size of each machine code area (in KBytes). */ \
   _(\011, sizemcode,	JIT_P_sizemcode_DEFAULT) \
   /* Max. total size of all machine code areas (in KBytes). */ \
-  _(\010, maxmcode,	512) \
+  _(\010, maxmcode,	16384) \
   /* End of list. */
 
 enum {
@@ -155,9 +155,15 @@ typedef uint8_t MCode;
 typedef uint32_t MCode;
 #endif
 
+/* Linked list of MCode areas. */
+typedef struct MCLink {
+  MCode *next;		/* Next area. */
+  size_t size;		/* Size of current area. */
+} MCLink;
+
 /* Stack snapshot header. */
 typedef struct SnapShot {
-  uint16_t mapofs;	/* Offset into snapshot map. */
+  uint32_t mapofs;	/* Offset into snapshot map. */
   IRRef1 ref;		/* First IR ref for this snapshot. */
   uint8_t nslots;	/* Number of valid slots. */
   uint8_t topslot;	/* Maximum frame extent. */
@@ -211,14 +217,12 @@ typedef enum {
 /* Trace object. */
 typedef struct GCtrace {
   GCHeader;
-  uint8_t topslot;	/* Top stack slot already checked to be allocated. */
-  uint8_t linktype;	/* Type of link. */
+  uint16_t nsnap;	/* Number of snapshots. */
   IRRef nins;		/* Next IR instruction. Biased with REF_BIAS. */
   GCRef gclist;
   IRIns *ir;		/* IR instructions/constants. Biased with REF_BIAS. */
   IRRef nk;		/* Lowest IR constant. Biased with REF_BIAS. */
-  uint16_t nsnap;	/* Number of snapshots. */
-  uint16_t nsnapmap;	/* Number of snapshot map elements. */
+  uint32_t nsnapmap;	/* Number of snapshot map elements. */
   SnapShot *snap;	/* Snapshot array. */
   SnapEntry *snapmap;	/* Snapshot map. */
   GCRef startpt;	/* Starting prototype. */
@@ -235,6 +239,8 @@ typedef struct GCtrace {
   TraceNo1 nextroot;	/* Next root trace for same prototype. */
   TraceNo1 nextside;	/* Next side trace of same root trace. */
   uint8_t sinktags;	/* Trace has SINK tags. */
+  uint8_t topslot;	/* Top stack slot already checked to be allocated. */
+  uint8_t linktype;	/* Type of link. */
   uint8_t unused1;
 #ifdef LUAJIT_USE_GDBJIT
   void *gdbjit_entry;	/* GDB JIT entry. */
@@ -316,6 +322,37 @@ typedef struct FoldState {
 } FoldState;
 
 /* JIT compiler state. */
+#define JIT_ABORT_SITE_SLOTS 32
+#define JIT_ABORT_SOURCE_LEN 96
+#define JIT_SIDE_NYI_SLOTS 64
+#define JIT_ROOT_NYI_SLOTS 1024
+
+typedef struct JitAbortSiteStat {
+  uint64_t count;
+  uint32_t line;
+  uint16_t reason;
+  uint8_t side_trace;
+  uint8_t used;
+  char source[JIT_ABORT_SOURCE_LEN];
+} JitAbortSiteStat;
+
+typedef struct JitSideNyiPenalty {
+  TraceNo parent;
+  ExitNo exitno;
+  uint16_t failures;
+  uint16_t used;
+} JitSideNyiPenalty;
+
+typedef struct JitRootNyiPenalty {
+  MRef pt;
+  MRef pc;
+  uint32_t signature;
+  uint16_t failures;
+  uint16_t cooldown;
+  uint8_t used;
+  uint8_t pad[3];
+} JitRootNyiPenalty;
+
 typedef struct jit_State {
   GCtrace cur;		/* Current trace. */
 
@@ -399,12 +436,35 @@ typedef struct jit_State {
   size_t szmcarea;	/* Size of current mcode area. */
   size_t szallmcarea;	/* Total size of all allocated mcode areas. */
 
+  /* Engine-side JIT telemetry. Diagnostic counters never affect compiler
+  ** policy and survive trace-cache flushes until explicitly reset. */
+  uint64_t stats_trace_starts;
+  uint64_t stats_root_trace_starts;
+  uint64_t stats_side_trace_starts;
+  uint64_t stats_trace_compiled;
+  uint64_t stats_trace_aborts;
+  uint64_t stats_root_trace_aborts;
+  uint64_t stats_side_trace_aborts;
+  uint64_t stats_mcode_retries;
+  uint64_t stats_trace_flushes;
+  uint64_t stats_maxtrace_flushes;
+  uint64_t stats_mcode_limit_hits;
+  uint64_t stats_mcode_alloc_failures;
+  uint64_t stats_abort_mcode;
+  uint64_t stats_abort_nyi;
+  uint64_t stats_abort_blacklist;
+  uint64_t stats_blacklisted_sites;
+  uint64_t stats_side_nyi_disabled;
+  uint64_t stats_root_nyi_backoffs;
+  uint64_t stats_root_nyi_suppressed;
+  JitAbortSiteStat stats_abort_sites[JIT_ABORT_SITE_SLOTS];
+  JitSideNyiPenalty side_nyi_penalty[JIT_SIDE_NYI_SLOTS];
+  uint32_t side_nyi_penalty_slot;
+  JitRootNyiPenalty root_nyi_penalty[JIT_ROOT_NYI_SLOTS];
+  uint32_t root_nyi_penalty_slot;
+
   TValue errinfo;	/* Additional info element for trace errors. */
-}
-#if LJ_TARGET_ARM
-LJ_ALIGN(16)		/* For DISPATCH-relative addresses in assembler part. */
-#endif
-jit_State;
+} jit_State;
 
 /* Trivial PRNG e.g. used for penalty randomization. */
 static LJ_AINLINE uint32_t LJ_PRNG_BITS(jit_State *J, int bits)

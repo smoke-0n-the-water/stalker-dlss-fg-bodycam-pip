@@ -196,6 +196,10 @@ void CRenderTarget::phase_combine()
 		}
 	}
 
+	// With HDR upscaler input, the scene is combined into floating-point storage
+	if (DlssPostAfterUpscale())
+		dlss_hdr_begin();
+
 	FLOAT ColorRGBA[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 	// low/hi RTs
 	if (!RImplementation.o.dx10_msaa)
@@ -615,19 +619,19 @@ void CRenderTarget::phase_combine()
 	//	Igor: for volumetric lights
 	//	combine light volume here
 	// pip r__svp_skip_volumetric drops god rays on the scope pass (subtle at magnification)
-	if (!(svp_pass && ps_r__svp_skip_volumetric))
-	{
-		if (RImplementation.o.ssfx_volumetric)
-		{
-			if (m_bHasActiveVolumetric || m_bHasActiveVolumetric_spot)
-				phase_combine_volumetric();
-		}
-		else
-		{
-			if (m_bHasActiveVolumetric)
-				phase_combine_volumetric();
-		}
-	}
+	const bool volumetric = !(svp_pass && ps_r__svp_skip_volumetric) && (RImplementation.o.ssfx_volumetric ?
+		m_bHasActiveVolumetric || m_bHasActiveVolumetric_spot : m_bHasActiveVolumetric);
+	// Our lens pipeline (PiP/3DSS composite, Reference capture, physical glass,
+	// reticle glow) draws between the reconstruction point and phase_pp with the
+	// render-size scene depth, so scope frames keep the 0.63 order (DlssPostAfterUpscale).
+	const bool postAfterUpscale = DlssPostAfterUpscale();
+	// With the post chain after reconstruction, the volumetric lights are added after it too,
+	// unless sunshafts are set to go through the upscaler.
+	const bool sunshaftsBeforeUpscale = postAfterUpscale && ps_r_upscaler_sunshafts == UPSCALER_SUNSHAFTS_UPSCALED;
+	const bool screenSpaceSunshafts = !_menu_pp &&
+		(ps_sunshafts_mode == R2SS_SCREEN_SPACE || ps_sunshafts_mode == R2SS_COMBINE_SUNSHAFTS);
+	if (volumetric && (!postAfterUpscale || sunshaftsBeforeUpscale))
+		phase_combine_volumetric();
 
 	// Perform blooming filter and distortion if needed
 	RCache.set_Stencil(FALSE);
@@ -703,18 +707,34 @@ void CRenderTarget::phase_combine()
 	   */
 	RCache.set_Stencil(FALSE);
 
-
-
-
-	if (!_menu_pp)
+	// With an upscaler, reconstruct here: the rest of the post chain runs at display resolution.
+	if (postAfterUpscale)
 	{
-		if (ps_sunshafts_mode == R2SS_SCREEN_SPACE || ps_sunshafts_mode == R2SS_COMBINE_SUNSHAFTS)
+		// Only scene passes read the previous positions: keep them render-sized.
+		if (ssfx_PrevPos_Requiered)
+			HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
+		// First in the post chain, so they can stay in the scene while the rest moves.
+		if (sunshaftsBeforeUpscale && screenSpaceSunshafts)
 		{
 			PIX_EVENT(phase_sunshafts);
-			tm_beg(svp_stats::SEC_C_SUNSHAFT);
 			phase_sunshafts();
-			tm_end(svp_stats::SEC_C_SUNSHAFT);
 		}
+		dlss_post_upscale();
+		dlss_post_effects();
+		// Beams and the volumetric sun change on their own but carry the motion
+		// of the scene behind them; in the upscaler's history they became grids.
+		// A distortion mask now fills rt_Generic_1; it used to overwrite their
+		// bloom overflow there, so skip that output.
+		if (volumetric && !sunshaftsBeforeUpscale)
+			phase_combine_volumetric(!bDistort);
+	}
+
+	if (screenSpaceSunshafts && !sunshaftsBeforeUpscale)
+	{
+		PIX_EVENT(phase_sunshafts);
+		tm_beg(svp_stats::SEC_C_SUNSHAFT);
+		phase_sunshafts();
+		tm_end(svp_stats::SEC_C_SUNSHAFT);
 	}
 
 	if (RImplementation.o.ssfx_fog && ps_ssfx_fog_scattering > 0)
@@ -751,7 +771,8 @@ void CRenderTarget::phase_combine()
 
 	// pip composite the lens once on the MAIN view only, whenever a 3DSS scope is aimed under true_pip
 	// (magnified or a 1x reflex/eyepiece was captured), true_pip off keeps the stock scope_3D_fake_enabled gate
-	if (this == RImplementation.TargetMain
+	// (skipped on the one frame a lens appears while the post chain already runs after reconstruction)
+	if (this == RImplementation.TargetMain && !postAfterUpscale
 		&& (scope_3D_fake_enabled
 			|| (Device.true_pip_on
 				&& (Device.m_SecondViewport.IsSVPActive()
@@ -766,7 +787,7 @@ void CRenderTarget::phase_combine()
 
     // Real HUD glass follows opaque optical composition, before bloom/NVG/scene effects
     // (not under night vision with deferred glass, scope_glass_forward_layer_allowed).
-    if (this == RImplementation.TargetMain && scope_glass_forward_layer_allowed() && prepare_scope_physical_glass()) {
+    if (this == RImplementation.TargetMain && !postAfterUpscale && scope_glass_forward_layer_allowed() && prepare_scope_physical_glass()) {
         u_setrt(rt_Generic_0, nullptr, rt_Position, baseZB);
         RCache.set_Stencil(FALSE);
         RCache.set_ColorWriteEnable();
@@ -857,7 +878,7 @@ void CRenderTarget::phase_combine()
 	}
 
     //SMAA
-	if (ps_smaa_quality && !dlss::Active() && !svp_dlss_skip_aa) // pip skip on the DLSS SVP pass (eval reconstructs)
+	if (ps_smaa_quality && !postAfterUpscale && !dlss::Active() && !svp_dlss_skip_aa) // pip skip on the DLSS SVP pass (eval reconstructs)
 	{
         //PIX_EVENT(SMAA);
         phase_smaa();
@@ -878,14 +899,20 @@ void CRenderTarget::phase_combine()
 	// nvg split, taa mask stamp), unconditional of the taa path, frame-start clear covers staleness
 	if (this == RImplementation.TargetMain)
 	{
-		RImplementation.GMBase.RGraph.mapScopeHUDSorted.clear();
+		const auto& lensGraph = RImplementation.GMBase.RGraph;
+		dlss_post_scope_seen = !lensGraph.mapScopeHUDSorted.empty() || !lensGraph.mapScopeHUDObjective.empty()
+			|| !lensGraph.mapPhysicalScopeGlass.empty() || !lensGraph.mapReflexHUDSorted.empty()
+			|| !lensGraph.mapScopeHUDOverlay.empty();
+		// lenses left for phase_dlss_scope survive until it draws them
+		if (dlss_scope_frame != Device.dwFrame)
+			RImplementation.GMBase.RGraph.mapScopeHUDSorted.clear();
 		RImplementation.GMBase.RGraph.mapScopeHUDObjective.clear();
 		RImplementation.GMBase.RGraph.mapPhysicalScopeGlass.clear();
 		RImplementation.GMBase.RGraph.mapReflexHUDSorted.clear();
 		RImplementation.GMBase.RGraph.mapScopeHUDOverlay.clear();
 	}
 
-	if (ssfx_PrevPos_Requiered)
+	if (ssfx_PrevPos_Requiered && !postAfterUpscale)
 	{
 		svp_copy_begin(SVP_CP_HIST, rt_copy_bytes(rt_ssfx_prevPos));
 		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
@@ -1189,7 +1216,7 @@ void CRenderTarget::phase_wallmarks()
 	RCache.set_ColorWriteEnable(D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE);
 }
 
-void CRenderTarget::phase_combine_volumetric()
+void CRenderTarget::phase_combine_volumetric(bool high)
 {
 	PIX_EVENT(phase_combine_volumetric);
 	u32 Offset = 0;
@@ -1199,7 +1226,7 @@ void CRenderTarget::phase_combine_volumetric()
 
 	//u_setrt(rt_Generic_0,0,0,HW.pBaseZB );			// LDR RT
 	if (!RImplementation.o.dx10_msaa)
-		u_setrt(rt_Generic_0, rt_Generic_1, 0, u_SceneDepth());
+		u_setrt(rt_Generic_0, high ? rt_Generic_1 : ref_rt(), 0, u_SceneDepth());
 	else
 		u_setrt(rt_Generic_0_r, rt_Generic_1_r, 0, RImplementation.Target->rt_MSAADepth->pZRT);
 	//	Sets limits to both render targets
@@ -1219,6 +1246,11 @@ void CRenderTarget::phase_combine_volumetric()
 
 		// Draw
 		RCache.set_Element(s_combine_volumetric->E[0]);
+		if (dlss_post_swapped)
+			RCache.set_c("dlss_volumetric_params", dlss_post_jitter.x / float(dlss::RenderWidth()),
+				dlss_post_jitter.y / float(dlss::RenderHeight()), 1.f, 0.f);
+		else
+			RCache.set_c("dlss_volumetric_params", 0.f, 0.f, 0.f, 0.f);
 		//RCache.set_Geometry			(g_combine_VP		);
 		RCache.set_Geometry(g_combine);
 		RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);

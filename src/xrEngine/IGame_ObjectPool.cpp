@@ -6,11 +6,24 @@
 
 IGame_ObjectPool::IGame_ObjectPool(void)
 {
+	m_ClassIdCache.reserve(2048);
 }
 
 IGame_ObjectPool::~IGame_ObjectPool(void)
 {
 	R_ASSERT(m_PrefetchObjects.empty());
+}
+
+CLASS_ID IGame_ObjectPool::resolve_class_id(LPCSTR name)
+{
+	const shared_str section = name;
+	const ClassIdCache::const_iterator found = m_ClassIdCache.find(section);
+	if (found != m_ClassIdCache.end())
+		return found->second;
+
+	const CLASS_ID class_id = pSettings->r_clsid(name, "class");
+	m_ClassIdCache.emplace(section, class_id);
+	return class_id;
 }
 
 void IGame_ObjectPool::prefetch()
@@ -24,10 +37,11 @@ void IGame_ObjectPool::prefetch()
 	// prefetch objects
 	strconcat(sizeof(section), section, "prefetch_objects_", g_pGamePersistent->m_game_params.m_game_type);
 	CInifile::Sect const& sect = pSettings->r_section(section);
+	m_PrefetchObjects.reserve(sect.Data.size());
 	for (CInifile::SectCIt I = sect.Data.begin(); I != sect.Data.end(); I++)
 	{
 		const CInifile::Item& item = *I;
-		CLASS_ID CLS = pSettings->r_clsid(item.first.c_str(), "class");
+		CLASS_ID CLS = resolve_class_id(item.first.c_str());
 		p_count++;
 		CObject* pObject = (CObject*)NEW_INSTANCE(CLS);
 		pObject->Load(item.first.c_str());
@@ -46,12 +60,15 @@ void IGame_ObjectPool::clear()
 	ObjectVecIt itE = m_PrefetchObjects.end();
 	for (; it != itE; it++)
 		xr_delete(*it);
-	m_PrefetchObjects.clear();
+	// Prefetch objects are only warm-up holders and are recreated on the next
+	// game start. Return the pointer array too; retaining a modpack-sized
+	// high-water capacity through the main menu provides no runtime benefit.
+	m_PrefetchObjects.clear_and_free();
 }
 
 CObject* IGame_ObjectPool::create(LPCSTR name)
 {
-	CLASS_ID CLS = pSettings->r_clsid(name, "class");
+	CLASS_ID CLS = resolve_class_id(name);
 	CObject* O = (CObject*)NEW_INSTANCE(CLS);
 
     if (O)

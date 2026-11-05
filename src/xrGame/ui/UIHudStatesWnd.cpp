@@ -467,20 +467,13 @@ void CUIHudStatesWnd::SetAmmoIcon(const shared_str& sect_name)
 	}
 	m_ui_weapon_icon->Show(true);
 
-	Frect texture_rect;
-	texture_rect.x1 = pSettings->r_float(sect_name, "inv_grid_x") * INV_GRID_WIDTH;
-	texture_rect.y1 = pSettings->r_float(sect_name, "inv_grid_y") * INV_GRID_HEIGHT;
-	texture_rect.x2 = pSettings->r_float(sect_name, "inv_grid_width") * INV_GRID_WIDTH;
-	texture_rect.y2 = pSettings->r_float(sect_name, "inv_grid_height") * INV_GRID_HEIGHT;
-	texture_rect.rb.add(texture_rect.lt);
+	const InventoryUtilities::InventoryIconDesc icon_desc = InventoryUtilities::GetInventoryIconDesc(sect_name);
+	const Frect texture_rect = icon_desc.texture_rect;
 	m_ui_weapon_icon->GetUIStaticItem().SetTextureRect(texture_rect);
 	m_ui_weapon_icon->SetStretchTexture(true);
 
-	if (pSettings->line_exist(sect_name, "icons_texture"))
-	{
-		LPCSTR icons_texture = pSettings->r_string(sect_name, "icons_texture");
-		m_ui_weapon_icon->SetShader(InventoryUtilities::GetCustomIconTextureShader(icons_texture));
-	}
+	if (icon_desc.texture.size())
+		m_ui_weapon_icon->SetShader(InventoryUtilities::GetCustomIconTextureShader(icon_desc.texture.c_str()));
 	else
 		m_ui_weapon_icon->SetShader(InventoryUtilities::GetEquipmentIconsShader());
 
@@ -703,7 +696,7 @@ void CUIHudStatesWnd::UpdateIndicatorType(CActor* actor, ALife::EInfluenceType t
 	protect += (helmet) ? helmet->GetDefHitTypeProtection(hit_type) : 0.0f;
 	protect += actor->GetProtection_ArtefactsOnBelt(hit_type);
 
-	CEntityCondition::BOOSTER_MAP& cur_booster_influences = actor->conditions().GetCurBoosterInfluences();
+	const CEntityCondition::BOOSTER_MAP& cur_booster_influences = actor->conditions().GetCurBoosterInfluences();
 	CEntityCondition::BOOSTER_MAP::const_iterator it;
 	if (hit_type == ALife::eHitTypeChemicalBurn)
 	{
@@ -853,7 +846,7 @@ void CUIHudStatesWnd::FakeUpdateIndicatorType(u8 t, float power)
 	protect += (helmet) ? helmet->GetDefHitTypeProtection(hit_type) : 0.0f;
 	protect += actor->GetProtection_ArtefactsOnBelt(hit_type);
 
-	CEntityCondition::BOOSTER_MAP cur_booster_influences = actor->conditions().GetCurBoosterInfluences();
+	const CEntityCondition::BOOSTER_MAP& cur_booster_influences = actor->conditions().GetCurBoosterInfluences();
 	CEntityCondition::BOOSTER_MAP::const_iterator it;
 	if (hit_type == ALife::eHitTypeChemicalBurn)
 	{

@@ -6,7 +6,7 @@
 #include "extendedgeom.h"
 #include "mathutilsode.h"
 
-#include "../xrengine/gamemtllib.h"
+#include "xrEngine/GameMtlLib.h"
 
 
 void DamageReceiverCollisionCallback(bool& do_colide, bool bo1, dContact& c, SGameMtl* material_1, SGameMtl* material_2)

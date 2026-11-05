@@ -15,9 +15,12 @@ bool shared_str_initialized = false;
 XRCORE_API bool g_allow_heap_min = true;
 
 // Processor specific implementations
+extern pso_MemCopy xrMemCopy_AVX2;
 extern pso_MemCopy xrMemCopy_MMX;
 extern pso_MemCopy xrMemCopy_x86;
+extern pso_MemFill xrMemFill_AVX2;
 extern pso_MemFill xrMemFill_x86;
+extern pso_MemFill32 xrMemFill32_AVX2;
 extern pso_MemFill32 xrMemFill32_MMX;
 extern pso_MemFill32 xrMemFill32_x86;
 
@@ -47,9 +50,15 @@ xrMemory::xrMemory()
     debug_mode = FALSE;
 
 #endif // DEBUG_MEMORY_MANAGER
+#ifdef _M_AMD64
+	mem_copy = xrMemCopy_AVX2;
+	mem_fill = xrMemFill_AVX2;
+	mem_fill32 = xrMemFill32_AVX2;
+#else
 	mem_copy = xrMemCopy_x86;
 	mem_fill = xrMemFill_x86;
 	mem_fill32 = xrMemFill32_x86;
+#endif
 }
 
 #ifdef DEBUG_MEMORY_MANAGER
@@ -64,8 +73,16 @@ void xrMemory::_initialize(BOOL bDebug)
 #endif // DEBUG_MEMORY_MANAGER
 
 	stat_calls = 0;
+	stat_calls_enabled = FALSE;
 	stat_counter = 0;
 
+#ifdef _M_AMD64
+	// Release-AVX|x64 is an AVX2-only target. Bind the explicit kernels instead
+	// of the legacy x64 aliases that merely forward to memcpy/memset.
+	mem_copy = xrMemCopy_AVX2;
+	mem_fill = xrMemFill_AVX2;
+	mem_fill32 = xrMemFill32_AVX2;
+#else
 	u32 features = CPU::ID.feature;
 	if (features & _CPU_FEATURE_MMX)
 	{
@@ -79,6 +96,7 @@ void xrMemory::_initialize(BOOL bDebug)
 		mem_fill = xrMemFill_x86;
 		mem_fill32 = xrMemFill32_x86;
 	}
+#endif
 
 #ifndef M_BORLAND
 #ifndef PURE_ALLOC

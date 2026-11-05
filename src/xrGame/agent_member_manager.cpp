@@ -17,22 +17,42 @@
 #include "cover_point.h"
 #include "grenade.h"
 
-class CMemberPredicate2
+void CAgentMemberManager::rebuild_member_index()
 {
-protected:
-	ALife::_OBJECT_ID m_object_id;
+	m_member_id_index.clear();
+	m_member_id_index.reserve(m_members.size());
 
-public:
-	IC CMemberPredicate2(const ALife::_OBJECT_ID& object_id)
-	{
-		m_object_id = object_id;
-	}
+	for (u32 i = 0, n = (u32)m_members.size(); i < n; ++i)
+		m_member_id_index.push_back(std::make_pair(m_members[i]->object().ID(), i));
 
-	IC bool operator()(const CMemberOrder* order) const
-	{
-		return (order->object().ID() == m_object_id);
-	}
-};
+	std::sort(m_member_id_index.begin(), m_member_id_index.end());
+}
+
+u32 CAgentMemberManager::member_index(const ALife::_OBJECT_ID& object_id) const
+{
+	const std::pair<ALife::_OBJECT_ID, u32> key = std::make_pair(object_id, 0u);
+	MEMBER_ID_INDEX::const_iterator I = std::lower_bound(m_member_id_index.begin(), m_member_id_index.end(), key);
+	if ((I == m_member_id_index.end()) || (I->first != object_id))
+		return (u32(-1));
+
+	const u32 index = I->second;
+	if ((index >= m_members.size()) || (m_members[index]->object().ID() != object_id))
+		return (u32(-1));
+
+	return (index);
+}
+
+u32 CAgentMemberManager::member_index(const CAI_Stalker* object) const
+{
+	VERIFY(object);
+	const u32 index = member_index(object->ID());
+	if ((index < m_members.size()) && (&m_members[index]->object() == object))
+		return (index);
+
+	// Defensive fallback for an unexpected stale/reused object ID.
+	const_iterator I = std::find_if(m_members.begin(), m_members.end(), CMemberPredicate(object));
+	return (I == m_members.end()) ? u32(-1) : u32(I - m_members.begin());
+}
 
 CAgentMemberManager::~CAgentMemberManager()
 {
@@ -55,9 +75,9 @@ void CAgentMemberManager::add(CEntity* member)
 		)
 	);
 
-	iterator I = std::find_if(m_members.begin(), m_members.end(), CMemberPredicate(stalker));
-	VERIFY(I == m_members.end());
+	VERIFY(member_index(stalker->ID()) == u32(-1));
 	m_members.push_back(xr_new<CMemberOrder>(stalker));
+	rebuild_member_index();
 }
 
 void CAgentMemberManager::remove(CEntity* member)
@@ -77,10 +97,12 @@ void CAgentMemberManager::remove(CEntity* member)
 	object().memory().update_memory_masks(m);
 	object().memory().update_memory_mask(m, m_combat_mask);
 
-	iterator I = std::find_if(m_members.begin(), m_members.end(), CMemberPredicate(stalker));
-	VERIFY(I != m_members.end());
+	const u32 index = member_index(stalker);
+	VERIFY(index < m_members.size());
+	iterator I = m_members.begin() + index;
 	xr_delete(*I);
 	m_members.erase(I);
+	rebuild_member_index();
 }
 
 void CAgentMemberManager::update()
@@ -170,12 +192,10 @@ CAgentMemberManager::MEMBER_STORAGE& CAgentMemberManager::combat_members()
 	m_actuality = true;
 
 	m_combat_members.clear();
-	MEMBER_STORAGE::iterator I = members().begin();
-	MEMBER_STORAGE::iterator E = members().end();
-	for (; I != E; ++I)
+	for (u32 i = 0, n = (u32)m_members.size(); i < n; ++i)
 	{
-		if (registered_in_combat(&(*I)->object()))
-			m_combat_members.push_back(*I);
+		if (m_combat_mask & (squad_mask_type(1) << i))
+			m_combat_members.push_back(m_members[i]);
 	}
 
 	return (m_combat_members);
@@ -183,17 +203,11 @@ CAgentMemberManager::MEMBER_STORAGE& CAgentMemberManager::combat_members()
 
 CAgentMemberManager::squad_mask_type CAgentMemberManager::non_combat_members_mask() const
 {
-	squad_mask_type result = 0;
-
-	MEMBER_STORAGE::const_iterator I = members().begin();
-	MEMBER_STORAGE::const_iterator E = members().end();
-	for (; I != E; ++I)
-	{
-		if (!registered_in_combat(&(*I)->object()))
-			result |= mask(&(*I)->object());
-	}
-
-	return (result);
+	const u32 count = (u32)m_members.size();
+	const u32 bit_count = sizeof(squad_mask_type)*8;
+	const squad_mask_type all_members =
+		(count >= bit_count) ? squad_mask_type(-1) : ((squad_mask_type(1) << count) - 1);
+	return (all_members & ~m_combat_mask);
 }
 
 u32 CAgentMemberManager::in_detour() const
@@ -226,14 +240,12 @@ bool CAgentMemberManager::cover_detouring() const
 
 bool CAgentMemberManager::can_cry_noninfo_phrase() const
 {
-	MEMBER_STORAGE::const_iterator I = members().begin();
-	MEMBER_STORAGE::const_iterator E = members().end();
-	for (; I != E; ++I)
+	for (u32 i = 0, n = (u32)m_members.size(); i < n; ++i)
 	{
-		if (!registered_in_combat(&(*I)->object()))
+		if (!(m_combat_mask & (squad_mask_type(1) << i)))
 			continue;
 
-		if ((*I)->object().sound().active_sound_count(false))
+		if (m_members[i]->object().sound().active_sound_count(false))
 			return (false);
 	}
 
@@ -242,18 +254,15 @@ bool CAgentMemberManager::can_cry_noninfo_phrase() const
 
 MemorySpace::squad_mask_type CAgentMemberManager::mask(const ALife::_OBJECT_ID& object_id) const
 {
-	const_iterator I = std::find_if(members().begin(), members().end(), CMemberPredicate2(object_id));
-	VERIFY(I != members().end());
-	return (MemorySpace::squad_mask_type(1) << (I - members().begin()));
+	const u32 index = member_index(object_id);
+	VERIFY(index < m_members.size());
+	return (MemorySpace::squad_mask_type(1) << index);
 }
 
 CMemberOrder* CAgentMemberManager::get_member(const ALife::_OBJECT_ID& object_id)
 {
-	iterator I = std::find_if(members().begin(), members().end(), CMemberPredicate2(object_id));
-	if (I == members().end())
-		return (0);
-
-	return (&**I);
+	const u32 index = member_index(object_id);
+	return (index < m_members.size()) ? m_members[index] : 0;
 }
 
 bool CAgentMemberManager::can_throw_grenade(const Fvector& location) const

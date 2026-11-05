@@ -136,7 +136,7 @@ void CSoundRender_Emitter::update(float dt)
 		fTimeToStop = fTime + (get_length_sec() / psSpeedOfSound); 
 		fTimeToPropagade = fTime;
 		fade_volume = 1.f;
-		occluder_volume = SoundRender->get_occlusion(p_source.position, .2f, occluder);
+		occluder_volume = query_occlusion(true);
 		smooth_volume = p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect
 			                                                          ? psSoundVEffects * psSoundVFactor
 			                                                          : psSoundVMusic * psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
@@ -164,7 +164,7 @@ void CSoundRender_Emitter::update(float dt)
 		fTimeToStop = 0xffffffff;
 		fTimeToPropagade = fTime;
 		fade_volume = 1.f;
-		occluder_volume = SoundRender->get_occlusion(p_source.position, .2f, occluder);
+		occluder_volume = query_occlusion(true);
 		smooth_volume = p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect
 			                                                          ? psSoundVEffects * psSoundVFactor
 			                                                          : psSoundVMusic * psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
@@ -346,6 +346,66 @@ IC void volume_lerp(float& c, float t, float s, float dt)
 
 #include "..\xrServerEntities\ai_sounds.h"
 
+float CSoundRender_Emitter::query_occlusion(const bool force)
+{
+	if (b2D || owner_data->g_type == SOUND_TYPE_WORLD_AMBIENT)
+	{
+		occlusion_target_volume = 1.f;
+		return occlusion_target_volume;
+	}
+
+	const float interval = float(_max(psSoundOcclusionUpdateMS, 0)) / 1000.f;
+	const float now = SoundRender->fTimer_Value;
+	if (!force && interval > 0.f && now < occlusion_next_update_time)
+	{
+		return occlusion_target_volume;
+	}
+
+	// A long focus/loading gap makes every emitter overdue at once. Preserve the
+	// cached result for at most one nominal interval and spread the refreshes,
+	// preventing a resume frame from replaying the whole occlusion workload.
+	const size_t address_hash = reinterpret_cast<size_t>(this) >> 4;
+	const u32 phase_hash = static_cast<u32>(address_hash) * 2654435761u;
+	const float phase = float(phase_hash & 255u) / 255.f;
+	if (!force && interval > 0.f && SoundRender->occlusion_resume_stagger_active())
+	{
+		// pause_emitters() is the authoritative pause/focus transition. Sound keeps
+		// ticking while the game is paused, so fTimer_Delta alone cannot detect this
+		// cold-resume case. Keep the last valid value for 8-33 ms and distribute the
+		// first refresh wave deterministically over the following sound updates.
+		occlusion_next_update_time = now + interval * (.25f + phase * .75f);
+		return occlusion_target_volume;
+	}
+	if (!force && interval > 0.f && SoundRender->fTimer_Delta > .25f &&
+		now >= occlusion_next_update_time && phase > 0.f)
+	{
+		occlusion_next_update_time = now + interval * phase;
+		return occlusion_target_volume;
+	}
+	if (interval > 0.f && !SoundRender->try_begin_occlusion_query())
+	{
+		// Keep the last valid value and retry on a deterministic sub-interval.
+		// Target-bound emitters run before purely simulated emitters, so a denied
+		// query naturally yields to sounds that are already audible.
+		occlusion_next_update_time = now + interval * (.25f + phase * .75f);
+		return occlusion_target_volume;
+	}
+
+	const u64 query_started = CPU::QPC();
+	occlusion_target_volume = SoundRender->get_occlusion(p_source.position, .2f, occluder);
+	SoundRender->finish_occlusion_query(CPU::QPC() - query_started);
+	if (interval > 0.f)
+	{
+		// A small deterministic spread prevents emitters started in one gameplay
+		// event from forming a new fixed-frequency ray-cast burst.
+		const float spread = .75f + phase * .5f;
+		occlusion_next_update_time = now + interval * spread;
+	}
+	else
+		occlusion_next_update_time = now;
+	return occlusion_target_volume;
+}
+
 BOOL CSoundRender_Emitter::update_culling(float dt)
 {
 	PROF_EVENT("CSoundRender_Emitter::update_culling");
@@ -383,8 +443,8 @@ BOOL CSoundRender_Emitter::update_culling(float dt)
 		//v2v3v4 out
 
 		// Update occlusion
-		float occ = (owner_data->g_type == SOUND_TYPE_WORLD_AMBIENT) ? 1.0f : SoundRender->get_occlusion(p_source.position, .2f, occluder);
-		volume_lerp(occluder_volume, occ, 1.f, dt);
+		query_occlusion(false);
+		volume_lerp(occluder_volume, occlusion_target_volume, 1.f, dt);
 		clamp(occluder_volume, 0.f, 1.f);
 	}
 	clamp(fade_volume, 0.f, 1.f);

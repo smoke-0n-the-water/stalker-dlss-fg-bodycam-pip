@@ -30,13 +30,19 @@ public:
 	typedef MemorySpace::CHitObject CHitObject;
 
 private:
+	typedef u64 DANGER_KEY;
+	typedef xr_unordered_flat_map<DANGER_KEY, u32> DANGER_INDEX;
 	DANGERS m_objects;
+	DANGER_INDEX m_object_index;
 	IGNORED m_ignored;
 	const CDangerObject* m_selected;
 	u32 m_time_line;
 
 private:
 	CCustomMonster* m_object;
+
+	DANGER_KEY danger_key(const CDangerObject& object) const;
+	void rebuild_object_index();
 
 public:
 	IC CDangerManager(CCustomMonster* object);
@@ -53,9 +59,9 @@ public:
 	IC void reset();
 
 public:
-	void add(const CVisibleObject& object);
-	void add(const CSoundObject& object);
-	void add(const CHitObject& object);
+	void add(const CVisibleObject& object, const CEntityAlive* entity_alive);
+	void add(const CSoundObject& object, const CEntityAlive* entity_alive);
+	void add(const CHitObject& object, const CEntityAlive* entity_alive);
 	void add(const CDangerObject& object);
 	void ignore(const CGameObject* object);
 

@@ -1,6 +1,6 @@
 /*
 ** Base and coroutine library.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 **
 ** Major portions taken verbatim or adapted from the Lua interpreter.
 ** Copyright (C) 1994-2011 Lua.org, PUC-Rio. See Copyright Notice in lua.h
@@ -141,6 +141,8 @@ LJLIB_CF(getfenv)
   cTValue *o = L->base;
   if (!(o < L->top && tvisfunc(o))) {
     int level = lj_lib_optint(L, 1, 1);
+    if (level < 0)
+      lj_err_arg(L, 1, LJ_ERR_INVLVL);
     o = lj_debug_frame(L, level, &level);
     if (o == NULL)
       lj_err_arg(L, 1, LJ_ERR_INVLVL);
@@ -162,6 +164,8 @@ LJLIB_CF(setfenv)
       setgcref(L->env, obj2gco(t));
       return 0;
     }
+    if (level < 0)
+      lj_err_arg(L, 1, LJ_ERR_INVLVL);
     o = lj_debug_frame(L, level, &level);
     if (o == NULL)
       lj_err_arg(L, 1, LJ_ERR_INVLVL);
@@ -219,9 +223,11 @@ LJLIB_CF(unpack)
   int32_t n, i = lj_lib_optint(L, 2, 1);
   int32_t e = (L->base+3-1 < L->top && !tvisnil(L->base+3-1)) ?
 	      lj_lib_checkint(L, 3) : (int32_t)lj_tab_len(t);
+  uint32_t nu;
   if (i > e) return 0;
-  n = e - i + 1;
-  if (n <= 0 || !lua_checkstack(L, n))
+  nu = (uint32_t)e - (uint32_t)i;
+  n = (int32_t)(nu+1);
+  if (nu >= LUAI_MAXCSTACK || !lua_checkstack(L, n))
     lj_err_caller(L, LJ_ERR_UNPACK);
   do {
     cTValue *tv = lj_tab_getint(t, i);
@@ -230,7 +236,9 @@ LJLIB_CF(unpack)
     } else {
       setnilV(L->top++);
     }
-  } while (i++ < e);
+    if (i >= e) break;
+    i++;
+  } while (1);
   return n;
 }
 
@@ -504,7 +512,8 @@ LJLIB_CF(print)
     lua_gettable(L, LUA_GLOBALSINDEX);
     tv = L->top-1;
   }
-  shortcut = (tvisfunc(tv) && funcV(tv)->c.ffid == FF_tostring);
+  shortcut = (tvisfunc(tv) && funcV(tv)->c.ffid == FF_tostring) &&
+	      !gcrefu(basemt_it(G(L), LJ_TNUMX));
   for (i = 0; i < nargs; i++) {
     const char *str;
     size_t size;

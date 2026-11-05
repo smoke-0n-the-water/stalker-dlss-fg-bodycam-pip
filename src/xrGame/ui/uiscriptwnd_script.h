@@ -6,8 +6,36 @@ struct CWrapperBase : public T, public ::luabind::wrap_base
 	typedef T inherited;
 	typedef CWrapperBase<T> self_type;
 
+	bool detach_expired_lua_instance()
+	{
+		if (is_lua_instance_valid())
+			return false;
+
+		// The holder only borrows this window. A script window may nevertheless
+		// outlive its Lua VM across quickload, so revoke both the input-dialog and
+		// render-only registrations before any other virtual callback can reach it.
+		if (this->GetHolder() && this->IsShown())
+		{
+			this->HideDialog();
+			return true;
+		}
+
+		this->SetHolder(NULL);
+		if (this->m_pDialogHolder)
+		{
+			this->m_pDialogHolder->RemoveDialogToRender(this);
+			return true;
+		}
+
+		this->CUIWindow::Show(false);
+		return true;
+	}
+
 	virtual bool OnKeyboardAction(int dik, EUIMessages keyboard_action)
 	{
+		if (detach_expired_lua_instance())
+			return true;
+
 		return call_member<bool>(this, "OnKeyboard", dik, keyboard_action);
 	}
 
@@ -38,6 +66,9 @@ struct CWrapperBase : public T, public ::luabind::wrap_base
 
 	virtual void Update()
 	{
+		if (detach_expired_lua_instance())
+			return;
+
 		call_member<void>(this, "Update");
 	}
 
@@ -48,6 +79,9 @@ struct CWrapperBase : public T, public ::luabind::wrap_base
 
 	virtual bool Dispatch(int cmd, int param)
 	{
+		if (detach_expired_lua_instance())
+			return true;
+
 		return call_member<bool>(this, "Dispatch", cmd, param);
 	}
 

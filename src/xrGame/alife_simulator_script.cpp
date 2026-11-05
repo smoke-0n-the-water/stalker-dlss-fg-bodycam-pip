@@ -25,6 +25,9 @@
 
 #include <luabind/iterator_policy.hpp>
 #include <luabind/iterator_pair_policy.hpp>
+#include <luabind/detail/convert_to_lua.hpp>
+#include <luabind/detail/class_registry.hpp>
+#include <luabind/detail/pcall.hpp>
 
 using namespace luabind;
 
@@ -38,6 +41,77 @@ SPAWN_STORY_PAIRS spawn_story_ids;
 CALifeSimulator* alife()
 {
 	return (const_cast<CALifeSimulator*>(ai().get_alife()));
+}
+
+namespace
+{
+constexpr LPCSTR kQuarkAlifeObjectFallbackRegistryKey = "QUARK_ENGINE.alife_object_fallback";
+
+int script_alife_lua(lua_State* L)
+{
+	CALifeSimulator* const simulator = alife();
+	luabind::detail::convert_to_lua(L, simulator);
+	return 1;
+}
+
+int script_alife_object_fast_lua(lua_State* L)
+{
+	if (lua_gettop(L) >= 1 && lua_type(L, 1) == LUA_TNUMBER)
+	{
+		const lua_Number number = lua_tonumber(L, 1);
+		const lua_Integer integer = lua_tointeger(L, 1);
+
+		if (number == static_cast<lua_Number>(integer) && integer >= 0 && integer < 0xffff)
+		{
+			const CALifeSimulator* const simulator = ai().get_alife();
+			if (!simulator)
+				goto fallback;
+
+			CSE_ALifeDynamicObject* const object =
+				simulator->objects().object(static_cast<ALife::_OBJECT_ID>(integer), true);
+			luabind::detail::convert_to_lua(L, object);
+			return 1;
+		}
+	}
+
+ fallback:
+	const int argument_count = lua_gettop(L);
+	lua_getfield(L, LUA_REGISTRYINDEX, kQuarkAlifeObjectFallbackRegistryKey);
+	if (!lua_isfunction(L, -1))
+	{
+		lua_pop(L, 1);
+		return 0;
+	}
+
+	lua_insert(L, 1);
+	lua_call(L, argument_count, LUA_MULTRET);
+	return lua_gettop(L);
+}
+
+// sim:object(id): GAMMA scripts call it for every id from 1 to 65534 (task targets,
+// news). Same result as the (id) overload without luabind overload matching; any
+// other call goes to the luabind overloads kept in upvalue 1.
+int script_alife_object_method_lua(lua_State* L)
+{
+	const CALifeSimulator* const simulator = ai().get_alife();
+	const luabind::detail::object_rep* const self = luabind::detail::is_class_object(L, 1);
+	if (lua_gettop(L) == 2 && simulator && self && self->ptr() == simulator && lua_type(L, 2) == LUA_TNUMBER)
+	{
+		const lua_Number number = lua_tonumber(L, 2);
+		const lua_Integer integer = lua_tointeger(L, 2);
+		if (number == static_cast<lua_Number>(integer) && integer >= 0 && integer < 0xffff)
+		{
+			luabind::detail::convert_to_lua(L,
+				simulator->objects().object(static_cast<ALife::_OBJECT_ID>(integer), true));
+			return 1;
+		}
+	}
+
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_insert(L, 1);
+	lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
+	return lua_gettop(L);
+}
 }
 
 CSE_ALifeDynamicObject* alife_object(const CALifeSimulator* self, ALife::_OBJECT_ID object_id)
@@ -515,12 +589,64 @@ void force_update(CALifeSimulator* self)
 	self->update_scheduled(true);
 }
 
+namespace
+{
+bool call_alife_iterator_functor(const luabind::functor<bool>& functor, CSE_ALifeDynamicObject* object)
+{
+	lua_State* const L = functor.lua_state();
+#ifndef LUABIND_NO_ERROR_CHECKING
+	if (!L)
+	{
+#ifndef LUABIND_NO_EXCEPTIONS
+		throw luabind::error(L);
+#else
+		luabind::error_callback_fun e = luabind::get_error_callback();
+		if (e) e(L);
+		assert(0 && "tried to call uninitialized functor object");
+#endif
+	}
+#endif
+
+	luabind::detail::default_policy::generate_converter<bool,
+		luabind::detail::Direction::lua_to_cpp>::type converter;
+	luabind::detail::stack_pop result_pop(L, 1);
+
+	functor.pushvalue();
+	luabind::detail::convert_to_lua(L, object);
+	if (luabind::detail::pcall(L, 1, 1))
+	{
+#ifndef LUABIND_NO_EXCEPTIONS
+		throw luabind::error(L);
+#else
+		luabind::error_callback_fun e = luabind::get_error_callback();
+		if (e) e(L);
+		assert(0 && "the lua function threw an error and exceptions are disabled");
+#endif
+	}
+
+#ifndef LUABIND_NO_ERROR_CHECKING
+	if (converter.match(L, LUABIND_DECORATE_TYPE(bool), -1) < 0)
+	{
+#ifndef LUABIND_NO_EXCEPTIONS
+		throw luabind::cast_failed(L, LUABIND_TYPEID(bool));
+#else
+		luabind::cast_failed_callback_fun e = luabind::get_cast_failed_callback();
+		if (e) e(L, LUABIND_TYPEID(bool));
+		assert(0 && "the lua function's return value could not be converted");
+#endif
+	}
+#endif
+	return converter.apply(L, LUABIND_DECORATE_TYPE(bool), -1);
+}
+
+}
+
 // demonized: iterate alife objects, functor style
 void CALifeSimulator__iterate_objects(const CALifeSimulator* self, const luabind::functor<bool>& functor)
 {
 	const CALifeObjectRegistry& objects = self->objects();
 	for (const auto& se_obj : objects.objects()) {
-		if (functor(se_obj.second)) break;
+		if (call_alife_iterator_functor(functor, se_obj.second)) break;
 	}
 }
 
@@ -528,7 +654,7 @@ void CALifeSimulator__iterate_objects_without_actor(const CALifeSimulator* self,
 {
 	const CALifeObjectRegistry& objects = self->objects();
 	for (const auto& se_obj : objects.objects()) {
-		if (se_obj.first != 0 && functor(se_obj.second)) break;
+		if (se_obj.first != 0 && call_alife_iterator_functor(functor, se_obj.second)) break;
 	}
 }
 
@@ -541,7 +667,7 @@ void CALifeSimulator__iterate_level_objects_of_clsid(
 	const auto& level_reg = self->graph().level();
 	for (const auto& entry : level_reg.objects()) {
 		if (entry.second->m_script_clsid != script_clsid_val) continue;
-		if (functor(entry.second)) break;
+		if (call_alife_iterator_functor(functor, entry.second)) break;
 	}
 }
 
@@ -610,40 +736,68 @@ ALife::_OBJECT_ID alife_object_count(const CALifeSimulator* self)
 {
 	VERIFY(self);
 
-	::luabind::object result = ::luabind::newtable(ai().script_engine().lua());
+	lua_State* const L = ai().script_engine().lua();
 	const CALifeObjectRegistry& objects = self->objects();
+	const int capacity = static_cast<int>(objects.objects().size());
+	lua_createtable(L, keytable ? 0 : capacity, keytable ? capacity : 0);
+	const int table_index = lua_gettop(L);
+
 	int i = 1;
 	for (const auto& [id, obj] : objects.objects())
 	{
 		if (!withActor && id == 0)
-		{
 			continue;
+
+		if (keytable)
+		{
+			lua_pushnumber(L, static_cast<lua_Number>(id));
+			lua_pushboolean(L, 1);
+			lua_rawset(L, table_index);
 		}
-		const int index = keytable ? id : i;
-		result[index] = keytable ? true : id;
-		i++;
+		else
+		{
+			lua_pushnumber(L, static_cast<lua_Number>(id));
+			lua_rawseti(L, table_index, i++);
 	}
-	return result;
+	}
+
+	luabind::detail::lua_reference reference;
+	reference.set(L);
+	return luabind::object(L, reference, true);
 }
 
 ::luabind::object alife_objects(const CALifeSimulator *self, const bool keytable = false, const bool withActor = false)
 {
 	VERIFY(self);
 	
-	::luabind::object result = ::luabind::newtable(ai().script_engine().lua());
+	lua_State* const L = ai().script_engine().lua();
 	const CALifeObjectRegistry& objects = self->objects();
+	const int capacity = static_cast<int>(objects.objects().size());
+	lua_createtable(L, keytable ? 0 : capacity, keytable ? capacity : 0);
+	const int table_index = lua_gettop(L);
+
 	int i = 1;
 	for (const auto& [id, obj] : objects.objects())
 	{
 		if (!withActor && id == 0)
-		{
 			continue;
+
+		if (keytable)
+		{
+			lua_pushnumber(L, static_cast<lua_Number>(id));
+			luabind::detail::convert_to_lua(L, obj);
+			lua_rawset(L, table_index);
 		}
-		const int index = keytable ? id : i;
-		result[index] = obj;
-		i++;
+		else
+		{
+			luabind::detail::convert_to_lua(L, obj);
+			lua_rawseti(L, table_index, i++);
 	}
-	return result;
+	}
+
+	luabind::detail::lua_reference reference;
+	reference.set(L);
+	return luabind::object(L, reference, true);
 }
 
 xr_vector<u16>& get_children(const CALifeSimulator *self, CSE_Abstract *object)
@@ -724,6 +878,26 @@ void CALifeSimulator::script_register(lua_State* L)
 
 		, def("alife", &alife)
 	];
+
+	// Keep the public function and return type identical while bypassing the
+	// generic luabind call path used by very hot script-side ALife queries.
+	lua_pushcfunction(L, &script_alife_lua);
+	lua_setglobal(L, "alife");
+
+	// Installed over _G.alife_object only after _G.script has loaded. Invalid
+	// or non-canonical arguments fall back to the original Lua implementation.
+	lua_pushcfunction(L, &script_alife_object_fast_lua);
+	lua_setglobal(L, "__quark_alife_object_fast");
+
+	if (luabind::detail::class_rep* simulator_class =
+		luabind::detail::class_registry::get_registry(L)->find_class(LUABIND_TYPEID(CALifeSimulator)))
+	{
+		simulator_class->get_table(L);
+		lua_getfield(L, -1, "object");
+		lua_pushcclosure(L, &script_alife_object_method_lua, 1);
+		lua_setfield(L, -2, "object");
+		lua_pop(L, 1);
+	}
 
 	{
 		if (story_ids.empty())

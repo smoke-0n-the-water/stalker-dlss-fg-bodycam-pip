@@ -31,7 +31,9 @@
 #		define LUABIND_NO_ERROR_CHECKING
 #	endif // LUABIND_NO_ERROR_CHECKING
 
+#	if defined(_MSC_VER)
 #	pragma warning(disable: 4251 577 297)
+#	endif
 #   define LUABIND_DTOR_NOEXCEPT noexcept
 #else
 #   define LUABIND_DTOR_NOEXCEPT
@@ -72,7 +74,7 @@
 #ifndef LUABIND_TYPE_INFO
 #	define LUABIND_TYPE_INFO const std::type_info*
 #	define LUABIND_TYPEID(t) &typeid(t)
-#	define LUABIND_TYPE_INFO_EQUAL(i1, i2) *i1 == *i2
+#	define LUABIND_TYPE_INFO_EQUAL(i1, i2) ((i1) == (i2) || *(i1) == *(i2))
 #	define LUABIND_INVALID_TYPE_INFO &typeid(std::in_place_t)
 #	include <typeinfo>
 #endif

@@ -520,6 +520,10 @@
       <Filter>Render\Execution &amp; 3D\Shaders\Textures</Filter>
     </ClInclude>
     <ClInclude Include="EngineThreading.h" />
+    <ClInclude Include="AIAsyncPrepare.h" />
+    <ClInclude Include="DeferredDeviceReset.h" />
+    <ClInclude Include="DiscordRpcClient.h" />
+    <ClInclude Include="engine_version.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="defines.cpp">
@@ -795,46 +799,7 @@
     <ClCompile Include="xrSASH.cpp">
       <Filter>OpenAutomate</Filter>
     </ClCompile>
-    <ClCompile Include="..\3rd party\discord\achievement_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\activity_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\application_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\core.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\image_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\lobby_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\network_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\overlay_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\relationship_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\storage_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\store_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
     <ClCompile Include="..\3rd party\discord\types.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\user_manager.cpp">
-      <Filter>Interfaces\Discord</Filter>
-    </ClCompile>
-    <ClCompile Include="..\3rd party\discord\voice_manager.cpp">
       <Filter>Interfaces\Discord</Filter>
     </ClCompile>
     <ClCompile Include="imgui_base.cpp">
@@ -850,6 +815,8 @@
       <Filter>Render\Execution &amp; 3D\Shaders\Textures</Filter>
     </ClCompile>
     <ClCompile Include="EngineThreading.cpp" />
+    <ClCompile Include="AIAsyncPrepare.cpp" />
+    <ClCompile Include="DiscordRpcClient.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="splash_xrcs_en.bmp">

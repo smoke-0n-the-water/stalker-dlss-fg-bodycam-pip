@@ -92,34 +92,14 @@ CMainMenu::CMainMenu()
 	m_start_time = 0;
 
 	GetPlayerName();
-	GetCDKeyFromRegistry();
 	m_demo_info_loader = NULL;
+	m_pMB_ErrDlgs.resize(ErrMax, nullptr);
 
 	if (!g_dedicated_server)
 	{
 		g_btnHint = xr_new<CUIButtonHint>();
 		g_statHint = xr_new<CUIButtonHint>();
 		//m_pGameSpyFull					= xr_new<CGameSpy_Full>();
-
-		for (u32 i = 0; i < u32(ErrMax); i++)
-		{
-			CUIMessageBoxEx* pNewErrDlg;
-			INIT_MSGBOX(pNewErrDlg, ErrMsgBoxTemplate[i]);
-			m_pMB_ErrDlgs.push_back(pNewErrDlg);
-		}
-
-		m_pMB_ErrDlgs[PatchDownloadSuccess]->AddCallbackStr("button_yes", MESSAGE_BOX_YES_CLICKED,
-		                                                    CUIWndCallback::void_function(
-			                                                    this, &CMainMenu::OnRunDownloadedPatch));
-		m_pMB_ErrDlgs[PatchDownloadSuccess]->AddCallbackStr("button_yes", MESSAGE_BOX_OK_CLICKED,
-		                                                    CUIWndCallback::void_function(
-			                                                    this, &CMainMenu::OnConnectToMasterServerOkClicked));
-
-		m_pMB_ErrDlgs[DownloadMPMap]->AddCallbackStr("button_copy", MESSAGE_BOX_COPY_CLICKED,
-		                                             CUIWndCallback::void_function(
-			                                             this, &CMainMenu::OnDownloadMPMap_CopyURL));
-		m_pMB_ErrDlgs[DownloadMPMap]->AddCallbackStr("button_yes", MESSAGE_BOX_YES_CLICKED,
-		                                             CUIWndCallback::void_function(this, &CMainMenu::OnDownloadMPMap));
 
 		//m_account_mngr			= xr_new<gamespy_gp::account_manager>		(m_pGameSpyFull->GetGameSpyGP());
 		//m_login_mngr			= xr_new<gamespy_gp::login_manager>			(m_pGameSpyFull);
@@ -129,6 +109,34 @@ CMainMenu::CMainMenu()
 	}
 
 	Device.seqFrame.Add(this,REG_PRIORITY_LOW - 1000);
+}
+
+CUIMessageBoxEx* CMainMenu::GetErrorDialog(EErrorDlg dialog)
+{
+	VERIFY(static_cast<u32>(dialog) < static_cast<u32>(ErrMax));
+
+	CUIMessageBoxEx*& box = m_pMB_ErrDlgs[dialog];
+	if (box)
+		return box;
+
+	INIT_MSGBOX(box, ErrMsgBoxTemplate[dialog]);
+
+	if (dialog == PatchDownloadSuccess)
+	{
+		box->AddCallbackStr("button_yes", MESSAGE_BOX_YES_CLICKED,
+			CUIWndCallback::void_function(this, &CMainMenu::OnRunDownloadedPatch));
+		box->AddCallbackStr("button_yes", MESSAGE_BOX_OK_CLICKED,
+			CUIWndCallback::void_function(this, &CMainMenu::OnConnectToMasterServerOkClicked));
+	}
+	else if (dialog == DownloadMPMap)
+	{
+		box->AddCallbackStr("button_copy", MESSAGE_BOX_COPY_CLICKED,
+			CUIWndCallback::void_function(this, &CMainMenu::OnDownloadMPMap_CopyURL));
+		box->AddCallbackStr("button_yes", MESSAGE_BOX_YES_CLICKED,
+			CUIWndCallback::void_function(this, &CMainMenu::OnDownloadMPMap));
+	}
+
+	return box;
 }
 
 CMainMenu::~CMainMenu()
@@ -592,7 +600,7 @@ void CMainMenu::SetErrorDialog(EErrorDlg ErrDlg)
 void CMainMenu::CheckForErrorDlg()
 {
 	if (m_NeedErrDialog == ErrNoError) return;
-	m_pMB_ErrDlgs[m_NeedErrDialog]->ShowDialog(false);
+	GetErrorDialog(m_NeedErrDialog)->ShowDialog(false);
 	m_NeedErrDialog = ErrNoError;
 };
 
@@ -616,25 +624,21 @@ void CMainMenu::OnNewPatchFound(LPCSTR VersionName, LPCSTR URL)
 		delete_data(m_pMB_ErrDlgs[NewPatchFound]);
 		m_pMB_ErrDlgs[NewPatchFound] = NULL;
 	}
-	if (!m_pMB_ErrDlgs[NewPatchFound])
-	{
-		INIT_MSGBOX(m_pMB_ErrDlgs[NewPatchFound], "msg_box_new_patch");
-
+	CUIMessageBoxEx* dialog = GetErrorDialog(NewPatchFound);
 		shared_str tmpText;
-		tmpText.printf(m_pMB_ErrDlgs[NewPatchFound]->GetText(), VersionName, URL);
-		m_pMB_ErrDlgs[NewPatchFound]->SetText(*tmpText);
-	}
+	tmpText.printf(dialog->GetText(), VersionName, URL);
+	dialog->SetText(*tmpText);
 	m_sPatchURL = URL;
 
-	Register(m_pMB_ErrDlgs[NewPatchFound]);
-	m_pMB_ErrDlgs[NewPatchFound]->AddCallbackStr("button_yes", MESSAGE_BOX_YES_CLICKED,
+	Register(dialog);
+	dialog->AddCallbackStr("button_yes", MESSAGE_BOX_YES_CLICKED,
 	                                             CUIWndCallback::void_function(this, &CMainMenu::OnDownloadPatch));
-	m_pMB_ErrDlgs[NewPatchFound]->ShowDialog(false);
+	dialog->ShowDialog(false);
 };
 
 void CMainMenu::OnNoNewPatchFound()
 {
-	m_pMB_ErrDlgs[NoNewPatch]->ShowDialog(false);
+	GetErrorDialog(NoNewPatch)->ShowDialog(false);
 }
 
 void CMainMenu::OnDownloadPatch(CUIWindow*, void*)
@@ -674,14 +678,14 @@ void CMainMenu::OnDownloadPatch(CUIWindow*, void*)
 void CMainMenu::OnDownloadPatchError()
 {
 	m_sPDProgress.IsInProgress = false;
-	m_pMB_ErrDlgs[PatchDownloadError]->ShowDialog(false);
+	GetErrorDialog(PatchDownloadError)->ShowDialog(false);
 };
 
 void CMainMenu::OnDownloadPatchSuccess()
 {
 	m_sPDProgress.IsInProgress = false;
 
-	m_pMB_ErrDlgs[PatchDownloadSuccess]->ShowDialog(false);
+	GetErrorDialog(PatchDownloadSuccess)->ShowDialog(false);
 }
 
 void CMainMenu::OnSessionTerminate(LPCSTR reason)
@@ -703,7 +707,7 @@ void CMainMenu::OnSessionTerminate(LPCSTR reason)
 		STRCONCAT(text, str, " ", reason);
 	}
 
-	m_pMB_ErrDlgs[SessionTerminate]->SetText(st.translate(text).c_str());
+	GetErrorDialog(SessionTerminate)->SetText(st.translate(text).c_str());
 	SetErrorDialog(CMainMenu::SessionTerminate);
 }
 
@@ -713,7 +717,7 @@ void CMainMenu::OnLoadError(LPCSTR module)
 	string1024 Text;
 	strconcat(sizeof(Text), Text, str, " ");
 	xr_strcat(Text, sizeof(Text), module);
-	m_pMB_ErrDlgs[LoadingError]->SetText(Text);
+	GetErrorDialog(LoadingError)->SetText(Text);
 	SetErrorDialog(CMainMenu::LoadingError);
 }
 
@@ -825,16 +829,16 @@ bool CMainMenu::ValidateCDKey()
 
 void CMainMenu::Show_CTMS_Dialog()
 {
-	if (!m_pMB_ErrDlgs[ConnectToMasterServer]) return;
-	if (m_pMB_ErrDlgs[ConnectToMasterServer]->IsShown()) return;
-	m_pMB_ErrDlgs[ConnectToMasterServer]->ShowDialog(false);
+	CUIMessageBoxEx* dialog = GetErrorDialog(ConnectToMasterServer);
+	if (dialog->IsShown()) return;
+	dialog->ShowDialog(false);
 }
 
 void CMainMenu::Hide_CTMS_Dialog()
 {
-	if (!m_pMB_ErrDlgs[ConnectToMasterServer]) return;
-	if (!m_pMB_ErrDlgs[ConnectToMasterServer]->IsShown()) return;
-	m_pMB_ErrDlgs[ConnectToMasterServer]->HideDialog();
+	CUIMessageBoxEx* dialog = m_pMB_ErrDlgs[ConnectToMasterServer];
+	if (!dialog || !dialog->IsShown()) return;
+	dialog->HideDialog();
 }
 
 void CMainMenu::OnConnectToMasterServerOkClicked(CUIWindow*, void*)
@@ -885,14 +889,12 @@ LPCSTR CMainMenu::GetCDKeyFromRegistry()
 
 void CMainMenu::Show_DownloadMPMap(LPCSTR text, LPCSTR url)
 {
-	VERIFY(m_pMB_ErrDlgs[DownloadMPMap]);
-
+	CUIMessageBoxEx* dialog = GetErrorDialog(DownloadMPMap);
 	m_downloaded_mp_map_url._set(url);
 
-	m_pMB_ErrDlgs[DownloadMPMap]->SetText(text);
-	m_pMB_ErrDlgs[DownloadMPMap]->SetTextEditURL(url);
-
-	m_pMB_ErrDlgs[DownloadMPMap]->ShowDialog(false);
+	dialog->SetText(text);
+	dialog->SetTextEditURL(url);
+	dialog->ShowDialog(false);
 }
 
 void CMainMenu::OnDownloadMPMap_CopyURL(CUIWindow* w, void* d)

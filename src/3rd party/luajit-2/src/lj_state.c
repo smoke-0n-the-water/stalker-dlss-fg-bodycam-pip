@@ -1,6 +1,6 @@
 /*
 ** State and stack handling.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 **
 ** Portions taken verbatim or adapted from the Lua interpreter.
 ** Copyright (C) 1994-2008 Lua.org, PUC-Rio. See Copyright Notice in lua.h
@@ -15,6 +15,7 @@
 #include "lj_str.h"
 #include "lj_tab.h"
 #include "lj_func.h"
+#include "lj_udata.h"
 #include "lj_meta.h"
 #include "lj_state.h"
 #include "lj_frame.h"
@@ -38,8 +39,9 @@
 #define LJ_STACK_MAX	LUAI_MAXSTACK	/* Max. stack size. */
 #define LJ_STACK_START	(2*LJ_STACK_MIN)	/* Starting stack size. */
 #define LJ_STACK_MAXEX	(LJ_STACK_MAX + 1 + LJ_STACK_EXTRA)
+#define LJ_STACK_ERREX	(1 + 2*LJ_STACK_MIN)	/* Extra for error handling. */
 
-/* Explanation of LJ_STACK_EXTRA:
+/* Explanation for LJ_STACK_EXTRA:
 **
 ** Calls to metamethods store their arguments beyond the current top
 ** without checking for the stack limit. This avoids stack resizes which
@@ -51,6 +53,11 @@
 ** one extra slot if mobj is not a function. Only lj_meta_tset needs 5
 ** slots above top, but then mobj is always a function. So we can get by
 ** with 5 extra slots.
+**
+** Explanation for LJ_STACK_ERREX:
+**
+** The 1 is space for the error message, and 2 * LJ_STACK_MIN is for
+** the lj_state_checkstack() call in lj_err_run().
 */
 
 /* Resize stack slots and adjust pointers in state. */
@@ -82,7 +89,8 @@ static void resizestack(lua_State *L, MSize n)
 /* Relimit stack after error, in case the limit was overdrawn. */
 void lj_state_relimitstack(lua_State *L)
 {
-  if (L->stacksize > LJ_STACK_MAXEX && L->top-tvref(L->stack) < LJ_STACK_MAX-1)
+  if (L->stacksize > LJ_STACK_MAXEX &&
+      L->top-tvref(L->stack) < LJ_STACK_MAX - 1 - LJ_STACK_ERREX)
     resizestack(L, LJ_STACK_MAX);
 }
 
@@ -100,20 +108,43 @@ void lj_state_shrinkstack(lua_State *L, MSize used)
 /* Try to grow stack. */
 void LJ_FASTCALL lj_state_growstack(lua_State *L, MSize need)
 {
-  MSize n;
-  if (L->stacksize > LJ_STACK_MAXEX)  /* Overflow while handling overflow? */
-    lj_err_throw(L, LUA_ERRERR);
-  n = L->stacksize + need;
-  if (n > LJ_STACK_MAX) {
-    n += 2*LUA_MINSTACK;
-  } else if (n < 2*L->stacksize) {
-    n = 2*L->stacksize;
-    if (n >= LJ_STACK_MAX)
-      n = LJ_STACK_MAX;
+  MSize n = L->stacksize + need;
+  if (LJ_LIKELY(n < LJ_STACK_MAX)) {  /* The stack can grow as requested. */
+    if (n < 2 * L->stacksize) {  /* Try to double the size. */
+      n = 2 * L->stacksize;
+      if (n > LJ_STACK_MAX)
+	n = LJ_STACK_MAX;
+    }
+    resizestack(L, n);
+  } else {  /* Request would overflow. Raise a stack overflow error. */
+    if (curr_funcisL(L)) {
+      L->top = curr_topL(L);
+      if (L->top > tvref(L->maxstack)) {
+	/* The current Lua frame violates the stack, so replace it with a
+	** dummy. This can happen when BC_IFUNCF is trying to grow the stack.
+	*/
+	L->top = L->base;
+	setframe_gc(L->base - 1, obj2gco(L));
+      }
+    }
+    if (L->stacksize <= LJ_STACK_MAXEX) {
+      /* An error handler might want to inspect the stack overflow error, but
+      ** will need some stack space to run in. We give it a stack size beyond
+      ** the normal limit in order to do so, then rely on lj_state_relimitstack
+      ** calls during unwinding to bring us back to a conventional stack size.
+      */
+      resizestack(L, LJ_STACK_MAX + LJ_STACK_ERREX);
+      lj_err_stkov(L);  /* May invoke an error handler. */
+    } else {
+      /* If we're here, then the stack overflow error handler is requesting
+      ** to grow the stack even further. We have no choice but to abort the
+      ** error handler.
+      */
+      GCstr *em = lj_err_str(L, LJ_ERR_STKOV);  /* Might OOM. */
+      setstrV(L, L->top++, em);  /* There is always space to push an error. */
+      lj_err_throw(L, LUA_ERRERR);  /* Does not invoke an error handler. */
+    }
   }
-  resizestack(L, n);
-  if (L->stacksize > LJ_STACK_MAXEX)
-    lj_err_msg(L, LJ_ERR_STKOV);
 }
 
 void LJ_FASTCALL lj_state_growstack1(lua_State *L)
@@ -161,6 +192,7 @@ static void close_state(lua_State *L)
   global_State *g = G(L);
   lj_func_closeuv(L, tvref(L->stack));
   lj_gc_freeall(g);
+  lj_udata_registry_freeall(g);
   lua_assert(gcref(g->gc.root) == obj2gco(L));
   lua_assert(g->strnum == 0);
   lj_trace_freestate(g);
@@ -214,6 +246,7 @@ LUA_API lua_State *lua_newstate(lua_Alloc f, void *ud)
   g->gc.total = sizeof(GG_State);
   g->gc.pause = LUAI_GCPAUSE;
   g->gc.stepmul = LUAI_GCMUL;
+  g->gc.hostmanaged = 0;
   lj_dispatch_init((GG_State *)L);
   L->status = LUA_ERRERR+1;  /* Avoid touching the stack upon memory error. */
   if (lj_vm_cpcall(L, NULL, NULL, cpluaopen) != 0) {
@@ -287,6 +320,10 @@ lua_State *lj_state_new(lua_State *L)
 void LJ_FASTCALL lj_state_free(global_State *g, lua_State *L)
 {
   lua_assert(L != mainthread(g));
+#if LJ_HASFFI
+  if (ctype_ctsG(g) && ctype_ctsG(g)->L == L)  /* Avoid dangling cts->L. */
+    ctype_ctsG(g)->L = mainthread(g);
+#endif
   lj_func_closeuv(L, tvref(L->stack));
   lua_assert(gcref(L->openupval) == NULL);
   lj_mem_freevec(g, tvref(L->stack), L->stacksize, TValue);

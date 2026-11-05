@@ -18,7 +18,15 @@ IC	const CSpaceRestrictionManager::SPACE_RESTRICTIONS &CSpaceRestrictionManager:
 template <typename T1, typename T2>
 IC void CSpaceRestrictionManager::add_border(ALife::_OBJECT_ID id, T1 p1, T2 p2)
 {
-	CRestrictionPtr client_restriction = restriction(id);
+	const CRestrictionPtr& client_restriction = restriction(id);
 	if (client_restriction)
 		client_restriction->add_border(p1, p2);
+}
+
+template <typename T1, typename T2>
+IC void CSpaceRestrictionManager::collect_border(ALife::_OBJECT_ID id, T1 p1, T2 p2, xr_vector<u32>& result)
+{
+	const CRestrictionPtr& client_restriction = restriction(id);
+	if (client_restriction)
+		client_restriction->collect_border(p1, p2, result);
 }

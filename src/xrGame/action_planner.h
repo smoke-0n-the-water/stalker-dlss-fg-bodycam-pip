@@ -55,6 +55,8 @@ public:
 	using _value_type = typename inherited::_value_type;
 	using _edge_type = typename inherited::_edge_type;
 	using _operator_ptr = typename inherited::_operator_ptr;
+	using update_profile_callback_type = void (*)(void* context, LPCSTR stage,
+		LPCSTR action_name, u32 action_id, u64 elapsed_ticks);
 
 	typedef GraphEngineSpace::CWorldProperty CWorldProperty;
 	typedef GraphEngineSpace::CWorldState CWorldState;
@@ -63,6 +65,8 @@ public:
 protected:
 	bool m_initialized;
 	_action_id_type m_current_action_id;
+	void* m_update_profile_context;
+	update_profile_callback_type m_update_profile_callback;
 
 #ifdef LOG_ACTION
 public:
@@ -94,6 +98,7 @@ public:
 	virtual ~CActionPlanner();
 	virtual void setup(_object_type* object);
 	virtual void update();
+	IC void set_update_profile_callback(void* context, update_profile_callback_type callback);
 	// Called at the action-switch decision point in update() (action_planner_inline.h), only when a
 	// switch is proposed (current != solution front). Default allows every switch; a derived planner
 	// may veto to keep the current action executing. Base behavior = vanilla for every planner.

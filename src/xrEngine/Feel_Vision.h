@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "../xrcdb/xr_collide_defs.h"
 #include "render.h"
@@ -51,7 +51,17 @@ namespace Feel
 			u16 bone_id;
 		};
 
-		xr_vector<feel_visible_Item> feel_visible;
+		typedef xr_vector<feel_visible_Item> VISIBLE_ITEMS;
+		VISIBLE_ITEMS feel_visible;
+
+		// Quark's visual memory walks these items. Our feel_vision_update can run on
+		// Device.secondary_tasks (CCustomMonster::Exec_Visibility), so hand out a copy
+		// taken under lock_visible instead of a reference into the live vector.
+		VISIBLE_ITEMS feel_vision_items() const
+		{
+			xrSRWLockGuard guard(const_cast<xrSRWLock*>(&lock_visible), true);
+			return feel_visible;
+		}
 	public:
 		void feel_vision_clear();
 		void feel_vision_query(Fmatrix& mFull);

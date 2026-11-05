@@ -1,6 +1,6 @@
 /*
 ** LuaJIT VM tags, values and objects.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 **
 ** Portions taken verbatim or adapted from the Lua interpreter.
 ** Copyright (C) 1994-2008 Lua.org, PUC-Rio. See Copyright Notice in lua.h
@@ -245,8 +245,49 @@ typedef struct GCudata {
   GCRef env;		/* Should be at same offset in GCfunc. */
   MSize len;		/* Size of payload. */
   GCRef metatable;	/* Must be at same offset in GCtab. */
-  uint32_t align1;	/* To force 8 byte alignment of the payload. */
+  GCRef rootprev;	/* Previous object in the userdata tail of the GC list. */
+  MRef registry_page;	/* Weak creation-order registry page. */
+  uint16_t registry_slot;
+  uint16_t align1;	/* To force 8 byte alignment of the payload. */
 } GCudata;
+
+/* Weak, creation-ordered userdata registry. It is deliberately separate from
+** the GC root set: entries never keep userdata alive. Atomic scans pages and
+** slots backwards to retain Lua 5.1's reverse creation order for __gc. */
+#define LJ_UDATA_REGISTRY_PAGE_SIZE 256
+#define LJ_UDATA_METATABLE_GROUPS 32
+#define LJ_UDATA_MTGROUP_NONE 0xff
+typedef struct UDataRegistryPage {
+  MRef prev;
+  MRef next;
+  MSize used;
+  MSize live;
+  MSize pending_sweep;
+  /* Dense side metadata keeps atomic cost proportional to dead userdata instead
+  ** of every userdata ever registered in a page. occupied_bits identifies weak
+  ** registry entries which are still active, while marked_bits is lazily reset
+  ** once per GC generation and records liveness discovered by the mark phase.
+  ** metatable_bits excludes raw userdata which cannot currently have __gc, and
+  ** finalizer_bits excludes embedding-owned wrappers whose __gc callback is
+  ** certified to be a no-op without touching their scattered userdata headers. */
+  uint64_t occupied_bits[LJ_UDATA_REGISTRY_PAGE_SIZE / 64];
+  uint64_t marked_bits[LJ_UDATA_REGISTRY_PAGE_SIZE / 64];
+  uint64_t metatable_bits[LJ_UDATA_REGISTRY_PAGE_SIZE / 64];
+  uint64_t finalizer_bits[LJ_UDATA_REGISTRY_PAGE_SIZE / 64];
+  /* Slots sharing one metatable are grouped so atomic can resolve __gc once per
+  ** group, not once per dead userdata. The group references are weak side
+  ** metadata and are never traversed as GC roots. Slots beyond the fixed group
+  ** budget fall back to the exact per-slot path. */
+  uint64_t mt_group_bits[LJ_UDATA_METATABLE_GROUPS]
+                        [LJ_UDATA_REGISTRY_PAGE_SIZE / 64];
+  GCRef mt_group_refs[LJ_UDATA_METATABLE_GROUPS];
+  uint8_t mt_group_index[LJ_UDATA_REGISTRY_PAGE_SIZE];
+  uint8_t mt_group_count;
+  uint8_t mt_group_pad[3];
+  uint32_t marked_bits_epoch;
+  GCRef refs[LJ_UDATA_REGISTRY_PAGE_SIZE];
+  GCRef metatables[LJ_UDATA_REGISTRY_PAGE_SIZE];
+} UDataRegistryPage;
 
 /* Userdata types. */
 enum {
@@ -327,7 +368,7 @@ typedef struct GCproto {
 #define PROTO_UV_IMMUTABLE	0x4000	/* Immutable upvalue. */
 
 #define proto_kgc(pt, idx) \
-  check_exp((uintptr_t)(intptr_t)(idx) >= (uintptr_t)-(intptr_t)(pt)->sizekgc, \
+  check_exp((uintptr_t)(intptr_t)(idx) >= ~(uintptr_t)(pt)->sizekgc+1u, \
 	    gcref(mref((pt)->k, GCRef)[(idx)]))
 #define proto_knumtv(pt, idx) \
   check_exp((uintptr_t)(idx) < (pt)->sizekn, &mref((pt)->k, TValue)[(idx)])
@@ -420,7 +461,7 @@ typedef struct GCtab {
 } GCtab;
 
 #define sizetabcolo(n)	((n)*sizeof(TValue) + sizeof(GCtab))
-#define tabref(r)	(&gcref((r))->tab)
+#define tabref(r)	((GCtab *)gcref((r)))
 #define noderef(r)	(mref((r), Node))
 #define nextnode(n)	(mref((n)->next, Node))
 
@@ -494,18 +535,34 @@ typedef struct GCState {
   uint8_t currentwhite;	/* Current white color. */
   uint8_t state;	/* GC state. */
   uint8_t nocdatafin;	/* No cdata finalizer called. */
-  uint8_t unused2;
+  uint8_t hostmanaged;	/* Host serializes atomic and finalizer callbacks. */
+  uint8_t preatomic_stage; /* Host-only incremental pre-pass before atomic. */
+  uint32_t udata_mark_epoch; /* Dense liveness generation for userdata. */
+  uint64_t udata_alloc_serial; /* Monotonic userdata allocation counter for host GC pacing. */
   MSize sweepstr;	/* Sweep position in string table. */
+  MRef sweepstrptr;	/* Resume cursor inside current string hash chain. */
   GCRef root;		/* List of all collectable objects. */
   MRef sweep;		/* Sweep position in root list. */
   GCRef gray;		/* List of gray objects. */
   GCRef grayagain;	/* List of objects for atomic traversal. */
   GCRef weak;		/* List of weak tables (to be cleared). */
   GCRef mmudata;	/* List of userdata (to be finalized). */
+  MRef udata_registry_head; /* Oldest weak userdata registry page. */
+  MRef udata_registry_tail; /* Newest weak userdata registry page. */
   MSize stepmul;	/* Incremental GC step granularity. */
   MSize debt;		/* Debt (how much GC is behind schedule). */
   MSize estimate;	/* Estimate of memory actually in use. */
   MSize pause;		/* Pause between successive GC cycles. */
+  MSize stepheadroom;	/* Allocation headroom after automatic GC steps. */
+  uint64_t atomic_total_cycles; /* Last atomic phase CPU cycles (telemetry). */
+  uint64_t atomic_mark_cycles; /* Root/gray marking part of last atomic. */
+  uint64_t atomic_finalize_cycles; /* Userdata separation/remark part. */
+  uint64_t atomic_weak_cycles; /* Weak-table clearing part. */
+  MSize atomic_udata_visited; /* Dead/finalizer-eligible userdata presented to atomic. */
+  MSize atomic_udata_finalizable; /* Userdata newly queued with a current __gc. */
+  MSize atomic_udata_pages; /* Userdata registry pages examined by atomic. */
+  MSize atomic_weak_tables; /* Weak tables cleared by the last atomic. */
+  MSize atomic_weak_slots; /* Weak array/hash slots scanned by the last atomic. */
 } GCState;
 
 /* Global state, shared by all threads of a Lua universe. */
@@ -817,14 +874,22 @@ static LJ_AINLINE int32_t lj_num2bit(lua_Number n)
 #define lj_num2int(n)   ((int32_t)(n))
 #endif
 
+/*
+** This must match the JIT backend behavior. In particular for archs
+** that don't have a common hardware instruction for this conversion.
+** Note that signed FP to unsigned int conversions have an undefined
+** result and should never be relied upon in portable FFI code.
+** See also: C99 or C11 standard, 6.3.1.4, footnote of (1).
+*/
 static LJ_AINLINE uint64_t lj_num2u64(lua_Number n)
 {
-#ifdef _MSC_VER
-  if (n >= 9223372036854775808.0)  /* They think it's a feature. */
-    return (uint64_t)(int64_t)(n - 18446744073709551616.0);
-  else
+#if LJ_TARGET_X86ORX64 || LJ_TARGET_MIPS
+  int64_t i = (int64_t)n;
+  if (i < 0) i = (int64_t)(n - 18446744073709551616.0);
+  return (uint64_t)i;
+#else
+  return (uint64_t)n;
 #endif
-    return (uint64_t)n;
 }
 
 static LJ_AINLINE int32_t numberVint(cTValue *o)

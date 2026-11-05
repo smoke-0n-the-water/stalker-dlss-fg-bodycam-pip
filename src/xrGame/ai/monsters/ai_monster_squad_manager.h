@@ -17,6 +17,11 @@ class CMonsterSquadManager
 	DEFINE_VECTOR(MONSTER_LEVEL_VEC, MONSTER_TEAM_VEC, MONSTER_TEAM_VEC_IT);
 
 	MONSTER_TEAM_VEC team;
+	// CBaseMonster broadcasts the same relcase to this global manager from every
+	// living monster. Keep the first ordered cleanup and suppress duplicate
+	// all-squad scans for the same object in the same frame.
+	u32 m_relcase_frame = u32(-1);
+	xr_vector<u16> m_relcase_object_ids;
 
 public:
 	CMonsterSquadManager();

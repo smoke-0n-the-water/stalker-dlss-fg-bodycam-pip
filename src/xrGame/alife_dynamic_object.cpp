@@ -18,6 +18,7 @@
 #include "xrServer.h"
 #include "level.h"
 #include "map_manager.h"
+#include "../xrServerEntities/script_engine.h"
 
 void CSE_ALifeDynamicObject::on_spawn()
 {
@@ -28,19 +29,55 @@ void CSE_ALifeDynamicObject::on_spawn()
 
 void CSE_ALifeDynamicObject::on_register()
 {
+	const bool record = ai().script_engine().lua_recording() && CPU::qpc_freq;
+	LPCSTR record_name = name();
+	const u32 record_id = static_cast<u32>(ID);
+	CScopedLuaRecordPhase total_phase(ai().script_engine(), "alife_register", "dynamic.total",
+		record_name, record_id, 0, record);
+
 	CSE_ALifeObject* object = this;
+	u32 parent_depth = 0;
+	const u64 parent_started = record ? CPU::QPC() : 0;
 	while (object->ID_Parent != ALife::_OBJECT_ID(-1))
 	{
 		object = ai().alife().objects().object(object->ID_Parent);
 		VERIFY(object);
+		++parent_depth;
+	}
+	if (parent_started)
+		ai().script_engine().record_native_profile("alife_register", "dynamic.parent_traversal",
+			record_name, record_id, CPU::QPC() - parent_started, parent_depth);
+
+	bool graph_object_exists = false;
+	{
+		const u64 started = record ? CPU::QPC() : 0;
+		graph_object_exists = alife().graph().level().object(object->ID, true) != nullptr;
+		if (started)
+			ai().script_engine().record_native_profile("alife_register", "dynamic.graph_level_lookup",
+				record_name, record_id, CPU::QPC() - started, graph_object_exists ? 1u : 0u);
+	}
+	if (!graph_object_exists)
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "alife_register", "dynamic.clear_client_data",
+			record_name, record_id, 0, record);
+		clear_client_data();
 	}
 
-	if (!alife().graph().level().object(object->ID, true))
-		clear_client_data();
-
-    ::luabind::functor<void> funct;
-    if (ai().script_engine().functor("_G.CSE_ALifeDynamicObject_on_register", funct))
-        funct((u16)ID);
+	::luabind::functor<void> funct;
+	bool has_callback = false;
+	{
+		const u64 started = record ? CPU::QPC() : 0;
+		has_callback = ai().script_engine().functor("_G.CSE_ALifeDynamicObject_on_register", funct);
+		if (started)
+			ai().script_engine().record_native_profile("alife_register", "dynamic.lua_lookup",
+				record_name, record_id, CPU::QPC() - started, has_callback ? 1u : 0u);
+	}
+	if (has_callback)
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "alife_register", "dynamic.lua_callback",
+			record_name, record_id, 0, record);
+		funct((u16)ID);
+	}
 }
 
 void CSE_ALifeDynamicObject::on_before_register()
@@ -206,7 +243,7 @@ void CSE_ALifeInventoryBox::add_online(const bool& update_registries)
 		CSE_ALifeDynamicObject* l_tpALifeDynamicObject = ai().alife().objects().object(*I);
 		CSE_ALifeInventoryItem* l_tpALifeInventoryItem = smart_cast<CSE_ALifeInventoryItem*>(l_tpALifeDynamicObject);
 		R_ASSERT2(l_tpALifeInventoryItem, "Non inventory item object has parent?!");
-		l_tpALifeInventoryItem->base()->s_flags.or(M_SPAWN_UPDATE);
+		l_tpALifeInventoryItem->base()->s_flags.bit_or(M_SPAWN_UPDATE);
 		CSE_Abstract* l_tpAbstract = smart_cast<CSE_Abstract*>(l_tpALifeInventoryItem);
 		object->alife().server().entity_Destroy(l_tpAbstract);
 
@@ -228,7 +265,7 @@ void CSE_ALifeInventoryBox::add_online(const bool& update_registries)
 		l_tpALifeDynamicObject->o_Position = object->o_Position;
 		l_tpALifeDynamicObject->m_tNodeID = object->m_tNodeID;
 		object->alife().server().Process_spawn(tNetPacket, clientID,FALSE, l_tpALifeInventoryItem->base());
-		l_tpALifeDynamicObject->s_flags.and(u16(-1) ^ M_SPAWN_UPDATE);
+		l_tpALifeDynamicObject->s_flags.bit_and(u16(-1) ^ M_SPAWN_UPDATE);
 		l_tpALifeDynamicObject->m_bOnline = true;
 	}
 

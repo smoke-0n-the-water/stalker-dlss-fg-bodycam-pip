@@ -857,7 +857,7 @@ u32 CUICellContainer::GetCellsInRange(const Irect& rect, UI_CELLS_VEC& res)
 		for (int y = rect.y1; y <= rect.y2; ++y)
 			res.push_back(GetCellAt(Ivector2().set(x, y)));
 
-	std::unique(res.begin(), res.end());
+	res.erase(std::unique(res.begin(), res.end()), res.end());
 	return res.size();
 }
 
@@ -903,18 +903,20 @@ void CUICellContainer::ClearAll(bool bDestroy)
 		VERIFY(!wc->IsAutoDelete());
 		DetachChild(wc);
 
+		if (bDestroy)
+		{
+			// Destroying a cached inventory list must not regroup cells or refresh
+			// their text: the underlying inventory objects may already be gone
+			// during level disconnect. Delete the UI-only hierarchy directly.
+			wc->DestroyChildsForClear();
+			delete_data(wc);
+			continue;
+		}
+
 		while (wc->ChildsCount())
 		{
 			CUICellItem* ci = wc->PopChild(NULL);
 			R_ASSERT(ci->ChildsCount()==0);
-
-			if (bDestroy)
-				delete_data(ci);
-		}
-
-		if (bDestroy)
-		{
-			delete_data(wc);
 		}
 	}
 }

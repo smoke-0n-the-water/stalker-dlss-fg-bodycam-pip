@@ -216,29 +216,38 @@ void CMonsterCoverManager::less_cover_direction(Fvector& dir)
 	m_object->Center(trace_from);
 	Fvector direction;
 
-	// trace discretely left
-	for (float ang = angle; angle_difference(ang, angle) < ANGLE_DISP; ang = angle_normalize(ang - ANGLE_DISP_STEP))
+	// Both searches start at the same angle. Test that static ray once.
+	direction.setHP(angle, 0.f);
+	if (Level().ObjectSpace.RayPick(trace_from, direction, TRACE_STATIC_DIST, collide::rqtStatic, l_rq, m_object) &&
+		l_rq.range < TRACE_STATIC_DIST)
 	{
-		direction.setHP(ang, 0.f);
-
-		if (Level().ObjectSpace.RayPick(trace_from, direction, TRACE_STATIC_DIST, collide::rqtStatic, l_rq, m_object))
+		angle_from = angle;
+		angle_to = angle;
+	}
+	else
+	{
+		// trace discretely left
+		for (float ang = angle_normalize(angle - ANGLE_DISP_STEP);
+			angle_difference(ang, angle) < ANGLE_DISP; ang = angle_normalize(ang - ANGLE_DISP_STEP))
 		{
-			if ((l_rq.range < TRACE_STATIC_DIST))
+			direction.setHP(ang, 0.f);
+
+			if (Level().ObjectSpace.RayPick(trace_from, direction, TRACE_STATIC_DIST, collide::rqtStatic, l_rq, m_object) &&
+				l_rq.range < TRACE_STATIC_DIST)
 			{
 				angle_from = ang;
 				break;
 			}
 		}
-	}
 
-	// trace discretely right
-	for (float ang = angle; angle_difference(ang, angle) < ANGLE_DISP; ang = angle_normalize(ang + ANGLE_DISP_STEP))
-	{
-		direction.setHP(ang, 0.f);
-
-		if (Level().ObjectSpace.RayPick(trace_from, direction, TRACE_STATIC_DIST, collide::rqtStatic, l_rq, m_object))
+		// trace discretely right
+		for (float ang = angle_normalize(angle + ANGLE_DISP_STEP);
+			angle_difference(ang, angle) < ANGLE_DISP; ang = angle_normalize(ang + ANGLE_DISP_STEP))
 		{
-			if ((l_rq.range < TRACE_STATIC_DIST))
+			direction.setHP(ang, 0.f);
+
+			if (Level().ObjectSpace.RayPick(trace_from, direction, TRACE_STATIC_DIST, collide::rqtStatic, l_rq, m_object) &&
+				l_rq.range < TRACE_STATIC_DIST)
 			{
 				angle_to = ang;
 				break;

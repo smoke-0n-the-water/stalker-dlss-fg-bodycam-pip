@@ -20,10 +20,14 @@ class CMapManager
 	xr_vector<CMapLocation*> m_deffered_destroy_queue;
 
 	xr_vector<SRemovedSpot> m_removed_spots;
+	// Quark: bumped on every location change so the PDA map can skip unchanged rebuilds
+	u32 m_locations_version;
 	void QueueRemovedNotify(const shared_str& spot_type, u16 id);
 public:
 	// called from the main thread only
 	void FlushRemovedNotify();
+	u32 LocationsVersion() const { return m_locations_version; }
+	void MarkLocationsDirty();
 
 	CMapManager();
 	~CMapManager();
@@ -48,7 +52,7 @@ public:
 	void ReloadSpots();
 	bool GetMapLocationsForObject(u16 id, xr_vector<CMapLocation*>& res);
 	void OnObjectDestroyNotify(u16 id);
-	void ResetStorage() { m_locations = NULL; m_removed_spots.clear_not_free(); };
+	void ResetStorage() { m_locations = NULL; m_removed_spots.clear_not_free(); MarkLocationsDirty(); };
 #ifdef DEBUG
 	void					Dump						();
 #endif

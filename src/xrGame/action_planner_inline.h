@@ -31,12 +31,21 @@
 TEMPLATE_SPECIALIZATION
 IC CPlanner::CActionPlanner() :
 	m_initialized(false),
+	m_update_profile_context(nullptr),
+	m_update_profile_callback(nullptr),
 	m_loaded(false),
 	m_solving(false)
 {
 #ifdef LOG_ACTION
 	m_use_log				= false;
 #endif
+}
+
+TEMPLATE_SPECIALIZATION
+IC void CPlanner::set_update_profile_callback(void* context, update_profile_callback_type callback)
+{
+	m_update_profile_context = context;
+	m_update_profile_callback = callback;
 }
 
 TEMPLATE_SPECIALIZATION
@@ -66,9 +75,69 @@ IC _object_type&CPlanner::object() const
 TEMPLATE_SPECIALIZATION
 void CPlanner::update()
 {
+	const bool profile_update = m_update_profile_callback && CPU::qpc_freq;
+	LPCSTR solve_action_name = nullptr;
+	u32 solve_action_id = u32(-1);
+	if (profile_update && initialized())
+	{
+		solve_action_name = current_action().m_action_name;
+		solve_action_id = current_action_id();
+	}
+	const u64 solve_started = profile_update ? CPU::QPC() : 0;
+	inherited::set_solve_profile_enabled(profile_update);
 	m_solving = true;
 	solve();
 	m_solving = false;
+	if (profile_update)
+	{
+		const typename inherited::SSolveProfile& solve_profile = inherited::solve_profile();
+		m_update_profile_callback(m_update_profile_context, "solve", solve_action_name,
+			solve_action_id, CPU::QPC() - solve_started);
+		if (solve_profile.actuality_ticks)
+			m_update_profile_callback(m_update_profile_context, "solve.actual", solve_action_name,
+				solve_profile.actual_shortcut ? 1u : 0u, solve_profile.actuality_ticks);
+		if (solve_profile.search_ticks)
+			m_update_profile_callback(m_update_profile_context, "solve.search", solve_action_name,
+				solve_profile.visited_nodes, solve_profile.search_ticks);
+		if (solve_profile.evaluator_calls)
+			m_update_profile_callback(m_update_profile_context, "solve.evaluators", solve_action_name,
+				solve_profile.evaluator_calls, solve_profile.evaluator_ticks);
+		const u64 evaluator_emit_threshold_ticks = CPU::qpc_freq / 10000ull; // 100 us diagnostic cutoff
+		for (u32 evaluator_index = 0; evaluator_index < solve_profile.evaluator_profile_count; ++evaluator_index)
+		{
+			const typename inherited::SSolveProfile::SEvaluatorProfile& evaluator_profile =
+				solve_profile.evaluator_profiles[evaluator_index];
+			if (evaluator_profile.total_ticks < evaluator_emit_threshold_ticks &&
+				evaluator_profile.max_ticks < evaluator_emit_threshold_ticks)
+				continue;
+			LPCSTR evaluator_name = "<unnamed>";
+			CConditionEvaluator& condition_evaluator = evaluator(evaluator_profile.condition_id);
+			if (condition_evaluator.m_evaluator_name && condition_evaluator.m_evaluator_name[0])
+				evaluator_name = condition_evaluator.m_evaluator_name;
+
+			string256 evaluator_stage;
+			_snprintf_s(evaluator_stage, sizeof(evaluator_stage), _TRUNCATE,
+				"solve.evaluator[%u:%s]", evaluator_profile.condition_id, evaluator_name);
+			m_update_profile_callback(m_update_profile_context, evaluator_stage, solve_action_name,
+				evaluator_profile.calls, evaluator_profile.total_ticks);
+
+			string256 evaluator_max_stage;
+			_snprintf_s(evaluator_max_stage, sizeof(evaluator_max_stage), _TRUNCATE,
+				"solve.evaluator_max[%u:%s]", evaluator_profile.condition_id, evaluator_name);
+			m_update_profile_callback(m_update_profile_context, evaluator_max_stage, solve_action_name,
+				evaluator_profile.calls, evaluator_profile.max_ticks);
+		}
+		if (solve_profile.operator_apply_calls)
+			m_update_profile_callback(m_update_profile_context, "solve.operator_apply", solve_action_name,
+				solve_profile.operator_apply_calls, solve_profile.operator_apply_ticks);
+		if (solve_profile.operator_weight_calls)
+			m_update_profile_callback(m_update_profile_context, "solve.operator_weight", solve_action_name,
+				solve_profile.operator_weight_calls, solve_profile.operator_weight_ticks);
+		if (solve_profile.solution_rebuild_calls)
+			m_update_profile_callback(m_update_profile_context, "solve.solution_rebuild", solve_action_name,
+				solve_profile.solution_size, solve_profile.solution_rebuild_ticks);
+	}
+	inherited::set_solve_profile_enabled(false);
 
 #ifdef LOG_ACTION
 	// printing solution
@@ -95,7 +164,7 @@ void CPlanner::update()
 		show_target_world_state		();
 	}
 #else
-	if (bDbgAct && m_failed && current_action().m_action_name)
+	if (bDbgAct && m_failed && initialized() && current_action().m_action_name)
 		Msg("!ERROR: there is no action sequence, which can transfer current world state to the target one. action[%s]",
 		    current_action().m_action_name);
 #endif
@@ -110,11 +179,30 @@ void CPlanner::update()
 	{
 		if (current_action_id() != solution().front() && allow_action_switch(current_action_id(), solution().front()))
 		{
+			if (profile_update)
+			{
+				COperator& previous_action = current_action();
+				const u32 previous_action_id = current_action_id();
+				const u64 finalize_started = CPU::QPC();
+				previous_action.finalize();
+				m_update_profile_callback(m_update_profile_context, "finalize",
+					previous_action.m_action_name, previous_action_id, CPU::QPC() - finalize_started);
+			}
+			else
 			current_action().finalize();
 			m_current_action_id = solution().front();
 			//Alundaio: More detailed logging for initializing action
 			if (bDbgAct == true)
 				Msg("DEBUG: Action [%s] initializing", current_action().m_action_name);
+			if (profile_update)
+			{
+				COperator& next_action = current_action();
+				const u64 initialize_started = CPU::QPC();
+				next_action.initialize();
+				m_update_profile_callback(m_update_profile_context, "initialize",
+					next_action.m_action_name, current_action_id(), CPU::QPC() - initialize_started);
+			}
+			else
 			current_action().initialize();
 		}
 	}
@@ -125,6 +213,15 @@ void CPlanner::update()
 		//Alundaio: More detailed logging for initializing action
 		if (bDbgAct == true)
 			Msg("DEBUG: Action [%s] initializing", current_action().m_action_name);
+		if (profile_update)
+		{
+			COperator& first_action = current_action();
+			const u64 initialize_started = CPU::QPC();
+			first_action.initialize();
+			m_update_profile_callback(m_update_profile_context, "initialize",
+				first_action.m_action_name, current_action_id(), CPU::QPC() - initialize_started);
+		}
+		else
 		current_action().initialize();
 	}
 
@@ -134,12 +231,25 @@ void CPlanner::update()
 
 	//-Alundaio: Debug Action
 
+	if (profile_update)
+	{
+		COperator& executing_action = current_action();
+		const u32 executing_action_id = current_action_id();
+		const u64 execute_started = CPU::QPC();
+		executing_action.execute();
+		m_update_profile_callback(m_update_profile_context, "execute",
+			executing_action.m_action_name, executing_action_id, CPU::QPC() - execute_started);
+	}
+	else
 	current_action().execute();
 }
 
 TEMPLATE_SPECIALIZATION
 IC void CPlanner::finalize()
 {
+	// update() returns before initializing when there is no solution, so a planner action
+	// (stalker combat) can be finalized with no current action
+	if (initialized())
 	current_action().finalize();
 	m_initialized = false;
 }

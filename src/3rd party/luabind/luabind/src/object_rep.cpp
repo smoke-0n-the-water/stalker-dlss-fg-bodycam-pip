@@ -23,6 +23,7 @@
 #include <luabind/detail/class_rep.hpp>
 #include <luabind/detail/object_rep.hpp>
 #include <luabind/detail/method_rep.hpp>
+#include <luajit.h>
 
 #include <luabind/detail/overload_rep_impl.hpp>
 
@@ -109,8 +110,12 @@ namespace luabind { namespace detail
 		m_destructor = ptr;
 	}
 
-	void object_rep::add_dependency(lua_State* L, int index)
+	void object_rep::add_dependency(lua_State* L, int self_index, int dependency_index)
 	{
+		// Borrowed wrappers normally have no destructor work and are excluded from
+		// the finalizer queue. A dependency creates a registry reference, so restore
+		// normal __gc handling before publishing that reference.
+		luaJIT_setudatafinalizer(L, self_index, 1);
 		if (!m_dependency_ref.is_valid())
 		{
 			lua_newtable(L);
@@ -118,21 +123,52 @@ namespace luabind { namespace detail
 		}
 
 		m_dependency_ref.get(L);
-		lua_pushvalue(L, index);
+		lua_pushvalue(L, dependency_index);
 		lua_rawseti(L, -2, m_dependency_cnt);
 		lua_pop(L, 1);
 		++m_dependency_cnt;
 	}
 
+	namespace
+	{
+		char object_finalizer_registry_key;
+
+		int finalize_lua_instance(lua_State* L)
+		{
+			object_rep* obj = static_cast<object_rep*>(lua_touserdata(L, 1));
+			finalize(L, obj->crep());
+			return 0;
+		}
+	}
+
+	void object_rep::register_finalizer(lua_State* L)
+	{
+		// Allocate the protected-call closure once, before any bound instance
+		// exists. GC cleanup then needs no fresh C closure allocation.
+		lua_pushlightuserdata(L, &object_finalizer_registry_key);
+		lua_pushcfunction(L, &finalize_lua_instance);
+		lua_rawset(L, LUA_REGISTRYINDEX);
+	}
+
 	int object_rep::garbage_collector(lua_State* L)
 	{
-		object_rep* obj = static_cast<object_rep*>(lua_touserdata(L, -1));
+		object_rep* obj = static_cast<object_rep*>(lua_touserdata(L, 1));
+		if (obj->crep()->get_class_type() != class_rep::lua_class)
+		{
+			obj->~object_rep();
+			return 0;
+		}
+		lua_pushlightuserdata(L, &object_finalizer_registry_key);
+		lua_rawget(L, LUA_REGISTRYINDEX);
+		lua_pushvalue(L, 1);
+		const int status = lua_pcall(L, 1, 0, 0);
 
-		finalize(L, obj->crep());
-
+		// A Lua __finalize error (including shutdown after VM invalidation)
+		// must not bypass the native destructor and its registry references.
 		obj->~object_rep();
+		if (status)
+			return lua_error(L);
 		return 0;
 	}
 
 }}
-

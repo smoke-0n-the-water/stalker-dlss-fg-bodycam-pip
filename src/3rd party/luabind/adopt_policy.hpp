@@ -89,6 +89,10 @@ namespace luabind { namespace detail
 			{
 				object_rep* obj = static_cast<object_rep*>(lua_touserdata(L, -1));
 				obj->set_flags(obj->flags() | object_rep::owner);
+				// A previously borrowed wrapper may have opted out of its empty
+				// finalizer. Adoption transfers C++ ownership to Lua, so destruction
+				// becomes mandatory before returning the wrapper to script code.
+				luaJIT_setudatafinalizer(L, -1, 1);
 				return;
 			}
 

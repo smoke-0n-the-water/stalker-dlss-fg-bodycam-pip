@@ -100,6 +100,7 @@ public:
 	void LoadSound(CInifile const* ini, LPCSTR section, LPCSTR line, LPCSTR alias, bool exclusive = false,
 	               int type = sg_SourceType);
 	void SetPosition(LPCSTR alias, const Fvector& pos);
+	bool HasActive3DSounds();
 	void UpdateAllSoundsPositions(const Fvector& P);
 };
 //-Alundaio

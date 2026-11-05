@@ -33,6 +33,9 @@ IC CAgentMemberManager::CAgentMemberManager(CAgentManager* object) :
 	m_object = object;
 	m_actuality = true;
 	m_combat_mask = 0;
+	m_members.reserve(sizeof(squad_mask_type)*8);
+	m_combat_members.reserve(sizeof(squad_mask_type)*8);
+	m_member_id_index.reserve(sizeof(squad_mask_type)*8);
 }
 
 IC CAgentManager& CAgentMemberManager::object() const
@@ -53,16 +56,16 @@ IC CAgentMemberManager::MEMBER_STORAGE& CAgentMemberManager::members()
 
 IC CMemberOrder& CAgentMemberManager::member(const CAI_Stalker* object)
 {
-	iterator I = std::find_if(members().begin(), members().end(), CMemberPredicate(object));
-	VERIFY(I != members().end());
-	return (**I);
+	const u32 index = member_index(object);
+	VERIFY(index < m_members.size());
+	return (*m_members[index]);
 }
 
 IC MemorySpace::squad_mask_type CAgentMemberManager::mask(const CAI_Stalker* object) const
 {
-	const_iterator I = std::find_if(members().begin(), members().end(), CMemberPredicate(object));
-	VERIFY(I != members().end());
-	return (MemorySpace::squad_mask_type(1) << (I - members().begin()));
+	const u32 index = member_index(object);
+	VERIFY(index < m_members.size());
+	return (MemorySpace::squad_mask_type(1) << index);
 }
 
 IC CAgentMemberManager::iterator CAgentMemberManager::member(MemorySpace::squad_mask_type mask)

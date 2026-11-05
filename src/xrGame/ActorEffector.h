@@ -14,6 +14,7 @@ private:
 
 	SCamEffectorInfo m_cam_info_hud;
 	bool m_reference_update = false;
+	xr_vector<shared_str> m_script_callbacks;
 
 protected:
 	virtual void UpdateCamEffectors();
@@ -27,6 +28,10 @@ public:
 	virtual ~CActorCameraManager()
 	{
 	}
+
+	void defer_script_callback(const shared_str& cb) { m_script_callbacks.push_back(cb); }
+	// script effector callbacks add/remove cam effectors, so they run after the list walk
+	void run_script_callbacks();
 
 	virtual void UpdateReference(const Fmatrix& cameraWorld, float fFOV, float fASPECT, float fFAR) override;
 

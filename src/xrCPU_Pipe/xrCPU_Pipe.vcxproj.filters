@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Kernel">
@@ -16,10 +16,7 @@
     <Filter Include="TTAPI">
       <UniqueIdentifier>{fa5b5939-2d25-4a3f-8053-d51ea3349395}</UniqueIdentifier>
     </Filter>
-    <Filter Include="PLC">
-      <UniqueIdentifier>{e0a5ea73-8694-48d5-ba76-63924a6c4e3b}</UniqueIdentifier>
-    </Filter>
-  </ItemGroup>
+</ItemGroup>
   <ItemGroup>
     <ClCompile Include="StdAfx.cpp">
       <Filter>Kernel</Filter>
@@ -30,19 +27,16 @@
     <ClCompile Include="xrSkin2W.cpp">
       <Filter>Skinning</Filter>
     </ClCompile>
-    <ClCompile Include="xrSkin2W_SSE.cpp">
+    <ClCompile Include="xrSkin2W_AVX2.cpp">
       <Filter>Skinning</Filter>
     </ClCompile>
-    <ClCompile Include="xrSkin2W_thread.cpp">
+<ClCompile Include="xrSkin2W_thread.cpp">
       <Filter>Skinning</Filter>
     </ClCompile>
     <ClCompile Include="ttapi.cpp">
       <Filter>TTAPI</Filter>
     </ClCompile>
-    <ClCompile Include="PLC.cpp">
-      <Filter>PLC</Filter>
-    </ClCompile>
-  </ItemGroup>
+</ItemGroup>
   <ItemGroup>
     <ClInclude Include="StdAfx.h">
       <Filter>Headers</Filter>

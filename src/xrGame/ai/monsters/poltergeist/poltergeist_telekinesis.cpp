@@ -8,6 +8,7 @@
 
 CPolterTele::CPolterTele(CPoltergeist* polter) : inherited(polter), m_pmt_object_collision_damage(0.5f)
 {
+	m_tele_candidates.reserve(20);
 }
 
 CPolterTele::~CPolterTele()
@@ -54,9 +55,9 @@ void CPolterTele::update_schedule()
 		return;
 
 	Fvector const actor_pos = Actor()->Position();
-	float const dist2actor = actor_pos.distance_to(m_object->Position());
+	const float dist_to_actor_sqr = actor_pos.distance_to_sqr(m_object->Position());
 
-	if (dist2actor > m_pmt_distance)
+	if (m_pmt_distance < 0.f || dist_to_actor_sqr > _sqr(m_pmt_distance))
 		return;
 
 	if (m_object->get_current_detection_level() < m_object->get_detection_success_level())
@@ -67,7 +68,7 @@ void CPolterTele::update_schedule()
 	case eStartRaiseObjects:
 		if (m_time + m_time_next < time())
 		{
-			if (!tele_raise_objects())
+			if (!tele_raise_objects(actor_pos))
 				m_state = eRaisingObjects;
 
 			m_time = time();
@@ -120,49 +121,6 @@ void CPolterTele::update_schedule()
 //////////////////////////////////////////////////////////////////////////
 // Выбор подходящих объектов для телекинеза
 //////////////////////////////////////////////////////////////////////////
-class best_object_predicate
-{
-	Fvector enemy_pos;
-	Fvector monster_pos;
-public:
-	best_object_predicate(const Fvector& m_pos, const Fvector& pos)
-	{
-		monster_pos = m_pos;
-		enemy_pos = pos;
-	}
-
-	bool operator()(const CGameObject* tpObject1, const CGameObject* tpObject2) const
-	{
-		float dist1 = monster_pos.distance_to(tpObject1->Position());
-		float dist2 = enemy_pos.distance_to(tpObject2->Position());
-		float dist3 = enemy_pos.distance_to(monster_pos);
-
-		return ((dist1 < dist3) && (dist2 > dist3));
-	};
-};
-
-class best_object_predicate2
-{
-	Fvector enemy_pos;
-	Fvector monster_pos;
-public:
-	typedef CObject* CObject_ptr;
-
-	best_object_predicate2(const Fvector& m_pos, const Fvector& pos)
-	{
-		monster_pos = m_pos;
-		enemy_pos = pos;
-	}
-
-	bool operator()(const CObject_ptr& tpObject1, const CObject_ptr& tpObject2) const
-	{
-		float dist1 = enemy_pos.distance_to(tpObject1->Position());
-		float dist2 = enemy_pos.distance_to(tpObject2->Position());
-
-		return (dist1 < dist2);
-	};
-};
-
 //////////////////////////////////////////////////////////////////////////
 
 bool CPolterTele::trace_object(CObject* obj, const Fvector& target)
@@ -178,7 +136,7 @@ bool CPolterTele::trace_object(CObject* obj, const Fvector& target)
 	if (range < 0.0001f)
 		return false;
 
-	dir.normalize();
+	dir.div(range);
 
 	collide::rq_result l_rq;
 	if (Level().ObjectSpace.RayPick(trace_from, dir, range, collide::rqtBoth, l_rq, obj))
@@ -190,7 +148,7 @@ bool CPolterTele::trace_object(CObject* obj, const Fvector& target)
 }
 
 extern BOOL g_telekinetic_objects_include_corpses;
-void CPolterTele::tele_find_objects(xr_vector<CObject*>& objects, const Fvector& pos)
+void CPolterTele::tele_find_objects(const Fvector& pos, const Fvector& actor_center, const Fvector& actor_head)
 {
 	m_nearest.clear_not_free();
 	Level().ObjectSpace.GetNearest(m_nearest, pos, m_pmt_radius, NULL);
@@ -213,66 +171,46 @@ void CPolterTele::tele_find_objects(xr_vector<CObject*>& objects, const Fvector&
 			(itm && itm->IsQuestItem()))
 			continue;
 
-
-		Fvector center;
-		Actor()->Center(center);
-
-		if (trace_object(obj, center) || trace_object(obj, get_head_position(Actor())))
-			objects.push_back(obj);
+		if (trace_object(obj, actor_center) || trace_object(obj, actor_head))
+			m_tele_candidates.push_back(obj);
 	}
 }
 
-bool CPolterTele::tele_raise_objects()
+bool CPolterTele::tele_raise_objects(const Fvector& actor_pos)
 {
-	// find objects near actor
-	xr_vector<CObject*> tele_objects;
-	tele_objects.reserve(20);
+	m_tele_candidates.clear_not_free();
+	Fvector actor_center;
+	Actor()->Center(actor_center);
+	const Fvector actor_head = get_head_position(Actor());
 
 	// получить список объектов вокруг врага
-	tele_find_objects(tele_objects, Actor()->Position());
+	tele_find_objects(actor_pos, actor_center, actor_head);
 
 	// получить список объектов вокруг монстра
-	tele_find_objects(tele_objects, m_object->Position());
+	tele_find_objects(m_object->Position(), actor_center, actor_head);
 
 	// получить список объектов между монстром и врагом
-	float dist = Actor()->Position().distance_to(m_object->Position());
-	Fvector dir;
-	dir.sub(Actor()->Position(), m_object->Position());
-	dir.normalize();
-
 	Fvector pos;
-	pos.mad(m_object->Position(), dir, dist / 2.f);
-	tele_find_objects(tele_objects, pos);
+	pos.add(m_object->Position(), actor_pos).mul(0.5f);
+	tele_find_objects(pos, actor_center, actor_head);
 
-	// сортировать и оставить только необходимое количество объектов
-	std::sort(tele_objects.begin(), tele_objects.end(),
-	          best_object_predicate2(m_object->Position(), Actor()->Position()));
-
-	// оставить уникальные объекты
-	tele_objects.erase(
-		std::unique(
-			tele_objects.begin(),
-			tele_objects.end()
-		),
-		tele_objects.end()
-	);
-
-	// оставить необходимое количество объектов
-	//if (tele_objects.size() > m_pmt_tele_object_count) tele_objects.resize	(m_pmt_tele_object_count);
-
-	//// активировать
-	//for (u32 i=0; i<tele_objects.size(); i++) {
-	//	CPhysicsShellHolder *obj = smart_cast<CPhysicsShellHolder *>(tele_objects[i]);
-
-	//	// применить телекинез на объект
-	//	bool	rotate = false;
-
-	//	CTelekinesis::activate		(obj, m_pmt_tele_raise_speed, m_pmt_tele_object_height, m_pmt_tele_time_object_keep, rotate);
-	//}
-
-	if (!tele_objects.empty())
+	// выбрать ближайший к актёру объект без полной сортировки
+	CObject* nearest_object = 0;
+	float nearest_distance_sqr = flt_max;
+	for (u32 i = 0; i < m_tele_candidates.size(); ++i)
 	{
-		CPhysicsShellHolder* obj = smart_cast<CPhysicsShellHolder *>(tele_objects[0]);
+		const float distance_sqr = actor_pos.distance_to_sqr(m_tele_candidates[i]->Position());
+		if (distance_sqr < nearest_distance_sqr)
+		{
+			nearest_distance_sqr = distance_sqr;
+			nearest_object = m_tele_candidates[i];
+		}
+	}
+	m_tele_candidates.clear_not_free();
+
+	if (nearest_object)
+	{
+		CPhysicsShellHolder* obj = smart_cast<CPhysicsShellHolder *>(nearest_object);
 
 		// применить телекинез на объект
 		bool rotate = false;

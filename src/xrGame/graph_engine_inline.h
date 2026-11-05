@@ -10,9 +10,23 @@
 
 IC CGraphEngine::CGraphEngine(u32 max_vertex_count)
 {
-	m_algorithm = xr_new<CAlgorithm>(max_vertex_count);
-	m_algorithm->data_storage().set_min_bucket_value(_dist_type(0));
-	m_algorithm->data_storage().set_max_bucket_value(_dist_type(2000));
+	m_max_vertex_count = max_vertex_count;
+	const u64 estimated_workspace_bytes = u64(max_vertex_count) * 16u + 2u * 1024u * 1024u;
+	const u32 memory_limited_count = estimated_workspace_bytes ?
+		_max(2u, _min(8u, u32((128ull * 1024ull * 1024ull) / estimated_workspace_bytes))) : 1u;
+	m_algorithm_pool_limit = _max(1u, _min(memory_limited_count, _min(8u, u32(CPU::ID.n_cores))));
+#ifdef AI_COMPILER
+	m_algorithm_pool_limit = 1;
+#endif
+	// Allocate and zero the bounded pool while the level is loading. Growing the
+	// A* index arrays on the first multi-NPC burst would otherwise create a hitch.
+	for (u32 index = 0; index < m_algorithm_pool_limit; ++index)
+	{
+		CAlgorithm* algorithm = xr_new<CAlgorithm>(max_vertex_count);
+		algorithm->data_storage().set_min_bucket_value(_dist_type(0));
+		algorithm->data_storage().set_max_bucket_value(_dist_type(2000));
+		m_algorithm_pool.push_back(SAlgorithmSlot(algorithm));
+	}
 
 #ifndef AI_COMPILER
 	m_solver_algorithm = xr_new<CSolverAlgorithm>(16 * 1024);
@@ -22,11 +36,73 @@ IC CGraphEngine::CGraphEngine(u32 max_vertex_count)
 
 IC CGraphEngine::~CGraphEngine()
 {
-	xr_delete(m_algorithm);
+	for (u32 i = 0; i < m_algorithm_pool.size(); ++i)
+	{
+		VERIFY(!m_algorithm_pool[i].in_use);
+		xr_delete(m_algorithm_pool[i].algorithm);
+	}
+	m_algorithm_pool.clear();
 #ifndef AI_COMPILER
 	xr_delete(m_solver_algorithm);
 	xr_delete(m_string_algorithm);
 #endif // AI_COMPILER
+}
+
+IC CGraphEngine::CAlgorithm* CGraphEngine::acquire_algorithm()
+{
+	std::unique_lock<std::mutex> lock(m_algorithm_pool_mutex);
+	for (;;)
+	{
+		for (u32 i = 0; i < m_algorithm_pool.size(); ++i)
+		{
+			if (!m_algorithm_pool[i].in_use)
+			{
+				m_algorithm_pool[i].in_use = true;
+				return m_algorithm_pool[i].algorithm;
+			}
+		}
+
+		if (m_algorithm_pool.size() < m_algorithm_pool_limit)
+		{
+			CAlgorithm* algorithm = xr_new<CAlgorithm>(m_max_vertex_count);
+			algorithm->data_storage().set_min_bucket_value(_dist_type(0));
+			algorithm->data_storage().set_max_bucket_value(_dist_type(2000));
+			m_algorithm_pool.push_back(SAlgorithmSlot(algorithm));
+			m_algorithm_pool.back().in_use = true;
+			return algorithm;
+		}
+
+		m_algorithm_pool_available.wait(lock);
+	}
+}
+
+IC void CGraphEngine::release_algorithm(CAlgorithm* algorithm)
+{
+	{
+		std::lock_guard<std::mutex> lock(m_algorithm_pool_mutex);
+		for (u32 i = 0; i < m_algorithm_pool.size(); ++i)
+		{
+			if (m_algorithm_pool[i].algorithm != algorithm)
+				continue;
+
+			VERIFY(m_algorithm_pool[i].in_use);
+			m_algorithm_pool[i].in_use = false;
+			m_algorithm_pool_available.notify_one();
+			return;
+		}
+	}
+	VERIFY2(false, "Releasing an unknown graph-search workspace");
+}
+
+IC CGraphEngine::CAlgorithmGuard::CAlgorithmGuard(CGraphEngine& owner) :
+	m_owner(owner),
+	m_algorithm(owner.acquire_algorithm())
+{
+}
+
+IC CGraphEngine::CAlgorithmGuard::~CAlgorithmGuard()
+{
+	m_owner.release_algorithm(m_algorithm);
 }
 
 #ifndef AI_COMPILER
@@ -52,7 +128,9 @@ IC bool CGraphEngine::search(
 		return false;
 
 #ifndef AI_COMPILER
-	Device.Statistic->AI_Path.Begin();
+	CTimer ai_path_timer;
+	if (g_bEnableStatGather)
+		ai_path_timer.Start();
 	START_PROFILE("graph_engine")
 		START_PROFILE("graph_engine/search")
 #endif
@@ -61,19 +139,24 @@ IC bool CGraphEngine::search(
 
 			CPathManagerGeneric path_manager;
 
+			CAlgorithmGuard algorithm(*this);
 			path_manager.setup(
 				&graph,
-				&m_algorithm->data_storage(),
+				&algorithm->data_storage(),
 				node_path,
 				start_node,
 				dest_node,
 				parameters
 			);
 
-			bool successfull = m_algorithm->find(path_manager);
+			bool successfull = algorithm->find(path_manager);
+			CAStarBucketTelemetry::record(
+				algorithm->data_storage().bucket_overflow_count(),
+				algorithm->data_storage().max_bucket_chain_length());
 
 #ifndef AI_COMPILER
-			Device.Statistic->AI_Path.End();
+			if (g_bEnableStatGather)
+				Device.Statistic->AI_Path.Add(ai_path_timer.GetElapsed_ticks());
 #endif
 			return (successfull);
 #ifndef AI_COMPILER
@@ -98,7 +181,9 @@ IC bool CGraphEngine::search(
 		return false;
 
 #ifndef AI_COMPILER
-	Device.Statistic->AI_Path.Begin();
+	CTimer ai_path_timer;
+	if (g_bEnableStatGather)
+		ai_path_timer.Start();
 	START_PROFILE("graph_engine")
 		START_PROFILE("graph_engine/search")
 #endif
@@ -107,19 +192,24 @@ IC bool CGraphEngine::search(
 
 			CPathManagerGeneric path_manager;
 
+			CAlgorithmGuard algorithm(*this);
 			path_manager.setup(
 				&graph,
-				&m_algorithm->data_storage(),
+				&algorithm->data_storage(),
 				node_path,
 				start_node,
 				dest_node,
 				parameters
 			);
 
-			bool successfull = m_algorithm->find(path_manager);
+			bool successfull = algorithm->find(path_manager);
+			CAStarBucketTelemetry::record(
+				algorithm->data_storage().bucket_overflow_count(),
+				algorithm->data_storage().max_bucket_chain_length());
 
 #ifndef AI_COMPILER
-			Device.Statistic->AI_Path.End();
+			if (g_bEnableStatGather)
+				Device.Statistic->AI_Path.Add(ai_path_timer.GetElapsed_ticks());
 #endif
 			return (successfull);
 #ifndef AI_COMPILER
@@ -146,23 +236,30 @@ IC bool CGraphEngine::search(
 		return false;
 
 #ifndef AI_COMPILER
-	Device.Statistic->AI_Path.Begin();
+	CTimer ai_path_timer;
+	if (g_bEnableStatGather)
+		ai_path_timer.Start();
 	START_PROFILE("graph_engine")
 		START_PROFILE("graph_engine/search")
 #endif
+			CAlgorithmGuard algorithm(*this);
 			path_manager.setup(
 				&graph,
-				&m_algorithm->data_storage(),
+				&algorithm->data_storage(),
 				node_path,
 				start_node,
 				dest_node,
 				parameters
 			);
 
-			bool successfull = m_algorithm->find(path_manager);
+			bool successfull = algorithm->find(path_manager);
+			CAStarBucketTelemetry::record(
+				algorithm->data_storage().bucket_overflow_count(),
+				algorithm->data_storage().max_bucket_chain_length());
 
 #ifndef AI_COMPILER
-			Device.Statistic->AI_Path.End();
+			if (g_bEnableStatGather)
+				Device.Statistic->AI_Path.Add(ai_path_timer.GetElapsed_ticks());
 #endif
 			return (successfull);
 #ifndef AI_COMPILER

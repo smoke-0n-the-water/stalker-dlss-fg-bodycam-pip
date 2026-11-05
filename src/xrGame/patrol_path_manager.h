@@ -31,6 +31,12 @@ private:
 private:
 	typedef CScriptCallbackEx<bool> CExtrapolateCallback;
 
+	struct CAccessibleEdge
+	{
+		u32 m_vertex_id;
+		float m_cumulative_weight;
+	};
+
 private:
 	const CPatrolPath* m_path;
 	shared_str m_path_name;
@@ -47,6 +53,7 @@ private:
 	CExtrapolateCallback m_extrapolate_callback;
 	CRestrictedObject* m_object;
 	CGameObject* m_game_object;
+	xr_vector<CAccessibleEdge> m_accessible_edges;
 
 protected:
 	IC bool random() const;
@@ -81,6 +88,8 @@ public:
 	bool extrapolate_path();
 
 private:
+	u32 select_next_point(const CPatrolPath::CVertex* vertex, u32 excluded_vertex_id,
+	                      bool fallback_to_excluded);
 	u32 get_next_point(u32 prev_point_index);
 	void reset();
 };

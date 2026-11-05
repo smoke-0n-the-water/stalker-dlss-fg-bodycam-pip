@@ -56,7 +56,7 @@ public:
 };
 
 template <typename _storage_type_load, typename _storage_type_save>
-IC IPureSerializeObject<typename _storage_type_load, typename _storage_type_save>::~IPureSerializeObject()
+IC IPureSerializeObject<_storage_type_load, _storage_type_save>::~IPureSerializeObject()
 {
 }
 

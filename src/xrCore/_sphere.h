@@ -98,18 +98,20 @@ public:
 	ICF ERP_Result intersect_full(const _vector3<T>& start, const _vector3<T>& dir, T& dist) const
 	{
 		int quantity;
-		float afT[2];
-		Fsphere::ERP_Result result = intersect(start, dir, dist, quantity, afT);
+		T afT[2];
+		ERP_Result result = intersect(start, dir, dist, quantity, afT);
 
-		if (result == Fsphere::rpOriginInside || ((result == Fsphere::rpOriginOutside) && (afT[0] < dist)))
+		if (result == rpOriginInside || ((result == rpOriginOutside) && (afT[0] < dist)))
 		{
 			switch (result)
 			{
-			case Fsphere::rpOriginInside:
+			case rpOriginInside:
 				dist = afT[0] < dist ? afT[0] : dist;
 				break;
-			case Fsphere::rpOriginOutside:
+			case rpOriginOutside:
 				dist = afT[0];
+				break;
+			default:
 				break;
 			}
 		}
@@ -131,6 +133,37 @@ public:
 			}
 		}
 		return rpNone;
+	}
+
+	// Fast boolean test for a normalized ray segment. Unlike intersect(), this
+	// path does not need hit distance or root classification, so it avoids the
+	// square root and division used to materialize intersection parameters.
+	// The end of the segment remains exclusive, matching callers that compare
+	// the nearest hit with `hit_distance < range`.
+	ICF BOOL intersects_segment(const _vector3<T>& start, const _vector3<T>& dir, T range) const
+	{
+		_vector3<T> to_center;
+		to_center.sub(P, start);
+
+		const T radius_sqr = R * R;
+		const T center_distance_sqr = to_center.square_magnitude();
+		const T projected = to_center.dotproduct(dir);
+		const T half_chord_sqr = radius_sqr - (center_distance_sqr - projected * projected);
+
+		// Most broadphase candidates miss the sphere. Reject those before the
+		// less common origin-inside and segment-end cases.
+		if (half_chord_sqr < (T)0)
+			return FALSE;
+		if (center_distance_sqr <= radius_sqr)
+			return TRUE;
+		if (projected < (T)0)
+			return FALSE;
+
+		if (projected < range)
+			return TRUE;
+
+		const T beyond_end = projected - range;
+		return half_chord_sqr > beyond_end * beyond_end;
 	}
 
 	IC ERP_Result intersect2(const _vector3<T>& S, const _vector3<T>& D, T& range) const

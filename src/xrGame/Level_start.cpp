@@ -13,6 +13,7 @@
 #include "string_table.h"
 #include "UIGameCustom.h"
 #include "ui/UICDkey.h"
+#include "alife_storage_manager.h"
 
 int g_cl_save_demo = 0;
 extern XRCORE_API bool g_allow_heap_min;
@@ -76,6 +77,19 @@ bool CLevel::net_Start(const char* op_server, const char* op_client)
 		};
 	};
 	m_caServerOptions = op_server;
+
+	typedef IGame_Persistent::params game_params;
+	const game_params& params = g_pGamePersistent->m_game_params;
+	if (!xr_strcmp(params.m_game_type, "single") && !xr_strcmp(params.m_alife, "alife") &&
+		!xr_strcmp(params.m_new_or_load, "load") && params.m_game_or_spawn[0])
+	{
+		CALifeStorageManager::prepare_load_async(params.m_game_or_spawn);
+	}
+	else
+	{
+		CALifeStorageManager::discard_prepared_load();
+	}
+
 	//---------------------------------------------------------------------
 	if (!IsDemoPlay())
 	{
@@ -260,6 +274,7 @@ bool CLevel::net_start6()
 	BulletManager().Clear();
 	BulletManager().Load();
 
+	CALifeStorageManager::discard_prepared_load();
 	pApp->LoadEnd();
 
 	if (net_start_result_total)

@@ -41,26 +41,43 @@ public:
 
 	fplane planes [FRUSTUM_MAXPLANES];
 	int p_count;
+	// planes[] as structure-of-arrays (n.x, n.y, n.z, d) for the AVX2 tests: lanes below
+	// p_count mirror planes[], the rest are zero. Kept by _clear(), _add() and Create*().
+	float simd[4][16];
 
 public:
 	ICF EFC_Visible AABB_OverlapPlane(const fplane& P, const float* mM) const
 	{
-		// calc extreme pts (neg,pos) along normal axis (pos in dir of norm, etc.)
-		u32* id = frustum_aabb_remap[P.aabb_overlap_id];
+		// Derive the extreme-point indices from the cached normal signs. The old
+		// lookup table required six dependent index loads before the six AABB
+		// component loads in every plane test. This keeps the exact same point and
+		// arithmetic order, but turns the indices into cheap integer arithmetic.
+		const u32 signs = P.aabb_overlap_id;
+		const u32 neg_x = ((signs >> 2) & 1u) * 3u;
+		const u32 neg_y = 1u + ((signs >> 1) & 1u) * 3u;
+		const u32 neg_z = 2u + (signs & 1u) * 3u;
 
-		Fvector Neg;
-		Neg.set(mM[id[3]], mM[id[4]], mM[id[5]]);
-		if (P.classify(Neg) > 0) return fcvNone;
+		const float neg_classification = P.n.x * mM[neg_x] + P.n.y * mM[neg_y] +
+			P.n.z * mM[neg_z] + P.d;
+		if (neg_classification > 0.f) return fcvNone;
 
-		Fvector Pos;
-		Pos.set(mM[id[0]], mM[id[1]], mM[id[2]]);
-		if (P.classify(Pos) <= 0) return fcvFully;
+		const u32 pos_x = 3u - neg_x;
+		const u32 pos_y = 5u - neg_y;
+		const u32 pos_z = 7u - neg_z;
+		const float pos_classification = P.n.x * mM[pos_x] + P.n.y * mM[pos_y] +
+			P.n.z * mM[pos_z] + P.d;
+		if (pos_classification <= 0.f) return fcvFully;
 
 		return fcvPartial;
 	}
 
 public:
-	IC void _clear() { p_count = 0; }
+	IC void _clear()
+	{
+		p_count = 0;
+		memset(simd, 0, sizeof(simd));
+	}
+	void set_simd_lane(int i);
 	void _add(Fplane& P);
 	void _add(Fvector& P1, Fvector& P2, Fvector& P3);
 
@@ -78,10 +95,10 @@ public:
 
 	u32 getMask() const { return (1 << p_count) - 1; }
 
-	EFC_Visible testSphere(Fvector& c, float r, u32& test_mask) const;
-	BOOL testSphere_dirty(Fvector& c, float r) const;
+	EFC_Visible testSphere(const Fvector& c, float r, u32& test_mask) const;
+	BOOL testSphere_dirty(const Fvector& c, float r) const;
 	EFC_Visible testAABB(const float* mM, u32& test_mask) const;
-	EFC_Visible testSAABB(Fvector& c, float r, const float* mM, u32& test_mask) const;
+	EFC_Visible testSAABB(const Fvector& c, float r, const float* mM, u32& test_mask) const;
 	BOOL testPolyInside_dirty(Fvector* p, int count) const;
 
 	IC BOOL testPolyInside(sPoly& src) const

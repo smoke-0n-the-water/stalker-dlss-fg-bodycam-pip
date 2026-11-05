@@ -76,6 +76,7 @@ public:
 private:
 	void check_enterable_loopholes(shared_str const& description);
 	void set_enterable(shared_str const& id);
+	void clear_visuals();
 	void fill_visuals();
 	void load_draw_data();
 

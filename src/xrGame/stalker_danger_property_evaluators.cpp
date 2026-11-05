@@ -167,14 +167,17 @@ _value_type CStalkerPropertyEvaluatorDangerUnknownCoverActual::evaluate()
 	Fvector position = object().memory().danger().selected()->position();
 	for (;;)
 	{
+		CStalkerMovementRestrictor near_restrictor(m_object, true, false);
+		bool near_search_performed = false;
 		object().m_ce_best->setup(position, 10.f, 170.f, 10.f);
 		point = ai().cover_manager().best_cover(m_cover_selection_position, 10.f, *object().m_ce_best,
-		                                        CStalkerMovementRestrictor(m_object, true, false));
+		                                        near_restrictor, 0.f, &near_search_performed);
 		if (!point)
 		{
 			object().m_ce_best->setup(position, 10.f, 170.f, 10.f);
 			point = ai().cover_manager().best_cover(m_cover_selection_position, 30.f, *object().m_ce_best,
-			                                        CStalkerMovementRestrictor(m_object, true, false));
+			                                        CStalkerMovementRestrictor(m_object, true, false),
+			                                        near_search_performed ? 10.f : 0.f);
 		}
 
 		if (!first_time)

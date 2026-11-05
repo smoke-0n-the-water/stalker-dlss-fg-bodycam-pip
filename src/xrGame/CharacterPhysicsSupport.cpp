@@ -744,6 +744,16 @@ bool CCharacterPhysicsSupport::DoCharacterShellCollide()
 
 bool CCharacterPhysicsSupport::CollisionCorrectObjPos(const Fvector& start_from, bool character_create/*=false*/)
 {
+	return CollisionCorrectObjPosImpl(start_from, character_create, false);
+}
+
+bool CCharacterPhysicsSupport::CollisionCorrectObjPosStaticOnly(const Fvector& start_from)
+{
+	return CollisionCorrectObjPosImpl(start_from, false, true);
+}
+
+bool CCharacterPhysicsSupport::CollisionCorrectObjPosImpl(const Fvector& start_from, bool character_create, bool static_only)
+{
 	//Fvector shift;shift.sub( start_from, m_EntityAlife.Position() );
 	Fvector shift;
 	shift.set(0, 0, 0);
@@ -776,7 +786,10 @@ bool CCharacterPhysicsSupport::CollisionCorrectObjPos(const Fvector& start_from,
 	Fvector activation_res = Fvector().set(0, 0, 0);
 	////////////////
 
-	bool ret = ActivateShapeCharacterPhysicsSupport(activation_res, vbox, activation_pos, mXFORM,
+	bool ret = static_only
+		? ActivateShapeCharacterPhysicsSupportStaticOnly(activation_res, vbox, activation_pos, mXFORM,
+		                                                not_collide_characters, set_rotation, &m_EntityAlife)
+		: ActivateShapeCharacterPhysicsSupport(activation_res, vbox, activation_pos, mXFORM,
 	                                                not_collide_characters, set_rotation, &m_EntityAlife);
 	//////////////////
 
@@ -1216,7 +1229,7 @@ if( dbg_draw_ragdoll_spawn )
 }
 #endif
 
-	CollisionCorrectObjPos(dp);
+	CollisionCorrectObjPosStaticOnly(dp);
 	m_pPhysicsShell->SetGlTransformDynamic(mXFORM);
 
 #ifdef	DEBUG
@@ -1227,8 +1240,13 @@ if( dbg_draw_ragdoll_spawn )
 	DBG_ClosedCashedDraw( 50000 );
 }
 #endif
-	//fly back after correction
-	FlyTo(Fvector().sub(inital_entity_position, m_EntityAlife.Position()));
+	// Static-only collision correction places the newly activated ragdoll clear
+	// of level geometry without waking nearby dynamic physics objects. Do not
+	// synchronously advance the entire physics
+	// world to move one corpse back toward its pre-correction position: that legacy
+	// workaround turns a death event into ten global fixed steps on the main
+	// thread. The shell starts from the corrected transform and receives the
+	// preserved character velocity below.
 
 #ifdef	DEBUG
 if( dbg_draw_ragdoll_spawn )
@@ -1372,51 +1390,6 @@ ICollisionHitCallback* CCharacterPhysicsSupport::get_collision_hit_callback()
 	return m_collision_hit_callback;
 }
 
-
-void CCharacterPhysicsSupport::FlyTo(const Fvector& disp)
-{
-	R_ASSERT(m_pPhysicsShell);
-	float ammount = disp.magnitude();
-	if (fis_zero(ammount, EPS_L)) return;
-	physics_world()->Freeze();
-	bool g = m_pPhysicsShell->get_ApplyByGravity();
-	m_pPhysicsShell->set_ApplyByGravity(false);
-	m_pPhysicsShell->add_ObjectContactCallback(StaticEnvironmentCB);
-	void* cd = m_pPhysicsShell->get_CallbackData();
-	m_pPhysicsShell->set_CallbackData(m_pPhysicsShell->PIsland());
-	m_pPhysicsShell->UnFreeze();
-	Fvector vel;
-	vel.set(disp);
-	const u16 steps_num = 10;
-	const float fsteps_num = steps_num;
-	vel.mul(1.f / fsteps_num / fixed_step);
-
-
-	for (u16 i = 0; steps_num > i; ++i)
-	{
-		m_pPhysicsShell->set_LinearVel(vel);
-#if	0
-	DBG_OpenCashedDraw();
-	//m_pPhysicsShell->dbg_draw_geometry( 0.2f, D3DCOLOR_XRGB( 255, 100, 0 ) );
-	m_pPhysicsShell->dbg_draw_velocity( 0.01f, D3DCOLOR_XRGB( 0, 255, 0 ) );
-	m_pPhysicsShell->dbg_draw_force( 0.1f, D3DCOLOR_XRGB( 0, 0, 255 ) );
-//	DBG_ClosedCashedDraw( 50000 );
-#endif
-		physics_world()->Step();
-#if	0
-		//	DBG_OpenCashedDraw();
-	//m_pPhysicsShell->dbg_draw_geometry( 0.2f, D3DCOLOR_XRGB( 255, 100, 0 ) );
-	m_pPhysicsShell->dbg_draw_velocity( 0.01f, D3DCOLOR_XRGB( 100, 255, 0 ) );
-	m_pPhysicsShell->dbg_draw_force( 0.1f, D3DCOLOR_XRGB( 100, 0, 255 ) );
-	DBG_ClosedCashedDraw( 50000 );
-#endif
-	}
-	//u16 step_num=disp.magnitude()/fixed_step;
-	m_pPhysicsShell->set_ApplyByGravity(g);
-	m_pPhysicsShell->set_CallbackData(cd);
-	m_pPhysicsShell->remove_ObjectContactCallback(StaticEnvironmentCB);
-	physics_world()->UnFreeze();
-}
 
 void CCharacterPhysicsSupport::on_create_anim_mov_ctrl()
 {

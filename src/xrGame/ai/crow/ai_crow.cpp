@@ -386,6 +386,10 @@ void CAI_Crow::shedule_Update(u32 DT)
 			fGoalChangeTime += fGoalChangeDelta + fGoalChangeDelta * Random.randF(-0.5f, 0.5f);
 
 			Level().ObjectSpace.GetNearest(nearbyObjects, Position(), 300.0f, NULL);
+			// Keep only corpses from this spatial query. Retaining the vector capacity
+			// avoids allocator churn without accumulating duplicates or stale objects
+			// across the crow's lifetime.
+			deadNPCs.clear_not_free();
 			for (CObject* obj : nearbyObjects) 
 			{
 				if (CEntityAlive* entity = smart_cast<CEntityAlive*>(obj); entity && !entity->g_Alive()) 

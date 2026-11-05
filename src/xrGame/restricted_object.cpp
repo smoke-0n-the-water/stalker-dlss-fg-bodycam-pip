@@ -220,6 +220,22 @@ void CRestrictedObject::remove_border() const
 	STOP_PROFILE;
 }
 
+void CRestrictedObject::collect_path_border(u32 start_vertex_id, u32 dest_vertex_id,
+	                                         xr_vector<u32>& result) const
+{
+	START_PROFILE("Restricted Object/Collect Path Border")
+		;
+		VERIFY(ai().level_graph().valid_vertex_id(start_vertex_id));
+		VERIFY(ai().level_graph().valid_vertex_id(dest_vertex_id));
+
+		// accessible() performs the same lazy restriction initialization as the
+		// legacy add_border() path, but the resulting border stays query-local.
+		if (accessible(start_vertex_id))
+			Level().space_restriction_manager().collect_border(
+				object().ID(), start_vertex_id, dest_vertex_id, result);
+	STOP_PROFILE;
+}
+
 shared_str CRestrictedObject::in_restrictions() const
 {
 	START_PROFILE("Restricted Object/in_restrictions")

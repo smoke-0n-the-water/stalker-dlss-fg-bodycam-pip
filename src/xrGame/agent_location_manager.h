@@ -38,7 +38,7 @@ public:
 	IC void clear();
 	void update();
 	void add(CDangerLocationPtr location);
-	float danger(const CCoverPoint* cover, CAI_Stalker* member) const;
+	float danger(const CCoverPoint* cover, MemorySpace::squad_mask_type member_mask) const;
 	bool suitable(CAI_Stalker* object, const CCoverPoint* location, bool use_enemy_info) const;
 	void make_suitable(CAI_Stalker* object, const CCoverPoint* location) const;
 	void remove_links(CObject* object);

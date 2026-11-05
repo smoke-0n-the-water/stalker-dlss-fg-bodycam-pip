@@ -25,11 +25,8 @@ void CMonsterCorpseMemory::init_external(CBaseMonster* M, TTime mem_time)
 
 void CMonsterCorpseMemory::update()
 {
-	for (xr_vector<const CGameObject *>::const_iterator I = monster->memory().item().objects().begin(); I != monster
-	                                                                                                         ->memory().
-	                                                                                                         item().
-	                                                                                                         objects().
-	                                                                                                         end(); ++I)
+	const xr_vector<const CGameObject*>& objects = monster->memory().item().objects();
+	for (xr_vector<const CGameObject*>::const_iterator I = objects.begin(); I != objects.end(); ++I)
 	{
 		if (monster->memory().visual().visible_now(*I))
 		{
@@ -113,6 +110,21 @@ const CEntityAlive* CMonsterCorpseMemory::get_corpse()
 	return (0);
 }
 
+const CEntityAlive* CMonsterCorpseMemory::get_corpse(SMonsterCorpse& corpse_info)
+{
+	corpse_info.time = 0;
+
+	CORPSE_MAP_IT it = find_best_corpse();
+	if (it != m_objects.end())
+	{
+		if (const_cast<CEntityAlive *>(it->first)->is_locked_corpse()) return (0);
+
+		corpse_info = it->second;
+		return it->first;
+	}
+	return (0);
+}
+
 SMonsterCorpse CMonsterCorpseMemory::get_corpse_info()
 {
 	SMonsterCorpse ret_val;
@@ -127,13 +139,15 @@ SMonsterCorpse CMonsterCorpseMemory::get_corpse_info()
 CORPSE_MAP_IT CMonsterCorpseMemory::find_best_corpse()
 {
 	CORPSE_MAP_IT it = m_objects.end();
-	float min_dist = flt_max;
+	float min_dist_sqr = flt_max;
+	const Fvector monster_position = monster->Position();
 
 	for (CORPSE_MAP_IT I = m_objects.begin(); I != m_objects.end(); I++)
 	{
-		if (I->second.position.distance_to(monster->Position()) < min_dist)
+		const float dist_sqr = I->second.position.distance_to_sqr(monster_position);
+		if (dist_sqr < min_dist_sqr)
 		{
-			min_dist = I->second.position.distance_to(monster->Position());
+			min_dist_sqr = dist_sqr;
 			it = I;
 		}
 	}
@@ -141,14 +155,16 @@ CORPSE_MAP_IT CMonsterCorpseMemory::find_best_corpse()
 	return it;
 }
 
-void CMonsterCorpseMemory::remove_links(CObject* O)
+bool CMonsterCorpseMemory::remove_links(CObject* O)
 {
 	for (CORPSE_MAP_IT I = m_objects.begin(); I != m_objects.end(); ++I)
 	{
 		if ((*I).first == O)
 		{
 			m_objects.erase(I);
-			break;
+			return true;
 		}
 	}
+
+	return false;
 }

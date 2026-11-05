@@ -15,6 +15,9 @@ IC CMemberEnemy::CMemberEnemy(const CEntityAlive* object, squad_mask_type mask)
 	m_mask.assign(mask);
 	m_probability = 1.f;
 	m_distribute_mask.zero();
+	m_visible_index = u32(-1);
+	m_sound_index = u32(-1);
+	m_hit_index = u32(-1);
 }
 
 IC bool CMemberEnemy::operator==(const CEntityAlive* object) const

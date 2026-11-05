@@ -1,4 +1,6 @@
 #include "stdafx.h"
+#include <immintrin.h>
+#include <cstring>
 #include "../xrCore/Stream_Reader.h"
 
 #include "GIFResource.h"
@@ -44,52 +46,57 @@ static const char* get_gif_error_string(GifFileType* gif)
 
 static IC void write_pixel(u8* image, u32 offset, u8 red, u8 green, u8 blue, u8 alpha)
 {
-#if (defined(STATIC_RENDERER_R1) || defined(STATIC_RENDERER_R2))
-    image[offset + 0] = blue;
-    image[offset + 1] = green;
-    image[offset + 2] = red;
-    image[offset + 3] = alpha;
-#else
     image[offset + 0] = red;
     image[offset + 1] = green;
     image[offset + 2] = blue;
     image[offset + 3] = alpha;
-#endif
 }
 
 static IC void copy_gif_image_rect(GifFileType* gif, u8* dstImage, const u8* srcImage,
                                    GifWord top, GifWord left,
                                    GifWord width, GifWord height)
 {
+    const size_t row_bytes = static_cast<size_t>(width) * 4;
+    const bool use_avx2 = row_bytes >= 32;
     for (GifWord y = 0; y < height; ++y)
     {
-        const GifWord canY = top + y;
-        for (GifWord x = 0; x < width; ++x)
+        const size_t offset = (static_cast<size_t>(top + y) * static_cast<size_t>(gif->SWidth) +
+            static_cast<size_t>(left)) * 4;
+        u8* destination = dstImage + offset;
+        const u8* source = srcImage + offset;
+        size_t byte = 0;
+        for (; byte + 32 <= row_bytes; byte += 32)
         {
-            const GifWord canX = left + x;
-            const u32 offset = static_cast<u32>((canY * gif->SWidth + canX) * 4);
-            dstImage[offset + 0] = srcImage[offset + 0];
-            dstImage[offset + 1] = srcImage[offset + 1];
-            dstImage[offset + 2] = srcImage[offset + 2];
-            dstImage[offset + 3] = srcImage[offset + 3];
+            const __m256i value = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source + byte));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(destination + byte), value);
         }
+        if (byte < row_bytes)
+            std::memcpy(destination + byte, source + byte, row_bytes - byte);
     }
+    if (use_avx2)
+        _mm256_zeroupper();
 }
 
 static IC void fill_gif_image_rect(GifFileType* gif, u8* dstImage,
                                    GifWord top, GifWord left, GifWord width, GifWord height,
                                    u8 red, u8 green, u8 blue, u8 alpha)
 {
+    const u32 packed_pixel = static_cast<u32>(red) | static_cast<u32>(green) << 8 |
+        static_cast<u32>(blue) << 16 | static_cast<u32>(alpha) << 24;
+    const __m256i pixels = _mm256_set1_epi32(static_cast<int>(packed_pixel));
+    const bool use_avx2 = width >= 8;
     for (GifWord y = 0; y < height; ++y)
     {
-        const GifWord canY = top + y;
-        for (GifWord x = 0; x < width; ++x)
-        {
-            const GifWord canX = left + x;
-            const u32 offset = static_cast<u32>((canY * gif->SWidth + canX) * 4);
-            write_pixel(dstImage, offset, red, green, blue, alpha);
-        }
+        u32* destination = reinterpret_cast<u32*>(dstImage) +
+            static_cast<size_t>(top + y) * static_cast<size_t>(gif->SWidth) + static_cast<size_t>(left);
+        GifWord x = 0;
+        for (; x + 8 <= width; x += 8)
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(destination + x), pixels);
+        for (; x < width; ++x)
+            destination[x] = packed_pixel;
     }
+    if (use_avx2)
+        _mm256_zeroupper();
 }
 
 static bool decode_gif(GifFileType* gif, u8* tempImage, u8* tempLine,

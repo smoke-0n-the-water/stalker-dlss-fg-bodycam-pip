@@ -162,14 +162,14 @@ bool CStateBurerAttackTele<Object>::check_start_conditions()
 template <typename Object>
 bool CStateBurerAttackTele<Object>::check_completion()
 {
-	float dist = object->EnemyMan.get_enemy()->Position().distance_to(object->Position());
+	const float distance_sqr = object->EnemyMan.get_enemy()->Position().distance_to_sqr(object->Position());
 
-	if (dist < object->m_tele_min_distance)
+	if ((object->m_tele_min_distance >= 0.f) && (distance_sqr < _sqr(object->m_tele_min_distance)))
 	{
 		return true;
 	}
 
-	if (dist > object->m_tele_max_distance)
+	if ((object->m_tele_max_distance < 0.f) || (distance_sqr > _sqr(object->m_tele_max_distance)))
 	{
 		return true;
 	}
@@ -229,27 +229,26 @@ void CStateBurerAttackTele<Object>::FindObjects()
 {
 	u32 res_size = tele_objects.size();
 	tele_objects.clear_and_reserve();
+	const Fvector enemy_position = object->EnemyMan.get_enemy()->Position();
+	const Fvector monster_position = object->Position();
 
 	// получить список объектов вокруг врага
 	m_nearest.clear_not_free();
 	m_nearest.reserve(res_size);
-	FindFreeObjects(m_nearest, object->EnemyMan.get_enemy()->Position());
+	FindFreeObjects(m_nearest, enemy_position);
 
 	// получить список объектов вокруг монстра
-	FindFreeObjects(m_nearest, object->Position());
+	FindFreeObjects(m_nearest, monster_position);
 
 	// получить список объектов между монстром и врагом
-	float dist = object->EnemyMan.get_enemy()->Position().distance_to(object->Position());
-	Fvector dir;
-	dir.sub(object->EnemyMan.get_enemy()->Position(), object->Position());
-	dir.normalize();
-
 	Fvector pos;
-	pos.mad(object->Position(), dir, dist / 2.f);
+	pos.add(enemy_position, monster_position);
+	pos.mul(0.5f);
 	FindFreeObjects(m_nearest, pos);
 
 
 	// оставить уникальные объекты
+	std::sort(tele_objects.begin(), tele_objects.end(), std::less<CPhysicsShellHolder*>());
 	tele_objects.erase(
 		std::unique(
 			tele_objects.begin(),
@@ -383,9 +382,9 @@ bool CStateBurerAttackTele<Object>::CheckTeleStart()
 	if (IsActiveObjects()) return false;
 
 	// проверить дистанцию до врага
-	float dist = object->Position().distance_to(object->EnemyMan.get_enemy()->Position());
-	if (dist < object->m_tele_min_distance) return false;
-	if (dist > object->m_tele_max_distance) return false;
+	const float distance_sqr = object->Position().distance_to_sqr(object->EnemyMan.get_enemy()->Position());
+	if ((object->m_tele_min_distance >= 0.f) && (distance_sqr < _sqr(object->m_tele_min_distance))) return false;
+	if ((object->m_tele_max_distance < 0.f) || (distance_sqr > _sqr(object->m_tele_max_distance))) return false;
 
 	// найти телекинетические объекты
 	FindObjects();
@@ -400,42 +399,19 @@ bool CStateBurerAttackTele<Object>::CheckTeleStart()
 //////////////////////////////////////////////////////////////////////////
 // Выбор подходящих объектов для телекинеза
 //////////////////////////////////////////////////////////////////////////
-class best_object_predicate
-{
-	Fvector enemy_pos;
-	Fvector monster_pos;
-public:
-	best_object_predicate(const Fvector& m_pos, const Fvector& pos)
-	{
-		monster_pos = m_pos;
-		enemy_pos = pos;
-	}
-
-	bool operator()(const CGameObject* tpObject1, const CGameObject* tpObject2) const
-	{
-		float dist1 = monster_pos.distance_to(tpObject1->Position());
-		float dist2 = enemy_pos.distance_to(tpObject2->Position());
-		float dist3 = enemy_pos.distance_to(monster_pos);
-
-		return ((dist1 < dist3) && (dist2 > dist3));
-	};
-};
-
 class best_object_predicate2
 {
 	Fvector enemy_pos;
-	Fvector monster_pos;
 public:
-	best_object_predicate2(const Fvector& m_pos, const Fvector& pos)
+	explicit best_object_predicate2(const Fvector& pos)
 	{
-		monster_pos = m_pos;
 		enemy_pos = pos;
 	}
 
 	bool operator()(const CGameObject* tpObject1, const CGameObject* tpObject2) const
 	{
-		float dist1 = enemy_pos.distance_to(tpObject1->Position());
-		float dist2 = enemy_pos.distance_to(tpObject2->Position());
+		float dist1 = enemy_pos.distance_to_sqr(tpObject1->Position());
+		float dist2 = enemy_pos.distance_to_sqr(tpObject2->Position());
 
 		return dist1 < dist2;
 	}
@@ -446,7 +422,7 @@ template <typename Object>
 void CStateBurerAttackTele<Object>::SelectObjects()
 {
 	std::sort(tele_objects.begin(), tele_objects.end(),
-	          best_object_predicate2(object->Position(), object->EnemyMan.get_enemy()->Position()));
+	          best_object_predicate2(object->EnemyMan.get_enemy()->Position()));
 
 	// выбрать объект
 	for (u32 i = 0; i < tele_objects.size(); ++i)

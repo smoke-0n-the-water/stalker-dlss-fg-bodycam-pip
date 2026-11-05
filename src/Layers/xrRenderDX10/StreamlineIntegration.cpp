@@ -26,27 +26,27 @@ void StreamlineIntegration::Log(const char* message) const
     if (m_logger) m_logger(message);
 }
 
+void StreamlineIntegration::NoteOutOfVram(const char* stage)
+{
+    m_outOfVram = true;
+    if (m_vramWarningLogged) return;
+    m_vramWarningLogged = true;
+    char message[320]{};
+    snprintf(message, sizeof(message), "! [DLSS FG] %s: Streamline is short of video memory (eWarnOutOfVRAM). "
+        "Frame generation stays on while DLSS-G can run and turns off if it cannot; repeats are not logged.", stage);
+    Log(message);
+}
+
 bool StreamlineIntegration::Check(sl::Result result, const char* stage)
 {
     if (result == sl::Result::eOk) return true;
-    // eWarnOutOfVRAM is the only eWarn* value in sl::Result and it is a WARNING:
-    // the call did what it could under memory pressure. Treating it as failure is
-    // what killed the game on 2026-10-23 - slDLSSGSetOptions returned it when
-    // DLSS-G could not fit (15497 MB allocated against a 14535 MB budget), the
-    // recovery SetEnabled(false) returned it again, so FailGeneration escalated
-    // to SubmitFrame -> HW.Present -> R_CHK -> FATAL. Degrade, never die: log it
-    // once and carry on, so frame generation simply declines to turn on.
+    // A warning, not a failure: the call took effect under memory pressure. Failing
+    // here also failed the recovery's own Off request with the same warning, and that
+    // ended the game. If DLSS-G cannot allocate, its post-Present status says so and
+    // AfterPresent turns frame generation off the normal way.
     if (result == sl::Result::eWarnOutOfVRAM)
     {
-        if (!m_vramWarned)
-        {
-            m_vramWarned = true;
-            char warning[256]{};
-            snprintf(warning, sizeof(warning),
-                "! [DLSS FG] %s: out of VRAM. Frame generation may not engage; "
-                "lower the upscaler quality or free texture memory. Not fatal.", stage);
-            Log(warning);
-        }
+        NoteOutOfVram(stage);
         return true;
     }
     m_failureStage = stage;
@@ -309,15 +309,11 @@ bool StreamlineIntegration::AfterPresent(ID3D12Fence** inputFence, UINT64& input
     }
     if (result == sl::Result::eWarnOutOfVRAM)
     {
+        NoteOutOfVram("DLSS-G state");
         if (state.status == static_cast<sl::DLSSGStatus>(~0u) || state.numFramesActuallyPresented == ~0u ||
             state.lastPresentInputsProcessingCompletionFenceValue == ~UINT64(0) ||
             (m_enabled && (!state.inputsProcessingCompletionFence || !state.lastPresentInputsProcessingCompletionFenceValue)))
             return Check(sl::Result::eErrorInvalidState, "DLSS-G VRAM warning without usable state/input fence");
-        if (!m_vramWarningLogged)
-        {
-            Log("[DLSS FG] VRAM pressure warning (eWarnOutOfVRAM); processing returned state and input fence. Further VRAM warnings suppressed.");
-            m_vramWarningLogged = true;
-        }
     }
     else if (!Check(result, "DLSS-G state")) return false;
     ++m_presentNumber;
@@ -389,7 +385,7 @@ void StreamlineIntegration::Shutdown()
     m_initialized = m_deviceReady = m_enabled = false;
     m_optionsSet = false;
     m_failed = false;
-    m_vramWarningLogged = false;
+    m_vramWarningLogged = m_outOfVram = false;
     m_diagnosticPresents = 0;
     m_frame = nullptr;
     m_frameLimitUs = ~0u;

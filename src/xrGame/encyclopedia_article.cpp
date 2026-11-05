@@ -75,21 +75,13 @@ void CEncyclopediaArticle::load_shared(LPCSTR)
 
 	if (ltx)
 	{
-		if (pSettings->line_exist(ltx, "icons_texture"))
-		{
-			LPCSTR icons_texture = pSettings->r_string(ltx, "icons_texture");
-			data()->image.SetShader(InventoryUtilities::GetCustomIconTextureShader(icons_texture));
-		}
+		const InventoryUtilities::InventoryIconDesc icon_desc = InventoryUtilities::GetInventoryIconDesc(ltx);
+		if (icon_desc.texture.size())
+			data()->image.SetShader(InventoryUtilities::GetCustomIconTextureShader(icon_desc.texture.c_str()));
 		else
 			data()->image.SetShader(InventoryUtilities::GetEquipmentIconsShader());
-		
-		Frect tex_rect;
-		tex_rect.x1 = float(pSettings->r_u32(ltx, "inv_grid_x") * INV_GRID_WIDTH);
-		tex_rect.y1 = float(pSettings->r_u32(ltx, "inv_grid_y") * INV_GRID_HEIGHT);
-		tex_rect.x2 = float(pSettings->r_u32(ltx, "inv_grid_width") * INV_GRID_WIDTH);
-		tex_rect.y2 = float(pSettings->r_u32(ltx, "inv_grid_height") * INV_GRID_HEIGHT);
-		tex_rect.rb.add(tex_rect.lt);
-		data()->image.GetUIStaticItem().SetTextureRect(tex_rect);
+
+		data()->image.GetUIStaticItem().SetTextureRect(icon_desc.texture_rect);
 	}
 	else
 	{

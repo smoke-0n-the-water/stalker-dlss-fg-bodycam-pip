@@ -116,8 +116,8 @@ protected:
 
 protected:
 	IC u32 neighbour_index(const Fvector& position, Fvector& center, float distance) const;
-	IC void nearest(const Fvector& position, float radius, xr_vector<_object_type*>& objects, CQuadNode* node,
-	                Fvector center, float distance, int depth) const;
+	IC void nearest(const Fvector& position, float radius, float radius_sqr, xr_vector<_object_type*>& objects,
+	                CQuadNode* node, Fvector center, float distance, int depth) const;
 	IC _object_type* remove(const _object_type* object, CQuadNode*& node, Fvector center, float distance, int depth);
 	IC void all(xr_vector<_object_type*>& objects, CQuadNode* node, int depth) const;
 
@@ -130,6 +130,7 @@ public:
 	IC _object_type* find(const Fvector& position) const;
 	IC void nearest(const Fvector& position, float radius, xr_vector<_object_type*>& objects, bool clear = true) const;
 	IC void all(xr_vector<_object_type*>& objects, bool clear = true) const;
+	IC bool same_leaf(const Fvector& position0, const Fvector& position1) const;
 	IC size_t size() const;
 	IC bool empty() const;
 };

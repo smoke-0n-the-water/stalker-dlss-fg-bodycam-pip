@@ -8,6 +8,8 @@
 
 #include "pch_script.h"
 #include "ai_stalker.h"
+#include "../../../xrCore/job_system.h"
+#include "../../../xrEngine/bone.h"
 #include "../ai_monsters_misc.h"
 #include "../../weapon.h"
 #include "../../hit.h"
@@ -77,6 +79,44 @@ extern int g_AI_inactive_time;
 // Console cvar g_ai_unlimited_ammo gates the stalker infinite-ammo path. Default 1 = vanilla.
 int g_ai_unlimited_ammo = 1;
 
+namespace
+{
+class CStalkerLuaProfile
+{
+public:
+    explicit CStalkerLuaProfile(CAI_Stalker* owner) : m_owner(owner),
+        m_enabled(ai().script_engine().lua_recording() && CPU::qpc_freq),
+        m_stage_started(0), m_stage_name(nullptr)
+    {}
+
+    void begin(LPCSTR name)
+    {
+        if (!m_enabled)
+            return;
+        end();
+        m_stage_name = name;
+        m_stage_started = CPU::QPC();
+    }
+
+    void end()
+    {
+        if (!m_enabled || !m_stage_name)
+            return;
+        ai().script_engine().record_native_profile("ai_schedule", m_stage_name,
+            *m_owner->cName(), static_cast<u32>(m_owner->ID()), CPU::QPC() - m_stage_started);
+        m_stage_name = nullptr;
+    }
+
+    void finish() { end(); }
+
+private:
+    CAI_Stalker* m_owner;
+    bool m_enabled;
+    u64 m_stage_started;
+    LPCSTR m_stage_name;
+};
+}
+
 CAI_Stalker::CAI_Stalker() :
 	m_sniper_update_rate(false),
 	m_sniper_fire_mode(false),
@@ -106,6 +146,8 @@ CAI_Stalker::CAI_Stalker() :
 	m_dbg_hud_draw					= false;
 #endif // DEBUG
 	m_registered_in_combat_on_migration = false;
+	m_best_item_info_update_id = 0;
+	m_best_item_info_cached_update_id = u32(-1);
 
 	m_anomaly_detect_start_time = 0;
 	m_anomaly_detect_suppress_until = 0;
@@ -114,6 +156,9 @@ CAI_Stalker::CAI_Stalker() :
 	savedOrientation.set(0.f, 0.f, 0.f);
 	dTimeFSeen = Device.dwTimeGlobal + 1000;
 	dTimeNfSeen = Device.dwTimeGlobal + 1000;
+	m_look_prepared_frame = u32(-1);
+	m_look_prepared_visible = false;
+	m_look_prepared_actor_head.identity();
 
 #ifdef HOLDERCUSTOM_NEW
 	m_holder = nullptr;
@@ -162,6 +207,8 @@ void CAI_Stalker::reinit()
 	m_best_found_item_to_kill = 0;
 	m_best_found_ammo = 0;
 	m_item_actuality = false;
+	m_best_item_info_update_id = 0;
+	m_best_item_info_cached_update_id = u32(-1);
 	m_sell_info_actuality = false;
 
 	m_ce_close = xr_new<CCoverEvaluatorCloseToEnemy>(&movement().restrictions());
@@ -223,6 +270,7 @@ void CAI_Stalker::reinit()
 
 void CAI_Stalker::LoadSounds(LPCSTR section)
 {
+
 	LPCSTR head_bone_name = pSettings->r_string(section, "bone_head");
 	sound().add(pSettings->r_string(section, "sound_death"), 100, SOUND_TYPE_MONSTER_DYING, 0,
 	            u32(eStalkerSoundMaskDie), eStalkerSoundDie, head_bone_name, xr_new<CStalkerSoundData>(this));
@@ -324,9 +372,8 @@ void CAI_Stalker::reload(LPCSTR section)
 	if (!already_dead())
 		sight().reload(section);
 
-	if (!already_dead())
-		movement().reload(section);
-
+	// CCustomMonster::reload(section) already reloads the same movement manager.
+	// Repeating locations().reload(section) here performs identical config work.
 	m_disp_walk_stand = pSettings->r_float(section, "disp_walk_stand");
 	m_disp_walk_crouch = pSettings->r_float(section, "disp_walk_crouch");
 	m_disp_run_stand = pSettings->r_float(section, "disp_run_stand");
@@ -362,7 +409,6 @@ void CAI_Stalker::reload(LPCSTR section)
 		m_pstl_max_queue_interval_close = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "pstl_max_queue_interval_close",
 		                                                 750);
 
-
 		m_shtg_min_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "shtg_min_queue_size_far", 1);
 		m_shtg_max_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "shtg_max_queue_size_far", 1);
 		m_shtg_min_queue_interval_far = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "shtg_min_queue_interval_far",
@@ -383,7 +429,6 @@ void CAI_Stalker::reload(LPCSTR section)
 		                                                 500);
 		m_shtg_max_queue_interval_close = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "shtg_max_queue_interval_close",
 		                                                 1000);
-
 
 		m_snp_min_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "snp_min_queue_size_far", 1);
 		m_snp_max_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "snp_max_queue_size_far", 1);
@@ -425,7 +470,6 @@ void CAI_Stalker::reload(LPCSTR section)
 		m_mchg_max_queue_interval_close = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "mchg_max_queue_interval_close",
 		                                                 500);
 
-
 		m_auto_min_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "auto_min_queue_size_far", 1);
 		m_auto_max_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "auto_max_queue_size_far", 6);
 		m_auto_min_queue_interval_far =
@@ -446,7 +490,6 @@ void CAI_Stalker::reload(LPCSTR section)
 		                                                 300);
 		m_auto_max_queue_interval_close = READ_IF_EXISTS(pSettings, r_u32, queue_sect, "auto_max_queue_interval_close",
 		                                                 500);
-
 
 		//		m_pstl_queue_fire_dist_close		= READ_IF_EXISTS(pSettings,r_float,queue_sect,"pstl_queue_fire_dist_close", 15.0f);
 		m_pstl_queue_fire_dist_med = READ_IF_EXISTS(pSettings, r_float, queue_sect, "pstl_queue_fire_dist_med", 15.0f);
@@ -487,7 +530,6 @@ void CAI_Stalker::reload(LPCSTR section)
 		m_pstl_max_queue_interval_close = READ_IF_EXISTS(pSettings, r_u32, *cNameSect(),
 		                                                 "pstl_max_queue_interval_close", 750);
 
-
 		m_shtg_min_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, *cNameSect(), "shtg_min_queue_size_far", 1);
 		m_shtg_max_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, *cNameSect(), "shtg_max_queue_size_far", 1);
 		m_shtg_min_queue_interval_far = READ_IF_EXISTS(pSettings, r_u32, *cNameSect(), "shtg_min_queue_interval_far",
@@ -508,7 +550,6 @@ void CAI_Stalker::reload(LPCSTR section)
 		                                                 "shtg_min_queue_interval_close", 500);
 		m_shtg_max_queue_interval_close = READ_IF_EXISTS(pSettings, r_u32, *cNameSect(),
 		                                                 "shtg_max_queue_interval_close", 1000);
-
 
 		m_snp_min_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, *cNameSect(), "snp_min_queue_size_far", 1);
 		m_snp_max_queue_size_far = READ_IF_EXISTS(pSettings, r_u32, *cNameSect(), "snp_max_queue_size_far", 1);
@@ -682,7 +723,6 @@ BOOL CAI_Stalker::net_Spawn(CSE_Abstract* DC)
 	CSE_ALifeHumanStalker* tpHuman = smart_cast<CSE_ALifeHumanStalker*>(e);
 	R_ASSERT(tpHuman);
 
-
 	//static bool first_time			= true;
 	//if ( first_time ) {
 	//	tpHuman->o_Position.z		-= 3.f;
@@ -691,8 +731,21 @@ BOOL CAI_Stalker::net_Spawn(CSE_Abstract* DC)
 
 	m_group_behaviour = !!tpHuman->m_flags.test(CSE_ALifeObject::flGroupBehaviour);
 
-	if (!CObjectHandler::net_Spawn(DC) || !inherited::net_Spawn(DC))
-		return (FALSE);
+	bool object_handler_spawned = false;
+	{
+
+		object_handler_spawned = !!CObjectHandler::net_Spawn(DC);
+	}
+	if (!object_handler_spawned)
+		return FALSE;
+
+	bool inherited_spawned = false;
+	{
+
+		inherited_spawned = !!inherited::net_Spawn(DC);
+	}
+	if (!inherited_spawned)
+		return FALSE;
 
 	set_money(tpHuman->m_dwMoney, false);
 
@@ -702,7 +755,10 @@ BOOL CAI_Stalker::net_Spawn(CSE_Abstract* DC)
 		_start							= Memory.mem_usage();
 #endif // DEBUG_MEMORY_MANAGER
 
+	{
+
 	animation().reload();
+	}
 
 #ifdef DEBUG_MEMORY_MANAGER
 	if (g_bMEMO)
@@ -732,7 +788,6 @@ BOOL CAI_Stalker::net_Spawn(CSE_Abstract* DC)
 	);
 
 	setEnabled(TRUE);
-
 
 	if (!Level().CurrentViewEntity())
 		Level().SetEntity(this);
@@ -768,7 +823,6 @@ BOOL CAI_Stalker::net_Spawn(CSE_Abstract* DC)
 
 	static float novice_rank_dispersion = pSettings->r_float("ranks_properties", "dispersion_novice_k");
 	static float expirienced_rank_dispersion = pSettings->r_float("ranks_properties", "dispersion_experienced_k");
-
 
 	CHARACTER_RANK_VALUE rank = Rank();
 	clamp(rank, 0, 100);
@@ -809,7 +863,10 @@ BOOL CAI_Stalker::net_Spawn(CSE_Abstract* DC)
 	sight().update();
 	Exec_Look(.001f);
 
+	{
+
 	m_pPhysics_support->in_NetSpawn(e);
+	}
 
 	// LookAtActor feature
 	{
@@ -817,6 +874,10 @@ BOOL CAI_Stalker::net_Spawn(CSE_Abstract* DC)
 		if (k)
 		{
 			CBoneInstance* bone_head = &k->LL_GetBoneInstance(k->LL_BoneID("bip01_head"));
+			// LookAtActor only reads state that no thread writes while skeleton workers
+			// run; the two inputs that are not safe to read there are prepared on the main
+			// thread (see prepare_look_at_actor), so the callback may run on a worker.
+			bone_callback_mark_worker_safe(&CAI_Stalker::BoneCallback);
 			bone_head->set_callback(bctCustom, BoneCallback, this);
 		}
 	}
@@ -879,7 +940,6 @@ void CAI_Stalker::net_Export(NET_Packet& P)
 	P.w_u8(u8(g_Squad()));
 	P.w_u8(u8(g_Group()));
 
-
 	float f1 = 0;
 	GameGraph::_GRAPH_ID l_game_vertex_id = ai_location().game_vertex_id();
 	P.w(&l_game_vertex_id, sizeof(l_game_vertex_id));
@@ -890,7 +950,6 @@ void CAI_Stalker::net_Export(NET_Packet& P)
 	{
 		f1 = Position().distance_to(ai().game_graph().vertex(l_game_vertex_id)->level_point());
 		P.w(&f1, sizeof(f1));
-		f1 = Position().distance_to(ai().game_graph().vertex(l_game_vertex_id)->level_point());
 		P.w(&f1, sizeof(f1));
 	}
 	else
@@ -927,7 +986,6 @@ void CAI_Stalker::net_Import(NET_Packet& P)
 	id_Team = P.r_u8();
 	id_Squad = P.r_u8();
 	id_Group = P.r_u8();
-
 
 	GameGraph::_GRAPH_ID graph_vertex_id = movement().game_dest_vertex_id();
 	P.r(&graph_vertex_id, sizeof(GameGraph::_GRAPH_ID));
@@ -1017,10 +1075,12 @@ void CAI_Stalker::UpdateCL()
 
 			if (g_Alive())
 			{
-				if (CObjectHandler::planner().initialized())
-				{
+				// The object-handler planner is also read by animation/render callbacks.
+				// Mutating its vectors while the main thread renders is a data race; keep
+				// the legacy serial update until it can be split into snapshot/commit phases.
+				START_PROFILE("stalker/client_update/object_handler")
 					update_object_handler();
-				}
+				STOP_PROFILE
 
 				if (
 					(movement().speed(character_physics_support()->movement()) > EPS_L)
@@ -1100,9 +1160,13 @@ CPHDestroyable* CAI_Stalker::ph_destroyable()
 
 BOOL NPCsLookAtActor = TRUE;
 float NPCsLookAtActorMinDistance = 3.5f;
+
 void CAI_Stalker::shedule_Update(u32 DT)
 {
 	PROF_EVENT("CAI_Stalker::shedule_Update");
+	++m_best_item_info_update_id;
+	CStalkerLuaProfile lua_profile(this);
+
 	// Optimization update
 //	if (Device.dwFrame % 2) return;
 
@@ -1112,9 +1176,11 @@ void CAI_Stalker::shedule_Update(u32 DT)
 
 			if (!CObjectHandler::planner().initialized())
 			{
+				lua_profile.begin("object_handler_init");
 				START_PROFILE("stalker/client_update/object_handler")
 					update_object_handler();
 				STOP_PROFILE
+				lua_profile.end();
 			}
 			//	if (Position().distance_to(Level().CurrentEntity()->Position()) <= 50.f)
 			//		Msg				("[%6d][SH][%s]",Device.dwTimeGlobal,*cName());
@@ -1133,52 +1199,78 @@ void CAI_Stalker::shedule_Update(u32 DT)
 
 			if (g_Alive())
 			{
+				lua_profile.begin("animation_lua_pre");
 				animation().play_delayed_callbacks();
 
-				::luabind::functor<bool> funct;
-				float distance = Actor()->Position().distance_to(Position());
-				auto luaObject = lua_game_object();
-				if (luaObject && distance < NPCsLookAtActorMinDistance && ai().script_engine().functor("_G.CNPCBeforeLookAtActor", funct))
+				// Most stalkers are outside this very small interaction radius.  Avoid a
+				// square root, Lua object lookup and global namespace traversal for them.
+				// Resolve the callback only after the distance rejection, preserving the
+				// original dynamic lookup semantics used by GAMMA/addon scripts.
+				const float look_distance_sqr = Actor()->Position().distance_to_sqr(Position());
+				const float look_limit_sqr = NPCsLookAtActorMinDistance * NPCsLookAtActorMinDistance;
+				if (look_distance_sqr < look_limit_sqr)
 				{
-					LookAtActorLuaResult = funct(luaObject, distance);
+					::luabind::functor<bool> callback;
+					auto* lua_object = lua_game_object();
+					if (lua_object && ai().script_engine().functor("_G.CNPCBeforeLookAtActor", callback))
+					{
+						const float distance = _sqrt(look_distance_sqr);
+						LookAtActorLuaResult = callback(lua_object, distance);
 				}
+				}
+				lua_profile.end();
 
 #ifndef USE_SCHEDULER_IN_AGENT_MANAGER
+				lua_profile.begin("agent_manager");
 				agent_manager().update();
+				lua_profile.end();
 #endif // USE_SCHEDULER_IN_AGENT_MANAGER
 
 				//		bool			check = !!memory().enemy().selected();
 #if 0//def DEBUG
 		memory().visual().check_visibles();
 #endif
+				// The complete visibility pipeline is not thread-safe. Only its immutable
+				// static LOS prepass is parallelized internally when mt_ai_vision is enabled.
+				lua_profile.begin("vision");
 				START_PROFILE("stalker/schedule_update/vision")
 					Exec_Visibility();
 				STOP_PROFILE
+				lua_profile.end();
 
+				{
+					CScopedLuaRecordPhase memory_total(ai().script_engine(), "ai_schedule", "memory.total",
+						*cName(), static_cast<u32>(ID()));
 				START_PROFILE("stalker/schedule_update/memory")
+						lua_profile.begin("memory.process_enemies");
 					START_PROFILE("stalker/schedule_update/memory/process")
 						process_enemies();
 					STOP_PROFILE
+						lua_profile.end();
 
+						lua_profile.begin("memory.update");
 					START_PROFILE("stalker/schedule_update/memory/update")
 						memory().update(dt);
 					STOP_PROFILE
-
+						lua_profile.end();
 				STOP_PROFILE
 			}
+			}
 
+			lua_profile.begin("inherited");
 			START_PROFILE("stalker/schedule_update/inherited")
 				inherited::inherited::shedule_Update(DT);
 			STOP_PROFILE
+			lua_profile.end();
 
 			if (Remote())
-			{
-			}
+			{}
 			else
 			{
 				// here is monster AI call
 				VERIFY(_valid(Position()));
 				m_fTimeUpdateDelta = dt;
+				lua_profile.begin(GetScriptControl() ? "script_control" : "think_movement");
 				Device.Statistic->AI_Think.Begin();
 				if (GetScriptControl())
 					ProcessScripts();
@@ -1189,12 +1281,14 @@ void CAI_Stalker::shedule_Update(u32 DT)
 					Think();
 				m_dwLastUpdateTime = Device.dwTimeGlobal;
 				Device.Statistic->AI_Think.End();
+				lua_profile.end();
 				VERIFY(_valid(Position()));
 
 				// Look and action streams
 				float temp = conditions().health();
 				if (temp > 0)
 				{
+					lua_profile.begin("feel_touch");
 					START_PROFILE("stalker/schedule_update/feel_touch")
 						Fvector C;
 						float R;
@@ -1202,6 +1296,7 @@ void CAI_Stalker::shedule_Update(u32 DT)
 						R = Radius();
 						feel_touch_update(C, R);
 					STOP_PROFILE
+					lua_profile.end();
 
 					START_PROFILE("stalker/schedule_update/net_update")
 						net_update uNext;
@@ -1228,9 +1323,11 @@ void CAI_Stalker::shedule_Update(u32 DT)
 			}
 			VERIFY(_valid(Position()));
 
+			lua_profile.begin("inventory_owner");
 			START_PROFILE("stalker/schedule_update/inventory_owner")
 				UpdateInventoryOwner(DT);
 			STOP_PROFILE
+			lua_profile.end();
 
 			//#ifdef DEBUG
 			//	if (psAI_Flags.test(aiALife)) {
@@ -1238,13 +1335,16 @@ void CAI_Stalker::shedule_Update(u32 DT)
 			//	}
 			//#endif
 
+			lua_profile.begin("physics");
 			START_PROFILE("stalker/schedule_update/physics")
 				VERIFY(_valid(Position()));
 				m_pPhysics_support->in_shedule_Update(DT);
 				VERIFY(_valid(Position()));
 			STOP_PROFILE
+			lua_profile.end();
 		STOP_PROFILE
 	STOP_PROFILE
+	lua_profile.finish();
 }
 
 float CAI_Stalker::Radius() const
@@ -1265,10 +1365,17 @@ void CAI_Stalker::Think()
 {
 	START_PROFILE("stalker/schedule_update/think")
 		u32 update_delta = Device.dwTimeGlobal - m_dwLastUpdateTime;
+		CScopedLuaRecordPhase total_phase(ai().script_engine(), "ai_think", "stalker.total",
+			*cName(), static_cast<u32>(ID()), update_delta);
 
 		START_PROFILE("stalker/schedule_update/think/brain")
 			try
 			{
+
+			CScopedLuaRecordPhase brain_phase(ai().script_engine(), "ai_think", "stalker.brain",
+				*cName(), static_cast<u32>(ID()), update_delta);
+			//	try {
+			//		try {
 				brain().update(update_delta);
 			}
 			/*catch (::luabind::cast_failed &message) 
@@ -1289,6 +1396,8 @@ void CAI_Stalker::Think()
 			if (!g_Alive())
 				return;
 
+			CScopedLuaRecordPhase movement_phase(ai().script_engine(), "ai_think", "stalker.movement",
+				*cName(), static_cast<u32>(ID()), update_delta);
 			//	try {
 			movement().update(update_delta);
 			//	}
@@ -1380,7 +1489,6 @@ DLL_Pure* CAI_Stalker::_construct()
 	CCustomMonster::_construct();
 	CObjectHandler::_construct();
 	CStepManager::_construct();
-
 
 	m_actor_relation_flags.zero();
 	m_animation_manager = xr_new<CStalkerAnimationManager>(this);
@@ -1566,6 +1674,8 @@ void CAI_Stalker::ResetBoneProtections(LPCSTR imm_sect, LPCSTR bone_sect)
 			? ini->r_string("immunities", "immunities_sect")
 			: (imm_sect ? imm_sect : "stalker_immunities"), pSettings);
 
+	// null when the spawn visual had no bone_protection (see net_Spawn)
+	if (m_boneHitProtection)
 	m_boneHitProtection->reload(
 		(ini && ini->section_exist("bone_protection") && ini->line_exist("bone_protection", "bones_protection_sect"))
 			? ini->r_string("bone_protection", "bones_protection_sect")
@@ -1628,6 +1738,44 @@ void CAI_Stalker::LookAtActorSoftReset(CBoneInstance* headBone)
 	headBone->mTransform.mulB_43(M);
 }
 
+// Main thread, once per queued skeleton right before the worker batch. Mirrors the early
+// outs of LookAtActor(): a stalker that would soft-reset before touching the actor needs no
+// preparation (those outs only read plain state). For the few stalkers inside the
+// interaction radius it resolves the two inputs a worker must not read itself.
+void CAI_Stalker::prepare_look_at_actor()
+{
+	m_look_prepared_frame = u32(-1);
+
+	if (!g_Alive() || wounded() || !NPCsLookAtActor)
+		return;
+
+	CActor* actor = Actor();
+	if (!actor)
+		return;
+
+	if (actor->Position().distance_to(Position()) > NPCsLookAtActorMinDistance)
+		return;
+
+	const bool visible = memory().visual().visible_right_now(actor);
+	m_look_prepared_visible = visible;
+
+	if (visible && LookAtActorLuaResult)
+	{
+		IKinematics* actor_kinematics = smart_cast<IKinematics*>(actor->Visual());
+		if (!actor_kinematics)
+			return;
+		actor_kinematics->Bone_GetAnimPos(m_look_prepared_actor_head, u16(actor->m_head), u8(-1), false);
+		m_look_prepared_actor_head.mulA_43(actor->XFORM());
+	}
+
+	m_look_prepared_frame = Device.dwFrame;
+}
+
+void CAI_Stalker::on_prepare_bones_main()
+{
+	prepare_look_at_actor();
+}
+
 void CAI_Stalker::LookAtActor(CBoneInstance* headBone) {
 	if (!g_Alive()) return;
 	if (!Actor()) return;
@@ -1643,8 +1791,18 @@ void CAI_Stalker::LookAtActor(CBoneInstance* headBone) {
 	if (distance > NPCsLookAtActorMinDistance)
 		return LookAtActorSoftReset(headBone);
 
+	// Inside the skeleton worker batch the two inputs below come from
+	// prepare_look_at_actor(), which ran on the main thread in this same frame. Outside
+	// it (lazy main-thread path) they are read directly, exactly as before. A worker
+	// never reads them itself: visual memory lookups update index caches and the actor
+	// head needs the actor's skeleton lock, which a worker must never block on.
+	const bool prepared = (m_look_prepared_frame == Device.dwFrame);
+	if (!prepared && xr_jobs::is_worker_thread())
+		return LookAtActorSoftReset(headBone);
+
 	// soft reset if can't see actor
-	if (!memory().visual().visible_right_now(Actor()))
+	const bool visible = prepared ? m_look_prepared_visible : memory().visual().visible_right_now(Actor());
+	if (!visible)
 		return LookAtActorSoftReset(headBone);
 
 	// soft reset if lua callback returned false
@@ -1652,8 +1810,15 @@ void CAI_Stalker::LookAtActor(CBoneInstance* headBone) {
 		return LookAtActorSoftReset(headBone);
 
 	Fmatrix actorHead;
+	if (prepared)
+	{
+		actorHead = m_look_prepared_actor_head;
+	}
+	else
+	{
 	smart_cast<IKinematics*>(Actor()->Visual())->Bone_GetAnimPos(actorHead, u16(Actor()->m_head), u8(-1), false);
 	actorHead.mulA_43(Actor()->XFORM());
+	}
 
 	Fmatrix myHead = headBone->mTransform;
 	myHead.mulA_43(XFORM());

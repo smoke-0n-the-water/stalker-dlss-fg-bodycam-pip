@@ -55,6 +55,9 @@ namespace debug { class text_tree; }
 
 class anti_aim_ability;
 
+// Runtime fallback for A/B validation of selective relcase memory refreshes.
+extern int psMonsterRelcaseSelectiveMemory;
+
 class CBaseMonster : public CCustomMonster, public CStepManager
 {
 protected:
@@ -133,6 +136,7 @@ public:
 	virtual float evaluate(const CItemManager* manager, const CGameObject* object) const;
 
 	virtual void OnEvent(NET_Packet& P, u16 type);
+	virtual void OnChangeVisual();
 	virtual void OnHUDDraw(CCustomHUD* hud, IDSGraphManager* DM) { return inherited::OnHUDDraw(hud, DM); }
 	virtual u16 PHGetSyncItemsNumber() { return inherited::PHGetSyncItemsNumber(); }
 	virtual CPHSynchronize* PHGetSyncItem(u16 item) { return inherited::PHGetSyncItem(item); }
@@ -654,6 +658,8 @@ private:
 	pcstr m_head_bone_name;
 	pcstr m_left_eye_bone_name;
 	pcstr m_right_eye_bone_name;
+	u16 m_left_eye_bone_id;
+	u16 m_right_eye_bone_id;
 	shared_str m_section;
 
 public:

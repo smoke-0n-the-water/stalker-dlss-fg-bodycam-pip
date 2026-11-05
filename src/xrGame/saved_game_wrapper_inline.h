@@ -27,3 +27,8 @@ inline const float& CSavedGameWrapper::actor_health() const
 {
 	return (m_actor_health);
 }
+
+inline bool CSavedGameWrapper::valid() const
+{
+	return m_valid;
+}

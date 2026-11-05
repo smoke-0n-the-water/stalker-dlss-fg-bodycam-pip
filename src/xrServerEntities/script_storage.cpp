@@ -7,14 +7,16 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #include "pch_script.h"
+#include "../xrCore/engine_error_logger.h"
 #include "script_storage.h"
 #include "script_thread.h"
 #include "../xrCore/mezz_stringbuffer.h"
+#include <luabind/weak_ref.hpp>
 #include <stdarg.h>
 #include <unordered_map>
 #include <set>
-#include <sstream>
 #include <regex>
+#include <cstring>
 
 #if !defined(DEBUG) && defined(USE_LUAJIT_ONE)
 #	include "opt.lua.h"
@@ -30,6 +32,67 @@ extern "C"
 	int luaopen_marshal(lua_State* L);
 
 }
+
+struct __declspec(align(8)) lua_allocation_tracker
+{
+	lua_Alloc original_allocator = nullptr;
+	void* original_userdata = nullptr;
+	bool installed = false;
+	volatile LONG64 alloc_calls = 0;
+	volatile LONG64 realloc_calls = 0;
+	volatile LONG64 free_calls = 0;
+	volatile LONG64 allocated_bytes = 0;
+	volatile LONG64 freed_bytes = 0;
+};
+
+namespace
+{
+u64 atomic_read_u64(volatile LONG64* value)
+{
+	return static_cast<u64>(InterlockedCompareExchange64(value, 0, 0));
+}
+
+void atomic_add_u64(volatile LONG64* value, const u64 amount)
+{
+	InterlockedAdd64(value, static_cast<LONG64>(amount));
+}
+
+void* lua_tracking_allocator(void* userdata, void* pointer, size_t old_size, size_t new_size)
+{
+	lua_allocation_tracker* tracker = static_cast<lua_allocation_tracker*>(userdata);
+	void* result = tracker->original_allocator(
+		tracker->original_userdata, pointer, old_size, new_size);
+
+	if (!new_size)
+	{
+		if (pointer)
+		{
+			InterlockedIncrement64(&tracker->free_calls);
+			atomic_add_u64(&tracker->freed_bytes, static_cast<u64>(old_size));
+		}
+		return result;
+	}
+
+	if (!result)
+		return result;
+
+	if (!pointer)
+	{
+		InterlockedIncrement64(&tracker->alloc_calls);
+		atomic_add_u64(&tracker->allocated_bytes, static_cast<u64>(new_size));
+		return result;
+	}
+
+	InterlockedIncrement64(&tracker->realloc_calls);
+	if (new_size > old_size)
+		atomic_add_u64(&tracker->allocated_bytes, static_cast<u64>(new_size - old_size));
+	else if (old_size > new_size)
+		atomic_add_u64(&tracker->freed_bytes, static_cast<u64>(old_size - new_size));
+
+	return result;
+}
+}
+
 struct luajit
 {
 	static void open_lib(lua_State* L, pcstr module_name, lua_CFunction function)
@@ -161,26 +224,34 @@ u32 game_lua_memory_usage()
 }
 #endif //!USE_DL_ALLOCATOR
 
-static LPVOID __cdecl luabind_allocator(
+static void* __cdecl luabind_allocator(
 	luabind::memory_allocation_function_parameter const,
-	void const* const pointer,
+	const void* pointer,
 	size_t const size
 )
 {
 	if (!size)
 	{
-		LPVOID non_const_pointer = const_cast<LPVOID>(pointer);
+		void* non_const_pointer = const_cast<void*>(pointer);
 		xr_free(non_const_pointer);
-		return (0);
+		return nullptr;
 	}
 
 	if (!pointer)
 	{
+#ifdef DEBUG
+		return	(Memory.mem_alloc(size, "luabind"));
+#else //!DEBUG
 		return (Memory.mem_alloc(size));
+#endif //-DEBUG
 	}
 
-	LPVOID non_const_pointer = const_cast<LPVOID>(pointer);
+	void* non_const_pointer = const_cast<void*>(pointer);
+#ifdef DEBUG
+	return		(Memory.mem_realloc(non_const_pointer, size, "luabind"));
+#else //!DEBUG
 	return (Memory.mem_realloc(non_const_pointer, size));
+#endif //-DEBUG
 }
 
 void setup_luabind_allocator()
@@ -291,6 +362,13 @@ static void put_function(lua_State* state, u8 const* buffer, u32 const buffer_si
 CScriptStorage::CScriptStorage()
 {
 	m_current_thread = 0;
+	m_allocation_tracker = nullptr;
+
+#ifdef DEBUG
+	m_lua_owner_thread = 0;
+	m_lua_owner_depth = 0;
+	m_lua_owner_scope = nullptr;
+#endif
 
 #ifdef DEBUG
     m_stack_is_ready		= false;
@@ -305,10 +383,121 @@ CScriptStorage::CScriptStorage()
 #endif //-USE_LUA_STUDIO
 }
 
+void CScriptStorage::debug_lua_enter(LPCSTR scope)
+{
+#ifdef DEBUG
+	const LONG thread_id = static_cast<LONG>(GetCurrentThreadId());
+	const LONG owner = InterlockedCompareExchange(&m_lua_owner_thread, thread_id, 0);
+	R_ASSERT2(owner == 0 || owner == thread_id,
+		"Concurrent lua_State access detected: the VM is owned by another thread");
+
+	if (owner == 0)
+		m_lua_owner_scope = scope;
+	InterlockedIncrement(&m_lua_owner_depth);
+#else
+	(void)scope;
+#endif
+}
+
+void CScriptStorage::debug_lua_leave()
+{
+#ifdef DEBUG
+	const LONG thread_id = static_cast<LONG>(GetCurrentThreadId());
+	R_ASSERT2(InterlockedCompareExchange(&m_lua_owner_thread, 0, 0) == thread_id,
+		"lua_State ownership is being released from a non-owner thread");
+
+	const LONG depth = InterlockedDecrement(&m_lua_owner_depth);
+	R_ASSERT2(depth >= 0, "lua_State ownership depth underflow");
+	if (depth == 0)
+	{
+		m_lua_owner_scope = nullptr;
+		InterlockedExchange(&m_lua_owner_thread, 0);
+	}
+#endif
+}
+
+void CScriptStorage::debug_lua_assert_access() const
+{
+#ifdef DEBUG
+	const LONG owner = InterlockedCompareExchange(
+		const_cast<volatile LONG*>(&m_lua_owner_thread), 0, 0);
+	const LONG thread_id = static_cast<LONG>(GetCurrentThreadId());
+	R_ASSERT2(owner == 0 || owner == thread_id,
+		"lua_State was accessed while owned by another thread");
+#endif
+}
+
 CScriptStorage::~CScriptStorage()
 {
+#ifdef DEBUG
+	R_ASSERT2(InterlockedCompareExchange(&m_lua_owner_thread, 0, 0) == 0 &&
+		InterlockedCompareExchange(&m_lua_owner_depth, 0, 0) == 0,
+		"lua_State is still owned while script storage is being destroyed");
+#endif
 	if (m_virtual_machine)
+	{
+		set_lua_allocation_tracking(false);
+		luabind::weak_ref::invalidate(m_virtual_machine);
 		lua_close(m_virtual_machine);
+	}
+
+	xr_delete(m_allocation_tracker);
+}
+
+void CScriptStorage::set_lua_allocation_tracking(const bool enabled)
+{
+	if (!m_virtual_machine)
+		return;
+
+	if (enabled)
+	{
+		if (!m_allocation_tracker)
+			m_allocation_tracker = xr_new<lua_allocation_tracker>();
+
+		if (m_allocation_tracker->installed)
+			return;
+
+		m_allocation_tracker->original_allocator = lua_getallocf(
+			m_virtual_machine, &m_allocation_tracker->original_userdata);
+		if (!m_allocation_tracker->original_allocator)
+			return;
+
+		lua_setallocf(m_virtual_machine, &lua_tracking_allocator, m_allocation_tracker);
+		m_allocation_tracker->installed = true;
+		return;
+	}
+
+	if (!m_allocation_tracker || !m_allocation_tracker->installed)
+		return;
+
+	lua_setallocf(m_virtual_machine, m_allocation_tracker->original_allocator,
+		m_allocation_tracker->original_userdata);
+	m_allocation_tracker->installed = false;
+}
+
+void CScriptStorage::lua_allocation_stats(SLuaAllocationStats& result) const
+{
+	result = SLuaAllocationStats{};
+	if (!m_allocation_tracker)
+		return;
+
+	result.alloc_calls = atomic_read_u64(&m_allocation_tracker->alloc_calls);
+	result.realloc_calls = atomic_read_u64(&m_allocation_tracker->realloc_calls);
+	result.free_calls = atomic_read_u64(&m_allocation_tracker->free_calls);
+	result.allocated_bytes = atomic_read_u64(&m_allocation_tracker->allocated_bytes);
+	result.freed_bytes = atomic_read_u64(&m_allocation_tracker->freed_bytes);
+}
+
+void CScriptStorage::reset_lua_allocation_stats()
+{
+	if (!m_allocation_tracker)
+		return;
+
+	InterlockedExchange64(&m_allocation_tracker->alloc_calls, 0);
+	InterlockedExchange64(&m_allocation_tracker->realloc_calls, 0);
+	InterlockedExchange64(&m_allocation_tracker->free_calls, 0);
+	InterlockedExchange64(&m_allocation_tracker->allocated_bytes, 0);
+	InterlockedExchange64(&m_allocation_tracker->freed_bytes, 0);
 }
 
 extern int luaopen_lua_extensions(lua_State* L, bool IsDebug = false);
@@ -354,6 +543,7 @@ bool LoadKernelScriptToGlobal(lua_State* L, const char* name)
 		if (luaL_loadbuffer(L, (const char*)l_tpFileReader->pointer(), l_tpFileReader->length(), NameSpace))
 		{
 			lua_settop(L, start);
+			FS.r_close(l_tpFileReader);
 			return false;
 		}
 		else
@@ -366,6 +556,7 @@ bool LoadKernelScriptToGlobal(lua_State* L, const char* name)
 				g_pScriptEngine->print_output(L, name, l_iErrorCode);
 #endif
 				lua_settop(L, start);
+				FS.r_close(l_tpFileReader);
 				return false;
 			}
 		}
@@ -381,17 +572,32 @@ bool LoadKernelScriptToGlobal(lua_State* L, const char* name)
 	return true;
 };
 
+namespace
+{
+lua_State* g_logged_vm = nullptr; // read by fatal/crash records on the VM thread
+void write_lua_stack(char* output, size_t capacity);
+}
+
 BOOL lua_debug = FALSE;
-
-#ifdef USE_LUA_FUNCTOR_CACHE
+// upstream MT functor cache toggle (console: lua_use_functor_cache)
 BOOL lua_use_functor_cache = FALSE;
-#endif
-
 void CScriptStorage::reinit()
 {
+#ifdef DEBUG
+	R_ASSERT2(InterlockedCompareExchange(&m_lua_owner_thread, 0, 0) == 0 &&
+		InterlockedCompareExchange(&m_lua_owner_depth, 0, 0) == 0,
+		"lua_State is still owned while the script VM is being recreated");
+#endif
 	if (m_virtual_machine)
+	{
+		g_logged_vm = nullptr;
+		set_lua_allocation_tracking(false);
+		luabind::weak_ref::invalidate(m_virtual_machine);
 		lua_close(m_virtual_machine);
-	
+	}
+
+	xr_delete(m_allocation_tracker);
+
 #ifdef USE_GSC_MEM_ALLOC
     m_virtual_machine = lua_newstate(lua_alloc, NULL);
 #else
@@ -403,11 +609,25 @@ void CScriptStorage::reinit()
 		Msg("! ERROR : Cannot initialize script virtual machine!");
 		return;
 	}
+	g_logged_vm = m_virtual_machine;
+	EngineErrorLogger::SetLuaStackWriter(&write_lua_stack);
 
+	// Grow the main VM stack once during initialization instead of paying for a
+	// relocation/copy in the middle of a deep C++ -> Lua callback chain.
+	if (!lua_checkstack(m_virtual_machine, 256))
+		Msg("! Lua: failed to reserve main VM stack headroom");
+
+	// Configure the JIT cache through a direct LuaJIT API so this works for both
+	// split-library and USE_LUAJIT_ONE builds. The command-line switch is a true
+	// A/B path back to the original LuaJIT 2.0 cache values.
+	if (strstr(Core.Params, "-lua_jit_default_cache"))
+		luaJIT_setjitcache(lua(), 1000u, 64u, 512u);
+	else
+		luaJIT_setjitcache(lua(), 4096u, 256u, 16384u);
 
 #ifndef USE_LUAJIT_ONE
 	luaL_openlibs(lua());
-	if (Core.ParamsData.test(ECoreParams::nojit))
+	if (strstr(Core.Params, "-nojit"))
 		luaJIT_setmode(lua(), 0, LUAJIT_MODE_ENGINE | LUAJIT_MODE_OFF);
 #else // USE_LUAJIT_ONE
     // initialize lua standard library functions    
@@ -427,21 +647,30 @@ void CScriptStorage::reinit()
     luajit::open_lib(lua(), LUA_DBLIBNAME, luaopen_debug);
 #else //!DEBUG
 
-    if (Core.isDebug())
+    if (strstr(Core.Params, "-dbg"))
         luajit::open_lib(lua(), LUA_DBLIBNAME, luaopen_debug);
 #endif //-DEBUG
 
-	if (!Core.ParamsData.test(ECoreParams::nojit))
+	if (!strstr(Core.Params, "-nojit"))
 	{
 		luajit::open_lib(lua(), LUA_JITLIBNAME, luaopen_jit);
 #ifndef DEBUG
 		put_function(lua(), opt_lua_binary, sizeof(opt_lua_binary), "jit.opt");
 		put_function(lua(), opt_inline_lua_binary, sizeof(opt_lua_binary), "jit.opt_inline");
-		dojitopt(lua(), "2");
+		dojitopt(lua(), "3");
 #endif //!DEBUG
 	}
 
 #endif //!USE_LUAJIT_ONE
+
+	// Keep LuaJIT's upstream 200% post-cycle pause. A 150% pause starts the next
+	// major cycle after only 50% heap growth; in userdata-heavy GAMMA sessions that
+	// repeatedly brings the indivisible atomic phase onto the frame path every
+	// 2-3 seconds. The device scheduler still starts useful high-yield cycles
+	// earlier and the low-address pool guard handles real memory pressure.
+	lua_gc(lua(), LUA_GCSETPAUSE, 200);
+	lua_gc(lua(), LUA_GCSETSTEPMUL, 200);
+
 	bool isDebugEnabled = lua_debug;
 	luaopen_lua_extensions(lua(), isDebugEnabled);
 	disable_os_funcs(lua());
@@ -463,8 +692,8 @@ void CScriptStorage::reinit()
 			LoadKernelScriptToGlobal(lua(), "LuaPanda.lua");
 		}
 	}
-	
-	if (Core.ParamsData.test(ECoreParams::_g))
+
+	if (strstr(Core.Params, "-_g"))
 		file_header = file_header_new; //AVO: I get fatal crash at the start if this is used
 	else
 		file_header = file_header_old;
@@ -500,10 +729,10 @@ int CScriptStorage::vscript_log(ScriptStorage::ELuaMessageType tLuaMessageType, 
 	//return		(0);
 	//#else //PRINT_CALL_STACK
 #   ifndef NO_XRGAME_SCRIPT_ENGINE
-	//AVO: allow LUA debug prints (i.e.: ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError, make_string("CWeapon [%s]: cannot access class member Weapon_IsScopeAttached!", object().cNameSect().c_str()).c_str());)
+	//AVO: allow LUA debug prints (i.e.: ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError, "CWeapon : cannot access class member Weapon_IsScopeAttached!");)
 #       ifndef DEBUG
 
-	if (!Core.isDebug())
+	if (!strstr(Core.Params, "-dbg"))
 		return (0);
 #       endif //!DEBUG
 #       ifndef LUA_DEBUG_PRINT
@@ -711,7 +940,7 @@ bool CScriptStorage::parse_namespace(LPCSTR caNamespaceName, LPSTR b, u32 const 
 }
 
 bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LPCSTR caScriptName,
-                                 LPCSTR caNameSpaceName)
+                                 LPCSTR caNameSpaceName, bool recoveredModuleLoad)
 {
 	int l_iErrorCode;
 	if (caNameSpaceName && xr_strcmp("_G", caNameSpaceName))
@@ -776,45 +1005,32 @@ bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LP
 
 	if (l_iErrorCode)
 	{
-//#ifdef DEBUG
-		if (Core.isDebug()) print_output(L,caScriptName,l_iErrorCode);
-//#endif //-DEBUG
+		// Always: without the reason a broken mod script fails silently.
+		print_output(L,caScriptName,l_iErrorCode,recoveredModuleLoad);
 		on_error(L);
 		return (false);
 	}
 	return (true);
 }
 
-xr_unordered_map<xr_string, xr_set<xr_string>> unlocalizers;
+xr_unordered_map<std::string, std::set<std::string>> unlocalizers;
 bool unlocalizerPassed = false;
 
-static xr_string join_list(const xr_vector<xr_string>& items_vec, xr_string delim = "\n") {
-	xr_string ret;
-	for (const auto& i : items_vec) {
-		if (!ret.empty()) {
-			ret += delim;
-		}
-		ret += i;
-	}
-	return ret;
-};
-
-static bool unlocalRegex(xr_set<xr_string>& unlocals, xr_string& s, const std::regex& pattern, const int group, const xr_string& replacement) {
-	if (std::regex_match(s, pattern)) {
-		//Msg("matching local function pattern");
-		std::smatch match;
-		std::regex_search(s, match, pattern);
-		xr_string variable = std::string(match[group]).c_str();
-		if (unlocals.find(variable) != unlocals.end()) {
-			Msg("[unlocalRegex] found variable %s to unlocal", variable.c_str());
-			s = std::regex_replace(s, pattern, replacement);
-			return true;
-		}
-	} else {
+static bool unlocalRegex(const std::set<std::string>& unlocals, std::string& s, const std::regex& pattern,
+	const int group, const std::string& replacement)
+{
+	std::smatch match;
+	if (!std::regex_match(s, match, pattern))
 		return false;
-	}
-	return false;
-};
+
+	const std::string variable = match[group].str();
+	if (unlocals.find(variable) == unlocals.end())
+		return false;
+
+	Msg("[unlocalRegex] found variable %s to unlocal", variable.c_str());
+	s = std::regex_replace(s, pattern, replacement);
+	return true;
+}
 
 bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 {
@@ -853,7 +1069,8 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 				sections_type::const_iterator e = sections.end();
 				for (; i != e; ++i)
 				{
-					auto sectionName = xr_string((*i).Name.c_str()).ToLowerCase();
+					auto sectionName = std::string((*i).Name.c_str());
+					toLowerCase(sectionName);
 					if (unlocalizers.find(sectionName) == unlocalizers.end()) {
 
 						// construct set that contains top level variables to delocalize by section name
@@ -862,7 +1079,7 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 					}
 					auto& data = (*i).Data;
 					for (auto& item : data) {
-						unlocalizers[sectionName].insert(xr_string(item.first.c_str()));
+						unlocalizers[sectionName].insert(std::string(item.first.c_str()));
 						Msg("adding variable %s for unlocalizer for script %s", item.first.c_str(), sectionName.c_str());
 					}
 				}
@@ -882,123 +1099,103 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 		return (false);
 	}
 
-	// Unlocalize variables in the script defined by unlocalizers map
+	// Unlocalize variables in the script defined by unlocalizers map. Process the
+	// source in one pass: the old path simultaneously retained the source reader,
+	// a full temporary copy, stringstream storage, every line as a separate string
+	// and the final rewritten script.
 	auto scriptContents = static_cast<LPCSTR>(l_tpFileReader->pointer());
 	auto scriptLength = (size_t)l_tpFileReader->length();
 	bool unlocalPerformed = false;
-	xr_string unlocalizerResult;
-	xr_string loweredNameSpaceName = caNameSpaceName;
-	loweredNameSpaceName = loweredNameSpaceName.ToLowerCase();
-	if (unlocalizers.find(loweredNameSpaceName) != unlocalizers.end()) {
+	std::string unlocalizerResult;
+	std::string loweredNameSpaceName = caNameSpaceName;
+	toLowerCase(loweredNameSpaceName);
+
+	const auto unlocalizerIt = unlocalizers.find(loweredNameSpaceName);
+	if (unlocalizerIt != unlocalizers.end())
+	{
 		Msg("found script %s in unlocalizers data", caNameSpaceName);
 
-		// Get contents of the script file and split by lines
-		xr_vector<xr_string> tokens;
-		xr_string temp;
-		while (!l_tpFileReader->eof())
+		static const std::regex localFunctionPattern(
+			R"((^local)([\t ]+)(function)([\t ]+)([_a-zA-Z].*)([\t ]*)(\(.*$))");
+		static const std::regex localDeclarationPattern(R"((^local)([\t ]+)(.*))");
+		static const std::regex stripCommentPattern(R"((.*)--.*)");
+		static const std::regex preserveCommentPattern(R"((.*)(--.*))");
+
+		const auto& unlocals = unlocalizerIt->second;
+		unlocalizerResult.reserve(scriptLength);
+
+		const char* cursor = scriptContents;
+		const char* const sourceEnd = scriptContents + scriptLength;
+		while (cursor < sourceEnd)
 		{
-			char c = l_tpFileReader->r_u8();
-			temp += c;
-		}
+			const void* newlinePtr = std::memchr(cursor, '\n', static_cast<size_t>(sourceEnd - cursor));
+			const char* lineEnd = newlinePtr ? static_cast<const char*>(newlinePtr) : sourceEnd;
+			std::string line(cursor, static_cast<size_t>(lineEnd - cursor));
+			cursor = lineEnd < sourceEnd ? lineEnd + 1 : sourceEnd;
 
-		std::stringstream stringStream(std::string(temp.c_str()));
-		xr_string line;
-		tokens.clear();
-		while (std::getline(stringStream, line)) {
-			tokens.push_back(line);
-		}
+			trim(line, "\n\r");
 
-		// Iterate lines and unlocalize variables
-		auto& unlocals = unlocalizers[loweredNameSpaceName];
-
-		/*for (auto& u : unlocals) {
-			Msg("%s", u);
-		}*/
-
-		for (auto& s : tokens) {
-
-			//Msg("%s", s.c_str());
-
-			trim(s, "\n\r");
-			if (s.empty()) {
-				continue;
-			}
-
-			std::regex pattern;
-
-			//local function x(a,b,c)
-			pattern = std::regex(R"((^local)([\t ]+)(function)([\t ]+)([_a-zA-Z].*)([\t ]*)(\(.*$))");
-			if (unlocalRegex(unlocals, s, pattern, 5, "$3$4$5$6$7")) {
+			bool localFunctionHandled = false;
+			if (!line.empty() && unlocalRegex(unlocals, line, localFunctionPattern, 5, "$3$4$5$6$7"))
+			{
 				unlocalPerformed = true;
-				continue;
+				localFunctionHandled = true;
 			}
 
-			//local a = ...
-			//local a
-			//local a,b,c = ... (if one of a,b,c is in unlocalizers list - all of them will be unlocalized)
-			//local x; local y; - unsupported yet
-			pattern = std::regex(R"((^local)([\t ]+)(.*))");
-			if (std::regex_match(s, pattern)) {
-				std::smatch match;
-				std::regex_search(s, match, pattern);
-				xr_string m = std::string(match[3]).c_str();
+			if (!line.empty() && !localFunctionHandled)
+			{
+				std::smatch declarationMatch;
+				if (std::regex_match(line, declarationMatch, localDeclarationPattern))
+				{
+					std::string declaration = declarationMatch[3].str();
 
-				// strip comments
-				std::regex r = std::regex(R"((.*)--.*)");
-				if (std::regex_match(m, r)) {
-					//Msg("found comments\n");
-					std::smatch noncomments;
-					std::regex_search(m, noncomments, r);
-					m = std::string(noncomments[1]).c_str();
-				}
+					std::smatch commentMatch;
+					if (std::regex_match(declaration, commentMatch, stripCommentPattern))
+						declaration = commentMatch[1].str();
 
-				auto variablesAndValues = m.SplitStringLimit("=", 1);
-				bool hasValue = variablesAndValues.size() > 1;
-				auto variables = variablesAndValues[0].SplitStringMulti(",");
-				for (auto v : variables) {
-					trim(v);
-					//Msg("%s\n", v.c_str());
-					if (unlocals.find(v) != unlocals.end()) {
+					auto variablesAndValues = splitStringLimit(declaration, "=", 1);
+					const bool hasValue = variablesAndValues.size() > 1;
+					auto variables = splitStringMulti(variablesAndValues[0], ",");
+					for (auto& variable : variables)
+					{
+						trim(variable);
+						if (unlocals.find(variable) == unlocals.end())
+							continue;
+
 						unlocalPerformed = true;
-						Msg("found variable %s to unlocal", v.c_str());
-						s = std::regex_replace(s, pattern, "$3");
-						if (!hasValue) {
+						Msg("found variable %s to unlocal", variable.c_str());
+						line = declarationMatch[3].str();
 
-							// strip comments
-							std::regex r = std::regex(R"((.*)(--.*))");
-							if (std::regex_match(s, r)) {
-								//Msg("found comments\n");
-								std::smatch noncomments;
-								std::regex_search(s, noncomments, r);
-								s = xr_string((std::string(noncomments[1]) + "= nil " + std::string(noncomments[2])).c_str());
-							} else {
-								s += " = nil";
-							}
+						if (!hasValue)
+						{
+							std::smatch preservedComment;
+							if (std::regex_match(line, preservedComment, preserveCommentPattern))
+								line = preservedComment[1].str() + "= nil " + preservedComment[2].str();
+							else
+								line += " = nil";
 						}
 						break;
 					}
 				}
 			}
+
+			if (!unlocalizerResult.empty())
+				unlocalizerResult.push_back('\n');
+			unlocalizerResult += line;
 		}
 
-		// Store result back
-		/*for (auto& s : tokens) {
-			Msg("%s", s.c_str());
-		}*/
-
-		unlocalizerResult = join_list(tokens);
 		scriptContents = unlocalizerResult.c_str();
-		scriptLength = strlen(scriptContents);
+		scriptLength = unlocalizerResult.size();
 	}
 
 	strconcat(sizeof(l_caLuaFileName), l_caLuaFileName, "@", caScriptName);
 
 	bool bufferLoaded = false;
 	if (unlocalPerformed) {
-		bufferLoaded = load_buffer(lua(), scriptContents, scriptLength, l_caLuaFileName, caNameSpaceName);
+		bufferLoaded = load_buffer(lua(), scriptContents, scriptLength, l_caLuaFileName, caNameSpaceName, true);
 	} else {
 		l_tpFileReader->rewind();
-		bufferLoaded = load_buffer(lua(), static_cast<LPCSTR>(l_tpFileReader->pointer()), (size_t)l_tpFileReader->length(), l_caLuaFileName, caNameSpaceName);
+		bufferLoaded = load_buffer(lua(), static_cast<LPCSTR>(l_tpFileReader->pointer()), (size_t)l_tpFileReader->length(), l_caLuaFileName, caNameSpaceName, true);
 	}
 
 	if (!bufferLoaded)
@@ -1038,9 +1235,7 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 #endif // #ifdef USE_DEBUGGER
 	if (l_iErrorCode)
 	{
-//#ifdef DEBUG
-		if (Core.isDebug()) print_output(lua(),caScriptName,l_iErrorCode);
-//#endif
+		print_output(lua(),caScriptName,l_iErrorCode,true);
 		on_error(lua());
 		lua_settop(lua(), start);
 		return (false);
@@ -1123,19 +1318,26 @@ bool CScriptStorage::namespace_loaded(LPCSTR N, bool remove_from_stack)
 bool CScriptStorage::object(LPCSTR identifier, int type)
 {
 	int start = lua_gettop(lua());
+	// Probe the live namespace by its string key. Optional callbacks can be
+	// queried for every released inventory item; enumerating _G on each miss
+	// makes their cost depend on the number of unrelated script globals.
+	// Raw access keeps this check free of __index side effects and value caches.
+	lua_pushstring(lua(), identifier);
+	// The legacy scan also accepted stringified numeric keys. Keep that path,
+	// including locales whose decimal separator Lua's scanner does not accept.
+	const char first = identifier[0];
+	const bool numeric_identifier = (first >= '0' && first <= '9') ||
+		first == '-' || lua_isnumber(lua(), -1) != 0;
+	lua_rawget(lua(), -2);
+	const bool found = type != LUA_TNIL && lua_type(lua(), -1) == type;
+	if (found || !numeric_identifier)
+	{
+		lua_pop(lua(), 2);
+		VERIFY(lua_gettop(lua()) == start - 1);
+		return found;
+	}
+	lua_pop(lua(), 1);
 
-   	// Direct lookup instead of iterating the whole table
-   	if (lua_istable(lua(), -1))
-   	{
-   		lua_pushstring(lua(), identifier);
-   		lua_rawget(lua(), -2);
-   		const bool found = (lua_type(lua(), -1) == type);
-   		lua_pop(lua(), 2);
-   		VERIFY(lua_gettop(lua()) == start - 1);
-   		return (found);
-   	}    
-
-    //Original behavior
 	lua_pushnil(lua());
 	while (lua_next(lua(), -2))
 	{
@@ -1206,7 +1408,7 @@ struct raii_guard : private xray::noncopyable
 #endif //-DEBUG
 		{
 #ifdef DEBUG
-            static bool const break_on_assert	= Core.ParamsData.test(ECoreParams::break_on_assert);
+            static bool const break_on_assert	= !!strstr(Core.Params,"-break_on_assert");
 #else //!DEBUG
 			static bool const break_on_assert = false; //Alundaio: Can't get a proper stack trace with this enabled
 #endif //-DEBUG
@@ -1221,10 +1423,78 @@ struct raii_guard : private xray::noncopyable
 	}
 }; //-struct raii_guard
 
-bool CScriptStorage::print_output(lua_State* L, LPCSTR caScriptFileName, int iErorCode)
+namespace
 {
-	if (iErorCode)
-		print_error(L, iErorCode);
+// Read debug metadata only. No locals, values, Lua allocations or script hooks.
+size_t collect_lua_frames(lua_State* state, char* output, size_t capacity)
+{
+    size_t used = 0;
+    for (int index = 0; index < 32 && used + 1 < capacity; ++index)
+    {
+        lua_Debug frame = {};
+        if (!lua_getstack(state, index, &frame)) break;
+        if (!lua_getinfo(state, "nSl", &frame)) continue;
+        const char* source = "<dynamic chunk>";
+        if (frame.what && !strcmp(frame.what, "C")) source = "<native Lua binding>";
+        else if (frame.source && frame.source[0] == '@') source = frame.source + 1;
+        else if (frame.source)
+        {
+            // X-Ray also names chunks by a module/namespace without '@'. Keep
+            // such identifiers, but never dump arbitrary Lua source text.
+            bool identifier = frame.source[0] != 0;
+            size_t length = 0;
+            for (const char* c = frame.source; *c && identifier; ++c)
+            {
+                if (++length > 160 || !((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+                    (*c >= '0' && *c <= '9') || *c == '_' || *c == '.')) identifier = false;
+            }
+            if (identifier) source = frame.source;
+        }
+        const int written = _snprintf_s(output + used, capacity - used, _TRUNCATE,
+            "  #%02d %s:%d (%s)\r\n", index, source, frame.currentline,
+            frame.name ? frame.name : "<anonymous>");
+        if (written < 0) { used = strlen(output); break; }
+        used += static_cast<size_t>(written);
+    }
+    return used;
+}
+
+// Called before the protected-call error value is popped by its original caller.
+void collect_lua_error_trace(lua_State* state, int status, char* output, size_t capacity)
+{
+    if (!capacity) return;
+    output[0] = 0;
+    if (status == LUA_ERRMEM)
+        strncpy_s(output, capacity, "Lua traceback skipped for memory-allocation failure", _TRUNCATE);
+    else if (!collect_lua_frames(state, output, capacity))
+        strncpy_s(output, capacity,
+            "Lua frames unavailable after protected-call unwind; consult error message/chunk", _TRUNCATE);
+}
+
+void write_lua_stack(char* output, size_t capacity)
+{
+    output[0] = 0;
+    if (g_logged_vm)
+        collect_lua_frames(g_logged_vm, output, capacity);
+}
+}
+
+bool CScriptStorage::print_output(lua_State* L, LPCSTR caScriptFileName, int iErorCode, bool recoveredModuleLoad,
+    bool fatalFollows)
+{
+    const char* message = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : nullptr;
+    // The Debug.fatal record that follows already carries the message and the Lua stack.
+    if (!fatalFollows && EngineErrorLogger::IsEnabled() &&
+        EngineErrorLogger::ShouldReportScriptFailure(iErorCode, recoveredModuleLoad, message))
+    {
+        char traceback[8192] = {};
+        collect_lua_error_trace(L, iErorCode, traceback, sizeof(traceback));
+        EngineErrorLogger::ReportScriptFailure(iErorCode, caScriptFileName,
+            message, traceback,
+            __FILE__, __LINE__, __FUNCTION__, recoveredModuleLoad);
+    }
+    if (iErorCode)
+        print_error(L, iErorCode);
 
 	LPCSTR S = "see call_stack for details!";
 

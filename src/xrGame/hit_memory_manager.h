@@ -43,6 +43,8 @@ private:
 	CCustomMonster* m_object;
 	CAI_Stalker* m_stalker;
 	HITS* m_hits;
+	typedef xr_unordered_flat_map<u16, u32> OBJECT_INDEX_CACHE;
+	mutable OBJECT_INDEX_CACHE m_object_indices;
 	DELAYED_HIT_OBJECTS m_delayed_objects;
 	u32 m_max_hit_count;
 #ifdef USE_SELECTED_HIT
@@ -71,6 +73,7 @@ public:
 	IC		const CHitObject	*hit				() const;
 #endif
 	const CHitObject* hit(const CEntityAlive* object) const;
+	const CHitObject* object_by_id(u16 id) const;
 	IC void set_squad_objects(HITS* squad_objects);
 	IC const ALife::_OBJECT_ID& last_hit_object_id() const;
 	IC u32 const& last_hit_time() const;
@@ -85,6 +88,7 @@ public:
 	void on_requested_spawn(CObject* object);
 
 private:
+	u32 object_index(u16 id) const;
 	void clear_delayed_objects();
 };
 

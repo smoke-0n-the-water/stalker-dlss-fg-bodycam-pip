@@ -72,6 +72,21 @@ static float const min_throw_distance = 10.f;
 float g_dispersion_base = 1.0f;
 float g_dispersion_factor = 1.0f;
 
+namespace
+{
+const ::luabind::functor<float>* stalker_weapon_accuracy_callback()
+{
+	static cached_script_functor<float> callback_cache("_g.CAI_Stalker__GetWeaponAccuracy");
+	return callback_cache.get(ai().script_engine());
+}
+
+const ::luabind::functor<CScriptGameObject*>* update_best_weapon_callback()
+{
+	static cached_script_functor<CScriptGameObject*> callback_cache("_g.update_best_weapon");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 float CAI_Stalker::GetWeaponAccuracy() const
 {
 	float base = PI / 180.f;
@@ -133,10 +148,9 @@ float CAI_Stalker::GetWeaponAccuracy() const
 			base *= (m_disp_run_stand * g_dispersion_factor + g_dispersion_base); // fallback to worst aim if state could not determined, this should never happen (tm)
 	}
 
-	::luabind::functor<float> func;
-	if (ai().script_engine().functor("_g.CAI_Stalker__GetWeaponAccuracy", func))
+	if (const auto* func = stalker_weapon_accuracy_callback())
 	{
-		base = func(lua_game_object(), W ? W->lua_game_object() : nullptr, base, movement().body_state(), movement().movement_type());
+		base = (*func)(lua_game_object(), W ? W->lua_game_object() : nullptr, base, movement().body_state(), movement().movement_type());
 	}
 
 	return base;
@@ -483,21 +497,28 @@ void CAI_Stalker::update_best_item_info()
 	if (m_bTrading || !m_can_select_weapon)
 		return;
 
+	if (m_item_actuality && (m_best_item_info_cached_update_id == m_best_item_info_update_id))
+		return;
+
 	update_best_item_info_impl();
+	m_best_item_info_cached_update_id = m_best_item_info_update_id;
 }
 
 void CAI_Stalker::update_best_item_info_impl()
 {
-	::luabind::functor<CScriptGameObject*> funct;
-	if (ai().script_engine().functor("_g.update_best_weapon", funct))
+	if (const auto* funct = update_best_weapon_callback())
 	{
 		CGameObject* cur_itm = smart_cast<CGameObject*>(m_best_item_to_kill);
-		CScriptGameObject* GO = funct(this->lua_game_object(), cur_itm ? cur_itm->lua_game_object() : NULL);
+		CScriptGameObject* GO = (*funct)(this->lua_game_object(), cur_itm ? cur_itm->lua_game_object() : NULL);
 		CInventoryItem* bw = GO ? smart_cast<CInventoryItem*>(&GO->object()) : NULL;
 		if (bw)
 		{
+			m_item_actuality = true;
 			m_best_item_to_kill = bw;
+			m_best_item_value = 0.f;
 			m_best_ammo = bw;
+			m_best_found_item_to_kill = 0;
+			m_best_found_ammo = 0;
 			return;
 		}
 	}
@@ -806,16 +827,12 @@ void CAI_Stalker::can_kill_entity_from(const Fvector& position, Fvector directio
 
 IC float CAI_Stalker::start_pick_distance() const
 {
-	float result = 50.f;
-	if (!memory().enemy().selected())
+	const float result = 50.f;
+	const CEntityAlive* enemy = memory().enemy().selected();
+	if (!enemy)
 		return (result);
 
-	return (
-		_max(
-			result,
-			memory().enemy().selected()->Position().distance_to(Position()) + 1.f
-		)
-	);
+	return (_max(result, enemy->Position().distance_to(Position()) + 1.f));
 }
 
 float CAI_Stalker::pick_distance()
@@ -921,13 +938,17 @@ bool CAI_Stalker::fire_make_sense()
 	if (!enemy)
 		return (false);
 
-	if ((pick_distance() + g_ai_fire_range_extension) < Position().distance_to(enemy->Position()))
+	const Fvector& object_position = Position();
+	const Fvector& enemy_position = enemy->Position();
+	const float current_pick_distance = pick_distance();
+
+	if ((current_pick_distance + g_ai_fire_range_extension) < object_position.distance_to(enemy_position))
 		return (false);
 
-	if (_abs(Position().y - enemy->Position().y) > g_ai_fire_max_height_diff)
+	if (_abs(object_position.y - enemy_position.y) > g_ai_fire_max_height_diff)
 		return (false);
 
-	if (pick_distance() < g_ai_fire_min_dist)
+	if (current_pick_distance < g_ai_fire_min_dist)
 		return (false);
 
 	if (memory().visual().visible_right_now(enemy))

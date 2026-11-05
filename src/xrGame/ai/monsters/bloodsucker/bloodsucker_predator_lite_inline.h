@@ -104,8 +104,9 @@ void CStateBloodsuckerPredatorLiteAbstract::critical_finalize()
 TEMPLATE_SPECIALIZATION
 bool CStateBloodsuckerPredatorLiteAbstract::check_completion()
 {
-	if (object->EnemyMan.see_enemy_now() && (object->Position().distance_to(object->EnemyMan.get_enemy()->Position()) <
-		4.f))
+	const CEntityAlive* enemy = object->EnemyMan.get_enemy();
+	if (enemy && object->EnemyMan.see_enemy_now() &&
+		object->Position().distance_to_sqr(enemy->Position()) < _sqr(4.f))
 	{
 		object->set_berserk();
 		return true;
@@ -195,8 +196,8 @@ void CStateBloodsuckerPredatorLiteAbstract::check_force_state()
 	{
 		if (object->HitMemory.get_last_hit_time() > time_state_started)
 		{
-			if (object->EnemyMan.get_enemy() &&
-				(object->EnemyMan.get_enemy()->Position().distance_to(object->Position()) < 10.f))
+			const CEntityAlive* enemy = object->EnemyMan.get_enemy();
+			if (enemy && enemy->Position().distance_to_sqr(object->Position()) < _sqr(10.f))
 			{
 				object->set_berserk();
 			}

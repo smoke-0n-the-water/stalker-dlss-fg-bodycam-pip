@@ -217,6 +217,21 @@ ICF u32 script_time_global_async() { return Device.TimerAsync_MMT(); }
     ICF	u32	script_time_global_async() { return 0; }
 #endif //-XRGAME_EXPORTS
 
+namespace
+{
+int script_time_global_lua(lua_State* L)
+{
+	lua_pushnumber(L, static_cast<lua_Number>(script_time_global()));
+	return 1;
+}
+
+int script_time_global_async_lua(lua_State* L)
+{
+	lua_pushnumber(L, static_cast<lua_Number>(script_time_global_async()));
+	return 1;
+}
+}
+
 #ifdef XRGAME_EXPORTS
 static bool is_enough_address_space_available_impl()
 {
@@ -260,6 +275,19 @@ void CScriptEngine::script_register(lua_State* L)
 		.def("stop", &profile_timer_script::stop)
 		.def("time", &profile_timer_script::time)
 	];
+
+	// These two functions are called millions of times by script wrappers. Keep
+	// the exact global names/return values while bypassing generic luabind dispatch.
+	lua_pushcfunction(L, &script_time_global_lua);
+	lua_setglobal(L, "time_global");
+	lua_pushcfunction(L, &script_time_global_async_lua);
+	lua_setglobal(L, "time_global_async");
+
+	// _G.script defines a Lua time_global() wrapper later during initialization.
+	// Keep a private reference so CScriptEngine can restore this direct bridge
+	// after _G has loaded instead of silently losing the fast path.
+	lua_pushcfunction(L, &script_time_global_lua);
+	lua_setglobal(L, "__quark_time_global_fast");
 
 	//function(L, "print_stack", PrintStack);
 	//function(L, "log", LuaLog1);

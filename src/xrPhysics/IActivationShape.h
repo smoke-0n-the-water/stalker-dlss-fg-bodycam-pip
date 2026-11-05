@@ -8,3 +8,8 @@ XRPHYSICS_API bool ActivateShapeCharacterPhysicsSupport(Fvector& out_pos, const 
                                                         const Fvector& activation_pos, const Fmatrix& mXFORM,
                                                         bool not_collide_characters, bool set_rotation,
                                                         IPhysicsShellHolder* m_EntityAlife);
+
+XRPHYSICS_API bool ActivateShapeCharacterPhysicsSupportStaticOnly(Fvector& out_pos, const Fvector& vbox,
+                                                                  const Fvector& activation_pos, const Fmatrix& mXFORM,
+                                                                  bool not_collide_characters, bool set_rotation,
+                                                                  IPhysicsShellHolder* m_EntityAlife);

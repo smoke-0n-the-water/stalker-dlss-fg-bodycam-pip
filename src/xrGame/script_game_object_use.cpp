@@ -1,5 +1,6 @@
 #include "pch_script.h"
 #include "script_game_object.h"
+#include <luabind/detail/object_rep.hpp>
 #include "script_game_object_impl.h"
 #include "UsableScriptObject.h"
 #include "GameObject.h"
@@ -62,17 +63,86 @@ Fvector CScriptGameObject::GetCurrentDirection()
 
 CScriptGameObject::CScriptGameObject(CGameObject* game_object) :
 	m_game_object(game_object),
+	m_inventory_owner_cache(nullptr),
+	m_inventory_owner_cache_initialized(false),
+	m_invalid_bone_warning_reported{ false, false },
 	m_door(0)
 {
 	R_ASSERT2(m_game_object, "Null actual object passed!");
 }
 
+std::weak_ptr<CScriptGameObject::lifetime_token> CScriptGameObject::lifetime() const
+{
+	if (!m_lifetime_token)
+	{
+		m_lifetime_token = std::make_shared<lifetime_token>();
+		m_lifetime_token->object = const_cast<CScriptGameObject*>(this);
+	}
+	return m_lifetime_token;
+}
+
 CScriptGameObject::~CScriptGameObject()
 {
+	// Invalidate every weak handle (script_rq_result etc.) before the memory is freed.
+	if (m_lifetime_token)
+	{
+		m_lifetime_token->object = nullptr;
+		m_lifetime_token.reset();
+	}
+
+    // Lua closures may retain this non-owning userdata after net_Destroy().
+    // Invalidate its native pointer before freeing the wrapper, so an old
+    // handle can neither dereference freed memory nor alias a recycled wrapper.
+    if (!m_lua_instance_ref.empty())
+    {
+        if (lua_State* L = ai().script_engine().lua())
+        {
+            m_lua_instance_ref.get(L);
+            luabind::detail::object_rep* instance = luabind::detail::is_class_object(L, -1);
+            if (instance && instance->ptr() == this)
+                instance->set_object(nullptr);
+            lua_pop(L, 1);
+        }
+        m_lua_instance_ref = luabind::weak_ref();
+    }
+
 	if (!m_door)
 		return;
 
 	unregister_door();
+}
+
+bool CScriptGameObject::extract_lua_instance(lua_State* L) const
+{
+	if (m_lua_instance_ref.empty())
+		return false;
+
+	m_lua_instance_ref.get(L);
+	if (lua_isuserdata(L, -1))
+		return true;
+
+	// The weak value was cleared by Lua GC or invalidated with its old VM.
+	// Release it before creating a replacement userdata wrapper.
+	lua_pop(L, 1);
+	m_lua_instance_ref = luabind::weak_ref();
+	return false;
+}
+
+void CScriptGameObject::store_lua_instance(lua_State* L, int index) const
+{
+	m_lua_instance_ref = luabind::weak_ref(L, index);
+}
+
+bool luabind::identity_back_reference<CScriptGameObject>::extract(
+	lua_State* L, const CScriptGameObject* object)
+{
+	return object->extract_lua_instance(L);
+}
+
+void luabind::identity_back_reference<CScriptGameObject>::store(
+	lua_State* L, const CScriptGameObject* object, int index)
+{
+	object->store_lua_instance(L, index);
 }
 
 CScriptGameObject* CScriptGameObject::Parent() const

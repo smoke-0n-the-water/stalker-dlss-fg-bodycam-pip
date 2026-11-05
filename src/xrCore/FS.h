@@ -119,6 +119,11 @@ public:
 	void w_chunk(u32 type, void* data, u32 size);
 	virtual bool valid() { return true; }
 	virtual void flush() = 0;
+	virtual bool finalize()
+	{
+		flush();
+		return valid();
+	}
 };
 
 class XRCORE_API CMemoryWriter : public IWriter
@@ -145,6 +150,7 @@ public:
 	virtual u32 tell() { return position; }
 
 	// specific
+	void reserve(u32 capacity);
 	IC u8* pointer() { return data; }
 	IC u32 size() const { return file_size; }
 	IC void clear()

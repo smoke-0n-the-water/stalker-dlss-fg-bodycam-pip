@@ -20,7 +20,12 @@ class ENGINE_API IGame_ObjectPool
 	*/
 	typedef xr_vector<CObject*> ObjectVec;
 	typedef ObjectVec::iterator ObjectVecIt;
+	typedef xr_unordered_map<shared_str, CLASS_ID> ClassIdCache;
+
 	ObjectVec m_PrefetchObjects;
+	ClassIdCache m_ClassIdCache;
+
+	CLASS_ID resolve_class_id(LPCSTR name);
 public:
 	void prefetch();
 	void clear();

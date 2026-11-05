@@ -128,6 +128,7 @@ protected:
 	shared_str m_cdkey;
 
 	xr_vector<CUIMessageBoxEx*> m_pMB_ErrDlgs;
+	CUIMessageBoxEx* GetErrorDialog(EErrorDlg dialog);
 	bool ReloadUI();
 public:
 	u32 m_deactivated_frame;

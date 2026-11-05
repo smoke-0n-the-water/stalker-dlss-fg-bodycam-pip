@@ -41,6 +41,21 @@ u16 INV_STATE_BLOCK_ALL = 0xffff;
 u16 INV_STATE_INV_WND = INV_STATE_BLOCK_ALL;
 u16 INV_STATE_BUY_MENU = INV_STATE_BLOCK_ALL;
 
+namespace
+{
+const ::luabind::functor<int>* inventory_belt_width_callback()
+{
+	static cached_script_functor<int> callback_cache("actor_menu_inventory.CInventory_BeltWidth");
+	return callback_cache.get(ai().script_engine());
+}
+
+const ::luabind::functor<bool>* inventory_item_trade_filter_callback()
+{
+	static cached_script_functor<bool> callback_cache("actor_menu_inventory.CInventory_ItemAvailableToTrade");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 CInventorySlot::CInventorySlot()
 {
 	m_pIItem = NULL;
@@ -99,6 +114,7 @@ CInventory::CInventory()
 
 	m_fTotalWeight = -1.f;
 	m_dwModifyFrame = 0;
+	m_ui_revision = 1;
 	m_drop_last_frame = false;
 
 	InitPriorityGroupsForQSwitch();
@@ -439,6 +455,7 @@ bool CInventory::Slot(u16 slot_id, PIItem pIItem, bool bNotActivate, bool strict
 	pIItem->m_ItemCurrPlace.type = eItemPlaceSlot;
 	pIItem->m_ItemCurrPlace.slot_id = slot_id;
 	pIItem->OnMoveToSlot(p);
+	InvalidateState();
 
 	pIItem->object().processing_activate();
 
@@ -591,6 +608,7 @@ void CInventory::Activate(u16 slot, bool bForce)
 
 	if (slot != NO_ACTIVE_SLOT && !m_slots[slot].CanBeActivated())
 		return;
+
 
 #ifdef DEBUG
 	//	Msg("--- Activating slot [%d], inventory owner: [%s], Frame[%d]", slot, m_pOwner->Name(), Device.dwFrame);
@@ -1332,31 +1350,24 @@ u32 CInventory::BeltWidth() const
 			artefact_count =  outfit->get_artefact_count();
 		}
 	}
-	::luabind::functor<int> funct;
-		if (ai().script_engine().functor("actor_menu_inventory.CInventory_BeltWidth", funct))
-		{
-			artefact_count = funct(artefact_count);
-		}
+	if (const auto* funct = inventory_belt_width_callback())
+		artefact_count = (*funct)(artefact_count);
 	return artefact_count; //m_iMaxBelt;
 }
 
 void CInventory::AddAvailableItems(TIItemContainer& items_container, bool for_trade, bool bOverride) const
 {
+	// Resolve once per inventory pass instead of doing a global Lua lookup for every item.
+	const auto* trade_filter = bOverride ? inventory_item_trade_filter_callback() : nullptr;
+	CScriptGameObject* owner_script = trade_filter ? m_pOwner->cast_game_object()->lua_game_object() : nullptr;
+
 	for (TIItemContainer::const_iterator it = m_ruck.begin(); m_ruck.end() != it; ++it)
 	{
 		PIItem pIItem = *it;
 		if (!for_trade || pIItem->CanTrade())
 		{
-			if (bOverride)
-			{
-				::luabind::functor<bool> funct;
-				if (ai().script_engine().functor("actor_menu_inventory.CInventory_ItemAvailableToTrade", funct))
-				{
-					if (!funct(m_pOwner->cast_game_object()->lua_game_object(),
-					           pIItem->cast_game_object()->lua_game_object()))
+			if (trade_filter && !(*trade_filter)(owner_script, pIItem->cast_game_object()->lua_game_object()))
 						continue;
-				}
-			}
 			items_container.push_back(pIItem);
 		}
 	}
@@ -1368,16 +1379,8 @@ void CInventory::AddAvailableItems(TIItemContainer& items_container, bool for_tr
 			PIItem pIItem = *it;
 			if (!for_trade || pIItem->CanTrade())
 			{
-				if (bOverride)
-				{
-					::luabind::functor<bool> funct;
-					if (ai().script_engine().functor("actor_menu_inventory.CInventory_ItemAvailableToTrade", funct))
-					{
-						if (!funct(m_pOwner->cast_game_object()->lua_game_object(),
-						           pIItem->cast_game_object()->lua_game_object()))
+				if (trade_filter && !(*trade_filter)(owner_script, pIItem->cast_game_object()->lua_game_object()))
 							continue;
-					}
-				}
 				items_container.push_back(pIItem);
 			}
 		}
@@ -1394,16 +1397,8 @@ void CInventory::AddAvailableItems(TIItemContainer& items_container, bool for_tr
 			{
 				if (!SlotIsPersistent(I) || item->BaseSlot() == GRENADE_SLOT)
 				{
-					if (bOverride)
-					{
-						::luabind::functor<bool> funct;
-						if (ai().script_engine().functor("actor_menu_inventory.CInventory_ItemAvailableToTrade", funct))
-						{
-							if (!funct(m_pOwner->cast_game_object()->lua_game_object(),
-							           item->cast_game_object()->lua_game_object()))
+					if (trade_filter && !(*trade_filter)(owner_script, item->cast_game_object()->lua_game_object()))
 								continue;
-						}
-					}
 					items_container.push_back(item);
 				}
 			}

@@ -139,10 +139,10 @@ protected:
 	typedef CCoverEvaluatorCloseToEnemy inherited;
 
 protected:
-	Fvector m_direction;
 	Fvector m_best_direction;
 	float m_best_alpha;
 	u32 m_level_vertex_id;
+	u32 m_cached_level_vertex_id;
 
 public:
 	IC CCoverEvaluatorAngle(CRestrictedObject* object);

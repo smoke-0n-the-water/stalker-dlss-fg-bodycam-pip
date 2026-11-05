@@ -9,6 +9,8 @@
 #include "../monster_velocity_space.h"
 #include "../../../level.h"
 #include "../control_animation_base.h"
+#include "../../../../xrServerEntities/script_engine.h"
+#include "../../../ai_space.h"
 
 void CBaseMonster::Think()
 {
@@ -17,25 +19,38 @@ void CBaseMonster::Think()
 
 		if (!g_Alive() || getDestroy()) return;
 
+		CScopedLuaRecordPhase total_phase(ai().script_engine(), "ai_think", "monster.base.total",
+			*cName(), static_cast<u32>(ID()));
+
 		// Инициализировать
-		InitThink();
-		anim().ScheduledInit();
+		{
+			CScopedLuaRecordPhase init_phase(ai().script_engine(), "ai_think", "monster.base.init",
+				*cName(), static_cast<u32>(ID()));
+			InitThink();
+			anim().ScheduledInit();
+		}
 
 		// Обновить память
 		START_PROFILE("Base Monster/Think/Update Memory")
 			;
+			CScopedLuaRecordPhase memory_phase(ai().script_engine(), "ai_think", "monster.base.memory",
+				*cName(), static_cast<u32>(ID()));
 			UpdateMemory();
 		STOP_PROFILE;
 
 		// Обновить сквад
 		START_PROFILE("Base Monster/Think/Update Squad")
 			;
+			CScopedLuaRecordPhase squad_phase(ai().script_engine(), "ai_think", "monster.base.squad",
+				*cName(), static_cast<u32>(ID()));
 			monster_squad().update(this);
 		STOP_PROFILE;
 
 		// Запустить FSM
 		START_PROFILE("Base Monster/Think/FSM")
 			;
+			CScopedLuaRecordPhase fsm_phase(ai().script_engine(), "ai_think", "monster.base.fsm",
+				*cName(), static_cast<u32>(ID()));
 			update_fsm();
 		STOP_PROFILE;
 

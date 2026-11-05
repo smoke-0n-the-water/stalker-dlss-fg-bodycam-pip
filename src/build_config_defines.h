@@ -23,7 +23,7 @@
 
 // CORE:
 #define NO_BUG_TRAP										// dont use bug trap
-#define USE_OWN_MINI_DUMP								// create mini dump on crash
+// Minidumps are disabled: QUARK error logger stores complete text diagnostics in ERROR\*-LOG.log.
 //#define USE_VERIFY_IN_RELEASE							// use VERIFY macros in release builds
 
 #define SPAWN_ANTIFREEZE								// spread spawn of game objects thoughout multiple frames to prevent lags (by alpet, MT implementation by demonized)

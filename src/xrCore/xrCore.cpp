@@ -6,6 +6,8 @@
 #include <mmsystem.h>
 #include <objbase.h>
 #include "xrCore.h"
+#include "engine_error_logger.h"
+#include "cpu_placement.h"
 
 #pragma comment(lib,"winmm.lib")
 
@@ -53,6 +55,9 @@ void xrCore::_initialize(LPCSTR _ApplicationName, xrLogger::LogCallback cb, BOOL
 #endif
 		Params = xr_strdup(GetCommandLine());
 		xr_strlwr(Params);
+
+		EngineErrorLogger::SetEnabled(strstr(Params, "-no_engine_error_log") == nullptr);
+		EngineErrorLogger::Initialize();
 		if (!strstr(Params, "-editor"))
 			CoInitializeEx(NULL, COINIT_MULTITHREADED);
 
@@ -81,6 +86,7 @@ void xrCore::_initialize(LPCSTR _ApplicationName, xrLogger::LogCallback cb, BOOL
 
 		xrLogger::InitLog();
 		_initialize_cpu();
+		cpu_placement::initialize();
 
 		rtc_initialize();
 
@@ -95,32 +101,38 @@ void xrCore::_initialize(LPCSTR _ApplicationName, xrLogger::LogCallback cb, BOOL
 
 		//Load cmd line from file if it exists
 		std::ifstream cmdlineTxt;
-		char path_A[MAX_PATH];
-		strcpy(path_A, Core.ApplicationPath);
-		strcat(path_A, "\\..\\commandline.txt");
-		cmdlineTxt.open(path_A);
+		std::string commandlinePath = Core.ApplicationPath;
+		if (!commandlinePath.empty() && commandlinePath.back() != '\\' && commandlinePath.back() != '/')
+			commandlinePath.push_back('\\');
+		commandlinePath += "..\\commandline.txt";
+		cmdlineTxt.open(commandlinePath.c_str());
 		
-		if (!cmdlineTxt)
+		if (!cmdlineTxt.is_open())
 		{
-			cmdlineTxt.close();
-			strcpy(path_A, Core.WorkingPath);
-			strcat(path_A, "\\commandline.txt");
-			cmdlineTxt.open(path_A);
+			cmdlineTxt.clear();
+			commandlinePath = Core.WorkingPath;
+			if (!commandlinePath.empty() && commandlinePath.back() != '\\' && commandlinePath.back() != '/')
+				commandlinePath.push_back('\\');
+			commandlinePath += "commandline.txt";
+			cmdlineTxt.open(commandlinePath.c_str());
 		}
 
-		if (cmdlineTxt)
+		if (cmdlineTxt.is_open())
 		{
 			Msg("Found commandline file!");
 			std::string line;
-			char temp[2048];
-			sprintf(temp, Params);
-			strcat(temp, " ");
+			std::string combinedParams = Params ? Params : "";
+			if (!combinedParams.empty() && combinedParams.back() != ' ')
+				combinedParams.push_back(' ');
 			while (std::getline(cmdlineTxt, line))
 			{
-				strcat(temp, line.c_str());
-				strcat(temp, " ");
+				combinedParams += line;
+				combinedParams.push_back(' ');
 			}
-			Params = xr_strdup(temp);
+
+			char* oldParams = Params;
+			Params = xr_strdup(combinedParams.c_str());
+			xr_free(oldParams);
 		}
 		cmdlineTxt.close();
 

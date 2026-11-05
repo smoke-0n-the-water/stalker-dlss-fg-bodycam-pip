@@ -61,6 +61,7 @@ public:
 		etsPlayEachItem = (1 << 4),
 		etsActive = (1 << 5),
 		etsOverMainMenu = (1 << 6),
+		etsStopping = (1 << 7),
 	};
 
 	Flags32 m_flags;

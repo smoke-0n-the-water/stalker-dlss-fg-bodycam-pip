@@ -303,122 +303,202 @@ static int mar_encode_table(lua_State *L, mar_Buffer *buf, size_t *idx)
     return 1;
 }
 
-#define mar_incr_ptr(l) \
-    if (((*p)-buf)+(l) > len) luaL_error(L, "bad code"); (*p) += (l);
+static const char *mar_decode_bytes(lua_State *L, const char *buf, size_t len,
+                                    const char **p, size_t count)
+{
+    size_t offset = (size_t)(*p - buf);
+    const char *result;
 
-#define mar_next_len(l,T) \
-    if (((*p)-buf)+sizeof(T) > len) luaL_error(L, "bad code"); \
-    l = *(T*)*p; (*p) += sizeof(T);
+    if (offset > len || count > len - offset) {
+        luaL_error(L, "bad encoded data: truncated input");
+    }
+
+    result = *p;
+    *p += count;
+    return result;
+}
+
+static uint8_t mar_decode_u8(lua_State *L, const char *buf, size_t len,
+                             const char **p)
+{
+    uint8_t result;
+    memcpy(&result, mar_decode_bytes(L, buf, len, p, sizeof(result)),
+           sizeof(result));
+    return result;
+}
+
+static uint32_t mar_decode_u32(lua_State *L, const char *buf, size_t len,
+                               const char **p)
+{
+    uint32_t result;
+    memcpy(&result, mar_decode_bytes(L, buf, len, p, sizeof(result)),
+           sizeof(result));
+    return result;
+}
+
+static int32_t mar_decode_i32(lua_State *L, const char *buf, size_t len,
+                              const char **p)
+{
+    int32_t result;
+    memcpy(&result, mar_decode_bytes(L, buf, len, p, sizeof(result)),
+           sizeof(result));
+    return result;
+}
+
+static void mar_decode_reference(lua_State *L, int32_t ref, size_t idx)
+{
+    if (ref <= 0 || (size_t)ref >= idx) {
+        luaL_error(L, "bad encoded data: invalid reference");
+    }
+
+    lua_rawgeti(L, SEEN_IDX, ref);
+    if (lua_isnil(L, -1)) {
+        luaL_error(L, "bad encoded data: missing reference");
+    }
+}
 
 static void mar_decode_value
     (lua_State *L, const char *buf, size_t len, const char **p, size_t *idx)
 {
     size_t l;
-    char val_type = **p;
-    mar_incr_ptr(MAR_CHR);
+    uint8_t val_type = mar_decode_u8(L, buf, len, p);
     switch (val_type) {
     case LUA_TBOOLEAN:
-        lua_pushboolean(L, *(char*)*p);
-        mar_incr_ptr(MAR_CHR);
+        lua_pushboolean(L, mar_decode_u8(L, buf, len, p));
         break;
-    case LUA_TNUMBER:
-        lua_pushnumber(L, *(lua_Number*)*p);
-        mar_incr_ptr(MAR_I64);
+    case LUA_TNUMBER: {
+        lua_Number value;
+        if (sizeof(value) != MAR_I64) {
+            luaL_error(L, "unsupported lua_Number size");
+        }
+        memcpy(&value, mar_decode_bytes(L, buf, len, p, MAR_I64), MAR_I64);
+        lua_pushnumber(L, value);
         break;
-    case LUA_TSTRING:
-        mar_next_len(l, uint32_t);
-        lua_pushlstring(L, *p, l);
-        mar_incr_ptr(l);
+    }
+    case LUA_TSTRING: {
+        const char *value;
+        l = mar_decode_u32(L, buf, len, p);
+        value = mar_decode_bytes(L, buf, len, p, l);
+        lua_pushlstring(L, value, l);
         break;
+    }
     case LUA_TTABLE: {
-        char tag = *(char*)*p;
-        mar_incr_ptr(MAR_CHR);
+        uint8_t tag = mar_decode_u8(L, buf, len, p);
         if (tag == MAR_TREF) {
-            int ref;
-            mar_next_len(ref, int);
-            lua_rawgeti(L, SEEN_IDX, ref);
+            int32_t ref = mar_decode_i32(L, buf, len, p);
+            mar_decode_reference(L, ref, *idx);
         }
         else if (tag == MAR_TVAL) {
-            mar_next_len(l, uint32_t);
+            const char *table_data;
+            l = mar_decode_u32(L, buf, len, p);
+            table_data = mar_decode_bytes(L, buf, len, p, l);
             lua_newtable(L);
             lua_pushvalue(L, -1);
             lua_rawseti(L, SEEN_IDX, (*idx)++);
-            mar_decode_table(L, *p, l, idx);
-            mar_incr_ptr(l);
+            mar_decode_table(L, table_data, l, idx);
         }
         else if (tag == MAR_TUSR) {
-            mar_next_len(l, uint32_t);
+            const char *table_data;
+            l = mar_decode_u32(L, buf, len, p);
+            table_data = mar_decode_bytes(L, buf, len, p, l);
             lua_newtable(L);
-            mar_decode_table(L, *p, l, idx);
+            mar_decode_table(L, table_data, l, idx);
             lua_rawgeti(L, -1, 1);
+            if (!lua_isfunction(L, -1)) {
+                luaL_error(L, "bad encoded data: invalid persist callback");
+            }
             lua_call(L, 0, 1);
             lua_remove(L, -2);
             lua_pushvalue(L, -1);
             lua_rawseti(L, SEEN_IDX, (*idx)++);
-            mar_incr_ptr(l);
         }
         else {
-            luaL_error(L, "bad encoded data");
+            luaL_error(L, "bad encoded data: invalid table tag");
         }
         break;
     }
     case LUA_TFUNCTION: {
-        size_t nups;
+        int load_status;
+        int nups;
         int i;
         mar_Buffer dec_buf;
-        char tag = *(char*)*p;
-        mar_incr_ptr(1);
+        uint8_t tag = mar_decode_u8(L, buf, len, p);
         if (tag == MAR_TREF) {
-            int ref;
-            mar_next_len(ref, int);
-            lua_rawgeti(L, SEEN_IDX, ref);
+            int32_t ref = mar_decode_i32(L, buf, len, p);
+            mar_decode_reference(L, ref, *idx);
         }
-        else {
-            mar_next_len(l, uint32_t);
-            dec_buf.data = (char*)*p;
+        else if (tag == MAR_TVAL) {
+            const char *function_data;
+            const char *upvalue_data;
+            lua_Debug ar;
+
+            l = mar_decode_u32(L, buf, len, p);
+            function_data = mar_decode_bytes(L, buf, len, p, l);
+            dec_buf.data = (char*)function_data;
             dec_buf.size = l;
             dec_buf.head = l;
             dec_buf.seek = 0;
-            lua_load(L, (lua_Reader)buf_read, &dec_buf, "=marshal");
-            mar_incr_ptr(l);
+            load_status = lua_load(L, (lua_Reader)buf_read, &dec_buf, "=marshal");
+            if (load_status != 0) {
+                const char *message = lua_tostring(L, -1);
+                luaL_error(L, "cannot decode persisted Lua function: %s",
+                           message ? message : "invalid bytecode");
+            }
 
             lua_pushvalue(L, -1);
             lua_rawseti(L, SEEN_IDX, (*idx)++);
 
-            mar_next_len(l, uint32_t);
+            l = mar_decode_u32(L, buf, len, p);
+            upvalue_data = mar_decode_bytes(L, buf, len, p, l);
             lua_newtable(L);
-            mar_decode_table(L, *p, l, idx);
-            nups = lua_objlen(L, -1);
+            mar_decode_table(L, upvalue_data, l, idx);
+
+            lua_pushvalue(L, -2);
+            if (!lua_getinfo(L, ">u", &ar)) {
+                luaL_error(L, "bad encoded data: invalid Lua function");
+            }
+            nups = ar.nups;
             for (i=1; i <= nups; i++) {
                 lua_rawgeti(L, -1, i);
-                lua_setupvalue(L, -3, i);
+                if (lua_setupvalue(L, -3, i) == NULL) {
+                    /* LuaJIT leaves the value on the stack when this fails. */
+                    lua_pop(L, 1);
+                    luaL_error(L, "bad encoded data: invalid function upvalues");
+                }
             }
             lua_pop(L, 1);
-            mar_incr_ptr(l);
+        }
+        else {
+            luaL_error(L, "bad encoded data: invalid function tag");
         }
         break;
     }
     case LUA_TUSERDATA: {
-        char tag = *(char*)*p;
-        mar_incr_ptr(MAR_CHR);
+        uint8_t tag = mar_decode_u8(L, buf, len, p);
         if (tag == MAR_TREF) {
-            int ref;
-            mar_next_len(ref, int);
-            lua_rawgeti(L, SEEN_IDX, ref);
+            int32_t ref = mar_decode_i32(L, buf, len, p);
+            mar_decode_reference(L, ref, *idx);
         }
         else if (tag == MAR_TUSR) {
-            mar_next_len(l, uint32_t);
+            const char *table_data;
+            l = mar_decode_u32(L, buf, len, p);
+            table_data = mar_decode_bytes(L, buf, len, p, l);
             lua_newtable(L);
-            mar_decode_table(L, *p, l, idx);
+            mar_decode_table(L, table_data, l, idx);
             lua_rawgeti(L, -1, 1);
+            if (!lua_isfunction(L, -1)) {
+                luaL_error(L, "bad encoded data: invalid persist callback");
+            }
             lua_call(L, 0, 1);
             lua_remove(L, -2);
             lua_pushvalue(L, -1);
             lua_rawseti(L, SEEN_IDX, (*idx)++);
-            mar_incr_ptr(l);
         }
-        else { /* tag == MAR_TVAL */
+        else if (tag == MAR_TVAL) {
             lua_pushnil(L);
+        }
+        else {
+            luaL_error(L, "bad encoded data: invalid userdata tag");
         }
         break;
     }
@@ -437,6 +517,9 @@ static int mar_decode_table(lua_State *L, const char* buf, size_t len, size_t *i
     p = buf;
     while (p - buf < len) {
         mar_decode_value(L, buf, len, &p, idx);
+        if ((size_t)(p - buf) == len) {
+            luaL_error(L, "bad encoded data: table value is missing");
+        }
         mar_decode_value(L, buf, len, &p, idx);
         lua_settable(L, -3);
     }
@@ -531,7 +614,7 @@ static int mar_clone(lua_State* L)
     return 1;
 }
 
-static const struct luaL_reg R[] =
+static const struct luaL_Reg R[] =
 {
     {"encode",      mar_encode},
     {"decode",      mar_decode},
@@ -546,4 +629,3 @@ int luaopen_marshal(lua_State *L)
 		luaL_register(L, "marshal", R);
     return 1;
 }
-

@@ -30,6 +30,8 @@ CSoundRender_Emitter::CSoundRender_Emitter(void)
 	owner_data = NULL;
 	smooth_volume = 1.f;
 	occluder_volume = 1.f;
+	occlusion_target_volume = 1.f;
+	occlusion_next_update_time = 0.f;
 	fade_volume = 1.f;
 	occluder[0].set(0, 0, 0);
 	occluder[1].set(0, 0, 0);
@@ -63,14 +65,11 @@ void CSoundRender_Emitter::Event_ReleaseOwner()
 	PROF_EVENT("CSoundRender_Emitter::Event_ReleaseOwner");
 	if (!(owner_data)) return;
 
-	for (u32 it = 0; it < SoundRender->s_events.size(); it++)
+	xr_vector<CSoundRender_Core::event>& events = SoundRender->s_events;
+	events.erase(std::remove_if(events.begin(), events.end(), [this](const CSoundRender_Core::event& sound_event)
 	{
-		if (owner_data == SoundRender->s_events[it].first)
-		{
-			SoundRender->s_events.erase(SoundRender->s_events.begin() + it);
-			it --;
-		}
-	}
+		return owner_data == sound_event.first;
+	}), events.end());
 }
 
 void CSoundRender_Emitter::Event_Propagade()
@@ -95,6 +94,7 @@ void CSoundRender_Emitter::Event_Propagade()
 void CSoundRender_Emitter::switch_to_2D()
 {
 	b2D = TRUE;
+	occlusion_target_volume = 1.f;
 	set_priority(100.f);
 }
 
@@ -108,6 +108,7 @@ void CSoundRender_Emitter::switch_to_Intro()
 void CSoundRender_Emitter::switch_to_3D()
 {
 	b2D = FALSE;
+	occlusion_next_update_time = 0.f;
 }
 
 u32 CSoundRender_Emitter::play_time()

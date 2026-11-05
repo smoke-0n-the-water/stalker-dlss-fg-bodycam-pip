@@ -103,3 +103,20 @@ void CRestrictedObjectObstacle::remove_border() const
 	ai().level_graph().clear_mask_no_check(m_static_query.area());
 	ai().level_graph().clear_mask_no_check(m_dynamic_query.area());
 }
+
+void CRestrictedObjectObstacle::collect_path_border(u32 start_vertex_id, u32 dest_vertex_id,
+	                                                  xr_vector<u32>& result) const
+{
+	inherited::collect_path_border(start_vertex_id, dest_vertex_id, result);
+
+	const obstacles_query* queries[] = {&m_static_query, &m_dynamic_query};
+	for (u32 query_index = 0; query_index < sizeof(queries) / sizeof(queries[0]); ++query_index)
+	{
+		const AREA& area = queries[query_index]->area();
+		for (AREA::const_iterator I = area.begin(), E = area.end(); I != E; ++I)
+		{
+			if (*I != start_vertex_id && *I != dest_vertex_id)
+				result.push_back(*I);
+		}
+	}
+}

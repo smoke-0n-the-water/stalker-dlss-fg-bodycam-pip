@@ -3,93 +3,121 @@
 
 #include "SoundRender_CoreA.h"
 
+namespace
+{
+	CSoundRender_CoreA* sound_render_instance()
+	{
+		return static_cast<CSoundRender_CoreA*>(InterlockedCompareExchangePointer(
+			reinterpret_cast<PVOID volatile*>(&SoundRenderA), nullptr, nullptr));
+	}
+}
+
 CNotificationClient::CNotificationClient()
-    : m_bComInitialized(false)
+	: m_cRef(1), m_pEnumerator(nullptr), m_bComInitialized(false)
 {
-    Start();
+	Start();
 }
 
-CNotificationClient::~CNotificationClient() 
+CNotificationClient::~CNotificationClient()
 {
-    Close();
+	Close();
 }
 
-inline bool CNotificationClient::Start() 
+void CNotificationClient::Shutdown()
 {
-    // Initialize the COM library for the current thread
-    HRESULT ihr = CoInitialize(NULL);
-
-    // RPC_E_CHANGED_MODE means COM already initialized in different mode - this is OK
-    if (SUCCEEDED(ihr) || ihr == RPC_E_CHANGED_MODE) {
-        m_bComInitialized = SUCCEEDED(ihr);
-
-        // Create the device enumerator
-        IMMDeviceEnumerator* pEnumerator;
-        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&pEnumerator);
-        if (SUCCEEDED(hr)) {
-            // Register for device change notifications
-            hr = pEnumerator->RegisterEndpointNotificationCallback(this);
-            m_pEnumerator = pEnumerator;
-
-            return true;
-        }
-
-        if (m_bComInitialized) {
-            CoUninitialize();
-            m_bComInitialized = false;
-        }
-    }
-
-    return false;
+	Close();
+	Release();
 }
 
-inline void CNotificationClient::Close() 
+inline bool CNotificationClient::Start()
 {
-    // Unregister the device enumerator
-    if (m_pEnumerator) {
-        m_pEnumerator->UnregisterEndpointNotificationCallback(this);
-        m_pEnumerator->Release();
-    }
+	const HRESULT initialize_result = CoInitialize(nullptr);
 
-    if (m_bComInitialized) {
-        CoUninitialize();
-        m_bComInitialized = false;
-    }
+	if (SUCCEEDED(initialize_result) || initialize_result == RPC_E_CHANGED_MODE)
+	{
+		m_bComInitialized = SUCCEEDED(initialize_result);
+
+		IMMDeviceEnumerator* enumerator = nullptr;
+		const HRESULT create_result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+			__uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator));
+		if (SUCCEEDED(create_result))
+		{
+			const HRESULT register_result = enumerator->RegisterEndpointNotificationCallback(this);
+			if (SUCCEEDED(register_result))
+			{
+				m_pEnumerator = enumerator;
+				return true;
+			}
+
+			enumerator->Release();
+		}
+
+		if (m_bComInitialized)
+		{
+			CoUninitialize();
+			m_bComInitialized = false;
+		}
+	}
+
+	return false;
 }
 
-inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnDeviceAdded(LPCWSTR pwstrDeviceId) 
+inline void CNotificationClient::Close()
 {
-    // A new audio device has been added.
-    return S_OK;
+	if (m_pEnumerator)
+	{
+		m_pEnumerator->UnregisterEndpointNotificationCallback(this);
+		m_pEnumerator->Release();
+		m_pEnumerator = nullptr;
+	}
+
+	if (m_bComInitialized)
+	{
+		CoUninitialize();
+		m_bComInitialized = false;
+	}
 }
 
-
-// IMMCNotificationClient methods
-
-inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR pwstrDeviceId)
+inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnDeviceAdded(LPCWSTR pwstrDeviceId)
 {
-	// Only handle render (output) devices with console (default) role
-    if (flow != eRender || role != eConsole)
-        return S_OK;
+	if (CSoundRender_CoreA* sound_render = sound_render_instance())
+		sound_render->request_device_list_refresh();
+	return S_OK;
+}
 
-    SoundRenderA->bPendingDefaultDeviceSwitch = TRUE;
-    return S_OK;
+// IMMNotificationClient methods
+
+inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnDefaultDeviceChanged(
+	EDataFlow flow, ERole role, LPCWSTR pwstrDeviceId)
+{
+	// Only handle render (output) devices with console (default) role.
+	if (flow != eRender || role != eConsole)
+		return S_OK;
+
+	if (CSoundRender_CoreA* sound_render = sound_render_instance())
+		sound_render->request_default_device_switch();
+	return S_OK;
 }
 
 inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnDeviceRemoved(LPCWSTR pwstrDeviceId)
 {
-    SoundRenderA->bPendingDeviceListRefresh = TRUE;
-    return S_OK;
+	if (CSoundRender_CoreA* sound_render = sound_render_instance())
+		sound_render->request_device_list_refresh();
+	return S_OK;
 }
 
-inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnDeviceStateChanged(LPCWSTR pwstrDeviceId, DWORD dwNewState)
+inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnDeviceStateChanged(
+	LPCWSTR pwstrDeviceId, DWORD dwNewState)
 {
-    SoundRenderA->bPendingDeviceListRefresh = TRUE;
-    return S_OK;
+	if (CSoundRender_CoreA* sound_render = sound_render_instance())
+		sound_render->request_device_list_refresh();
+	return S_OK;
 }
 
-inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnPropertyValueChanged(LPCWSTR pwstrDeviceId, const PROPERTYKEY key)
+inline STDMETHODIMP_(HRESULT __stdcall) CNotificationClient::OnPropertyValueChanged(
+	LPCWSTR pwstrDeviceId, const PROPERTYKEY key)
 {
-    SoundRenderA->bPendingDeviceListRefresh = TRUE;
-    return S_OK;
+	if (CSoundRender_CoreA* sound_render = sound_render_instance())
+		sound_render->request_device_list_refresh();
+	return S_OK;
 }

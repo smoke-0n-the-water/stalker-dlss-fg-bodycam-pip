@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include "member_order.h"
 #include "memory_space.h"
 
@@ -21,11 +23,13 @@ public:
 	typedef MEMBER_STORAGE::iterator iterator;
 	typedef MEMBER_STORAGE::const_iterator const_iterator;
 	typedef MemorySpace::squad_mask_type squad_mask_type;
+	typedef xr_vector<std::pair<ALife::_OBJECT_ID, u32> > MEMBER_ID_INDEX;
 
 private:
 	CAgentManager* m_object;
 	MEMBER_STORAGE m_members;
 	MEMBER_STORAGE m_combat_members;
+	MEMBER_ID_INDEX m_member_id_index;
 	bool m_actuality;
 	squad_mask_type m_combat_mask;
 	u32 m_last_throw_time;
@@ -33,6 +37,9 @@ private:
 
 protected:
 	IC CAgentManager& object() const;
+	u32 member_index(const ALife::_OBJECT_ID& object_id) const;
+	u32 member_index(const CAI_Stalker* object) const;
+	void rebuild_member_index();
 
 public:
 	IC CAgentMemberManager(CAgentManager* object);

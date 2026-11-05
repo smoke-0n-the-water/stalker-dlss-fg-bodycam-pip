@@ -18,25 +18,34 @@ extern ENGINE_API BOOL g_bootComplete;
 
 void CLevel::cl_Process_Spawn(NET_Packet& P)
 {
-	// Begin analysis
+
 	shared_str s_name;
 	P.r_stringZ(s_name);
 	PROF_EVENT("CLevel::cl_Process_Spawn");
 	spawn_cost::Owner spawn_timer("SpawnTime", s_name.c_str(), g_bootComplete ? spawn_time_log : 0);
 
-	//Msg("cl_Process_Spawn spawning %s", s_name.c_str());
+	CSE_Abstract* E = nullptr;
+	{
 
-	// Create DC (xrSE)
-	CSE_Abstract* E = F_entity_Create(*s_name);
+		E = F_entity_Create(*s_name);
+	}
 	R_ASSERT2(E, *s_name);
 
+	{
 
 	E->Spawn_Read(P);
 	if (E->s_flags.is(M_SPAWN_UPDATE))
 		E->UPDATE_Read(P);
+	}
 
-	if (!E->match_configuration())
+	bool configuration_matches = false;
 	{
+
+		configuration_matches = E->match_configuration();
+	}
+	if (!configuration_matches)
+	{
+
 		F_entity_Destroy(E);
 		return;
 	}
@@ -53,9 +62,15 @@ void CLevel::cl_Process_Spawn(NET_Packet& P)
 	game_spawn_queue.push_back(E);
 	if (g_bDebugEvents)		ProcessGameSpawns();
 	/*/
+	{
+
 	g_sv_Spawn(E);
+	}
+
+	{
 
 	F_entity_Destroy(E);
+	}
 	//*/
 };
 
@@ -100,7 +115,7 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 		lua_gc					(ai().script_engine().lua(),LUA_GCCOLLECT,0);
 		lua_gc					(ai().script_engine().lua(),LUA_GCCOLLECT,0);
 		E_mem					= Memory.mem_usage();	
-		Memory.stat_calls		= 0;
+		Memory.mem_calls_reset();
 	}
 #endif // DEBUG_MEMORY_MANAGER
 	//-----------------------------------------------------------------
@@ -116,7 +131,11 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 
 	// Client spawn
 	//	T.Start		();
-	CObject* O = Objects.Create(*E->s_name);
+	CObject* O = nullptr;
+	{
+
+		O = Objects.Create(*E->s_name);
+	}
 	// Msg				("--spawn--CREATE: %f ms",1000.f*T.GetAsync());
 
 	//	T.Start		();
@@ -146,13 +165,17 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 	}
 	else
 	{
-
+		// until now a save started from a script net_spawn must skip this half-built object
+		O->setReady(TRUE);
 #ifdef DEBUG_MEMORY_MANAGER
 		mem_alloc_gather_stats	(!!psAI_Flags.test(aiDebugOnFrameAllocs));
 #endif // DEBUG_MEMORY_MANAGER
 
 		if (!g_dedicated_server)
+		{
+
 			client_spawn_manager().callback(O);
+		}
 		//Msg			("--spawn--SPAWN: %f ms",1000.f*T.GetAsync());
 
 		if ((E->s_flags.is(M_SPAWN_OBJECT_LOCAL)) &&
@@ -195,14 +218,16 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 			GEN.write_start();
 			GEN.read_start();
 			GEN.w_u16(u16(O->ID()));
+
 			cl_Process_Event(E->ID_Parent, GE_OWNERSHIP_TAKE, GEN);
 			//*/
 		}
 
 #ifdef NET_SPAWN_AFTER_CALLBACKS
-        if (smart_cast<CGameObject*>(O))
+		if (CGameObject* game_object = smart_cast<CGameObject*>(O))
         {
-            smart_cast<CGameObject*>(O)->callback(GameObject::eNetSpawnAfter)();
+
+			game_object->callback(GameObject::eNetSpawnAfter)();
         }
 #endif
 	}
@@ -219,14 +244,17 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 		}*/ //:(
 
 	//---------------------------------------------------------
+	{
+
 	Game().OnSpawn(O);
+	}
 	//---------------------------------------------------------
 
 #ifdef DEBUG_MEMORY_MANAGER
 	if (g_bMEMO) {
 		lua_gc					(ai().script_engine().lua(),LUA_GCCOLLECT,0);
 		lua_gc					(ai().script_engine().lua(),LUA_GCCOLLECT,0);
-		Msg						("* %20s : %lld bytes, %d ops", *E->s_name,Memory.mem_usage()-E_mem, Memory.stat_calls );
+		Msg						("* %20s : %lld bytes, %u ops", *E->s_name,Memory.mem_usage()-E_mem, Memory.mem_calls_get() );
 	}
 #endif // DEBUG_MEMORY_MANAGER
 

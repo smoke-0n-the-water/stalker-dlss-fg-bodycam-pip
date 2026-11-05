@@ -324,6 +324,16 @@ void CTexture::ApplySwap()
 	swapQueued.store(false, std::memory_order_release);
 }
 
+void CTexture::surface_swap(CTexture& other)
+{
+	wait_for_loading();
+	other.wait_for_loading();
+	std::swap(pSurface, other.pSurface);
+	std::swap(desc_cache, other.desc_cache);
+	std::swap(desc, other.desc);
+	std::swap(m_pSRView, other.m_pSRView);
+}
+
 void CTexture::PostLoad()
 {
 	// Phase 2: classify once per load. DEV->ClassifyTexture() lazy-loads tex_residency.ltx on
