@@ -17,7 +17,7 @@
 #include "script_thread.h"
 #include "ai_space.h"
 
-#define LUABIND_HAS_BUGS_WITH_LUA_THREADS
+#include <luabind/detail/ref.hpp>
 
 #ifdef USE_DEBUGGER
 #	ifndef USE_LUA_STUDIO
@@ -41,7 +41,15 @@ const LPCSTR main_function = "console_command_run_string_main_thread_function";
 CScriptThread::CScriptThread(LPCSTR caNamespaceName, bool do_string, bool reload)
 {
 	m_virtual_machine = 0;
+	m_thread_reference = LUA_NOREF;
+	m_thread_vm_token = nullptr;
 	m_active = false;
+	struct MainStackRestore
+	{
+		lua_State* state;
+		int top;
+		~MainStackRestore() { lua_settop(state, top); }
+	} restore{ai().script_engine().lua(), lua_gettop(ai().script_engine().lua())};
 
 	try
 	{
@@ -78,12 +86,19 @@ CScriptThread::CScriptThread(LPCSTR caNamespaceName, bool do_string, bool reload
 		m_virtual_machine = lua_newthread(ai().script_engine().lua());
 		//		m_virtual_machine	= lua_newcthread(ai().script_engine().lua(),0);
 		VERIFY2(lua(), "Cannot create new Lua thread");
+		// Pop the new thread from the main stack into an owned registry root.
+		m_thread_vm_token = ::luabind::detail::acquire_lua_vm_token(ai().script_engine().lua());
+		m_thread_reference = ::luabind::detail::ref(ai().script_engine().lua());
+		// Script coroutines are long-lived. Pre-grow their common resume depth so
+		// the first deep callback does not resize the Lua stack on a gameplay frame.
+		if (!lua_checkstack(m_virtual_machine, 64))
+			Msg("! Lua: failed to reserve coroutine stack headroom for '%s'", *m_script_name);
 #if defined(USE_DEBUGGER) && defined(USE_LUA_STUDIO)
 		if ( ai().script_engine().debugger() )
 			ai().script_engine().debugger()->add	( m_virtual_machine );
 #endif // #if defined(USE_DEBUGGER) && defined(USE_LUA_STUDIO)
 		//		print_stack_		(ai().script_engine().lua());
-		//		m_thread_reference	= luaL_ref(ai().script_engine().lua(),LUA_REGISTRYINDEX);
+
 		//		print_stack_		(ai().script_engine().lua());
 
 		//		if (g_ca_stdout[0]) {
@@ -132,17 +147,31 @@ CScriptThread::~CScriptThread()
 		if (ai().script_engine().debugger())
 			ai().script_engine().debugger()->remove	( m_virtual_machine );
 #endif // #if defined(USE_DEBUGGER) && defined(USE_LUA_STUDIO)
-#ifndef LUABIND_HAS_BUGS_WITH_LUA_THREADS
-		luaL_unref			(ai().script_engine().lua(),LUA_REGISTRYINDEX,m_thread_reference);
-#endif
+
 	}
 	catch (...)
 	{
 	}
+	// Debugger failures must not skip ownership cleanup. The token also allows
+	// a cancelled process to be destroyed safely after VM reinitialization.
+	if (m_thread_vm_token)
+	{
+		if (m_thread_vm_token->alive && m_thread_reference != LUA_NOREF)
+			::luabind::detail::unref(m_thread_vm_token->main_state, m_thread_reference);
+		::luabind::detail::release_lua_vm_token(m_thread_vm_token);
+	}
+	m_thread_vm_token = nullptr;
+	m_thread_reference = LUA_NOREF;
+	m_virtual_machine = nullptr;
 }
 
 bool CScriptThread::update()
 {
+	if (m_thread_vm_token && !m_thread_vm_token->alive)
+	{
+		m_active = false;
+		return false;
+	}
 	if (!m_active)
 		R_ASSERT2(false, "Cannot resume dead Lua thread!");
 
@@ -150,7 +179,21 @@ bool CScriptThread::update()
 	{
 		ai().script_engine().current_thread(this);
 
-		int l_iErrorCode = lua_resume(lua(), 0);
+		string512 profile_name;
+		xr_sprintf(profile_name, "coroutine:%s", *script_name());
+		void* profile_context = ai().script_engine().begin_lua_profile_call(lua(), 0, profile_name);
+		int l_iErrorCode = LUA_ERRRUN;
+		try
+		{
+			l_iErrorCode = lua_resume(lua(), 0);
+			ai().script_engine().end_lua_profile_call(profile_context, l_iErrorCode);
+			profile_context = nullptr;
+		}
+		catch (...)
+		{
+			ai().script_engine().end_lua_profile_call(profile_context, l_iErrorCode);
+			throw;
+		}
 
 		if (l_iErrorCode && (l_iErrorCode != LUA_YIELD))
 		{

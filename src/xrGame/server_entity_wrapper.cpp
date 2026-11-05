@@ -58,32 +58,98 @@ void CServerEntityWrapper::load(IReader& stream)
 	IReader* chunk;
 
 	chunk = stream.open_chunk(0);
+	if (!chunk)
+	{
+		R_ASSERT2(false, "Cannot find server entity spawn chunk");
+		return;
+	}
+	if (chunk->elapsed() < int(sizeof(u16)))
+	{
+		chunk->close();
+		R_ASSERT2(false, "Corrupted server entity spawn chunk");
+		return;
+	}
 
-	net_packet.B.count = chunk->r_u16();
+	const u16 spawn_packet_size = chunk->r_u16();
+	if (spawn_packet_size < sizeof(u16) || spawn_packet_size > NET_PacketSizeLimit ||
+		int(spawn_packet_size) > chunk->elapsed())
+	{
+		chunk->close();
+		R_ASSERT2(false, "Invalid or truncated server entity spawn packet");
+		return;
+	}
+	net_packet.B.count = spawn_packet_size;
 	chunk->r(net_packet.B.data, net_packet.B.count);
 
 	chunk->close();
 
 	net_packet.r_begin(ID);
-	R_ASSERT2(M_SPAWN == ID, "Invalid packet ID (!= M_SPAWN)!");
+	if (M_SPAWN != ID)
+	{
+		R_ASSERT2(false, "Invalid packet ID (!= M_SPAWN)!");
+		return;
+	}
 
 	string64 s_name;
-	net_packet.r_stringZ(s_name);
+	const u8* section_begin = net_packet.B.data + net_packet.r_pos;
+	const void* section_end = memchr(section_begin, 0, net_packet.r_elapsed());
+	if (!net_packet.r_elapsed() || !section_end ||
+		u32(static_cast<const u8*>(section_end) - section_begin) >= sizeof(s_name))
+	{
+		R_ASSERT2(false, "Unterminated server entity section name");
+		return;
+	}
+	net_packet.r_stringZ_s(s_name);
 
 	m_object = F_entity_Create(s_name);
 
-	R_ASSERT3(m_object, "Can't create entity.", s_name);
+	if (!m_object)
+	{
+		R_ASSERT3(false, "Can't create entity.", s_name);
+		return;
+	}
 	m_object->Spawn_Read(net_packet);
 
 	chunk = stream.open_chunk(1);
+	if (!chunk)
+	{
+		F_entity_Destroy(m_object);
+		m_object = nullptr;
+		R_ASSERT2(false, "Cannot find server entity update chunk");
+		return;
+	}
+	if (chunk->elapsed() < int(sizeof(u16)))
+	{
+		chunk->close();
+		F_entity_Destroy(m_object);
+		m_object = nullptr;
+		R_ASSERT2(false, "Corrupted server entity update chunk");
+		return;
+	}
 
-	net_packet.B.count = chunk->r_u16();
+	const u16 update_packet_size = chunk->r_u16();
+	if (update_packet_size < sizeof(u16) || update_packet_size > NET_PacketSizeLimit ||
+		int(update_packet_size) > chunk->elapsed())
+	{
+		chunk->close();
+		F_entity_Destroy(m_object);
+		m_object = nullptr;
+		R_ASSERT2(false, "Invalid or truncated server entity update packet");
+		return;
+	}
+	net_packet.B.count = update_packet_size;
 	chunk->r(net_packet.B.data, net_packet.B.count);
 
 	chunk->close();
 
 	net_packet.r_begin(ID);
-	R_ASSERT2(M_UPDATE == ID, "Invalid packet ID (!= M_UPDATE)!");
+	if (M_UPDATE != ID)
+	{
+		F_entity_Destroy(m_object);
+		m_object = nullptr;
+		R_ASSERT2(false, "Invalid packet ID (!= M_UPDATE)!");
+		return;
+	}
 	m_object->UPDATE_Read(net_packet);
 }
 

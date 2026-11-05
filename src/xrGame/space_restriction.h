@@ -82,6 +82,8 @@ public:
 	void remove_border();
 	template <typename T1, typename T2>
 	IC void add_border(T1 p1, T2 p2);
+	template <typename T1, typename T2>
+	IC void collect_border(T1 p1, T2 p2, xr_vector<u32>& result);
 	u32 accessible_nearest(const Fvector& position, Fvector& result);
 	bool accessible(const Fsphere& sphere);
 	bool accessible(u32 level_vertex_id, float radius);

@@ -25,6 +25,7 @@
 #include <luabind/lua_include.hpp>
 
 #include <luabind/config.hpp>
+#include <luabind/detail/ref.hpp>
 #include <luabind/weak_ref.hpp>
 #include <cassert>
 
@@ -96,9 +97,18 @@ namespace luabind {
             : count(0)
             , state(s)
             , ref(0)
+
+            , vm_token(nullptr)
+            , registry_identity(nullptr)
         {
             lua_pushvalue(s, index);
             get_weak_table(s);
+            vm_token = detail::acquire_lua_vm_token(s);
+            // Weak wrapper references use a VM-lifetime state, without rooting
+            // a coroutine which may itself contain this Lua-owned wrapper.
+            state = vm_token->main_state;
+            registry_identity = lua_topointer(s, -1);
+
 
             lua_rawgeti(s, -1, freelist_ref);
             ref = (int)lua_tonumber(s, -1);
@@ -125,17 +135,32 @@ namespace luabind {
 
         ~impl()
         {
-            get_weak_table(state);
-            lua_rawgeti(state, -1, freelist_ref);
-            lua_rawseti(state, -2, ref);
-            lua_pushnumber(state, (lua_Number)ref);
-            lua_rawseti(state, -2, freelist_ref);
-            lua_pop(state, 1);
+            // invalidate() is called before the owning Lua VM is closed. The
+            // C++ weak_ref may live longer than the VM, in which case there is
+            // no Lua slot left to recycle.
+            if (vm_token->alive)
+            {
+                get_weak_table(state);
+                if (lua_topointer(state, -1) == registry_identity)
+                {
+                    lua_rawgeti(state, -1, freelist_ref);
+                    lua_rawseti(state, -2, ref);
+                    lua_pushnumber(state, (lua_Number)ref);
+                    lua_rawseti(state, -2, freelist_ref);
+                }
+                lua_pop(state, 1);
+
+            }
+
+            detail::release_lua_vm_token(vm_token);
         }
 
         int count;
         lua_State* state;
         int ref;
+
+        detail::lua_vm_token* vm_token;
+        const void* registry_identity;
     };
 
     weak_ref::weak_ref()
@@ -174,9 +199,20 @@ namespace luabind {
         std::swap(m_impl, other.m_impl);
     }
 
+    bool weak_ref::empty() const
+    {
+        return !m_impl || !m_impl->vm_token->alive;
+    }
+
+    void weak_ref::invalidate(lua_State* L)
+    {
+        assert(L);
+        detail::invalidate_lua_vm(L);
+    }
+
     int weak_ref::id() const
     {
-        assert(m_impl);
+		assert(m_impl && m_impl->state);
 		return m_impl->ref;
     }
 
@@ -186,18 +222,30 @@ namespace luabind {
 	// the same globals table.
     void weak_ref::get(lua_State* L) const
     {
-        assert(m_impl);
 		assert(L);
+
+        if (!m_impl || !m_impl->vm_token->alive)
+        {
+            lua_pushnil(L);
+            return;
+        }
+
         get_weak_table(L);
+		if (lua_topointer(L, -1) != m_impl->registry_identity)
+		{
+			lua_pop(L, 1);
+			lua_pushnil(L);
+			return;
+		}
+
         lua_rawgeti(L, -1, m_impl->ref);
         lua_remove(L, -2);
     }
 
     lua_State* weak_ref::state() const
     {
-        assert(m_impl);
+		assert(m_impl && m_impl->state);
         return m_impl->state;
     }
     
 } // namespace luabind
-

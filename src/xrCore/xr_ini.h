@@ -92,6 +92,40 @@ public:
 private:
 	string_path m_file_name;
 	Root DATA;
+
+	// Lookups by a plain C string (every script ini call) must not intern it as shared_str: that takes a
+	// global shard lock and refcounts, and inserts a new string on every miss. Names are hashed by content
+	// (shared_str already keeps its CRC) and a C string view is compared against the stored name.
+	struct name_view
+	{
+		LPCSTR str;
+		u32 length;
+		size_t crc; // same xr_hash as str_value::hash
+		explicit name_view(LPCSTR s);
+	};
+	struct name_hash
+	{
+		using is_transparent = void;
+		size_t operator()(const shared_str& s) const { return s._get() ? s._get()->hash : 0; }
+		size_t operator()(const name_view& v) const { return v.crc; }
+	};
+	struct name_equal
+	{
+		using is_transparent = void;
+		bool operator()(const shared_str& a, const shared_str& b) const { return a == b; }
+		bool operator()(const name_view& v, const shared_str& s) const { return same(s, v); }
+		bool operator()(const shared_str& s, const name_view& v) const { return same(s, v); }
+		static bool same(const shared_str& s, const name_view& v)
+		{
+			const str_value* p = s._get();
+			return p && p->hash == v.crc && p->length == v.length && !memcmp(p->value, v.str, v.length);
+		}
+	};
+	using name_lookup = robin_hood::unordered_flat_map<shared_str, u32, name_hash, name_equal>;
+	name_lookup m_SectionLookup;
+	xr_vector<name_lookup> m_LineLookup;
+	void RebuildLineLookup(u32 section_index);
+	void RebuildLookupCaches();
 	void Load(IReader* F, LPCSTR path
 #ifndef _EDITOR
 	          , allow_include_func_t allow_include_func = NULL
@@ -127,7 +161,15 @@ public:
 	bool DLTX_isOverride(LPCSTR sec, LPCSTR line);
 	
 private:
-	static xr_unordered_flat_map<xr_string, Root> CachedData;
+	struct CachedIniData
+	{
+		Root data;
+		size_t approx_bytes = 0;
+		u64 last_use = 0;
+	};
+	static xr_unordered_flat_map<xr_string, CachedIniData> CachedData;
+	static size_t CachedDataBytes;
+	static u64 CachedDataClock;
 	static xrCriticalSection CacheCS;
 
 public:
@@ -135,37 +177,11 @@ public:
 	static void CInifile::GetCacheStats(u64& files_cached, u64& total_bytes, u64& section_count)
 	{
         xrCriticalSectionGuard g(CacheCS);
-		total_bytes = 0;
+		total_bytes = static_cast<u64>(CachedDataBytes);
 		section_count = 0;
 		files_cached = CachedData.size();
-        xr_unordered_flat_set<shared_str> strings;
-
 		for (const auto& file_pair : CachedData)
-		{
-			// Size of the file path string
-			total_bytes += file_pair.first.capacity();
-
-			// Inner map overhead
-			for (const auto& sect_pair : file_pair.second)
-			{
-				section_count++;
-				// Each section name
-				// Plus the overhead of the xr_vector structure
-                strings.insert(sect_pair.Name);
-				total_bytes += sizeof(sect_pair.Name) + sizeof(sect_pair.Data);
-
-                // Items
-                for (const auto& d : sect_pair.Data)
-                {
-                    strings.insert(d.first);
-                    strings.insert(d.second);
-                    strings.insert(d.filename);
-                    total_bytes += sizeof(d.depth) + sizeof(d.insertionIndex) + sizeof(d.first) + sizeof(d.second) + sizeof(d.filename);
-                }
-			}
-		}
-        for (const auto& s : strings)
-            total_bytes += s.size();
+			section_count += file_pair.second.data.size();
 	}
 
 private:
@@ -243,7 +259,7 @@ private:
 		Sect*& CurrentOverride,
 		string_path currentFileName
 	);
-	Items EvaluateSection(
+	const Items& EvaluateSection(
 		shared_str SectionName,
 		EvaluationsContext& Evaluations,
 		string_path currentFileName

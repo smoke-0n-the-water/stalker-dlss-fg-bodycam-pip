@@ -1,4 +1,4 @@
-////////////////////////////////////////////////////////////////////////////
+﻿////////////////////////////////////////////////////////////////////////////
 //	Module 		: xrServer_Objects_ALife.h
 //	Created 	: 19.09.2002
 //  Modified 	: 04.06.2003
@@ -349,47 +349,45 @@ shared_str CSE_ALifeTraderAbstract::specific_character()
 		m_CheckedCharacters.clear();
 		m_DefaultCharacters.clear();
 
-		for (int i = 0; i <= CSpecificCharacter::GetMaxIndex(); i++)
-		{
+		const SCharacterProfile* const character_data = char_info.data();
+		const shared_str& character_class = character_data->m_Class;
+		const CHARACTER_RANK_VALUE character_rank = character_data->m_Rank;
+		const CHARACTER_REPUTATION_VALUE character_reputation = character_data->m_Reputation;
+		const xr_vector<shared_str>& candidate_ids = CSpecificCharacter::RandomSelectionIds(character_class);
 			CSpecificCharacter spec_char;
-			shared_str id = CSpecificCharacter::IndexToId(i);
+
+#ifdef XRGAME_EXPORTS
+		CSpecificCharacter::BeginLoadProfileBatch();
+#endif
+		for (const shared_str& id : candidate_ids)
+		{
 			spec_char.Load(id);
+			const SSpecificCharacterData* const spec_data = spec_char.data();
 
-			if (spec_char.data()->m_bNoRandom) continue;
-
-			bool class_found = false;
-			for (std::size_t j = 0; j < spec_char.data()->m_Classes.size(); j++)
-			{
-				if (char_info.data()->m_Class == spec_char.data()->m_Classes[j])
-				{
-					class_found = true;
-					break;
-				}
-			}
-			if (!char_info.data()->m_Class.size() || class_found)
-			{
-				//запомнить пподходящий персонаж с флажком m_bDefaultForCommunity
-				if (spec_char.data()->m_bDefaultForCommunity)
+			// The immutable index already removed no_random and non-matching class
+			// entries in original XML order. Keep all rank/reputation/default/registry
+			// checks exactly where they were so random-selection semantics are unchanged.
+			if (spec_data->m_bDefaultForCommunity)
 					m_DefaultCharacters.push_back(id);
 
-				if (char_info.data()->m_Rank == NO_RANK || _abs(spec_char.Rank() - char_info.data()->m_Rank) <
-					RANK_DELTA)
+			if (character_rank == NO_RANK || _abs(spec_data->m_Rank - character_rank) < RANK_DELTA)
 				{
-					if (char_info.data()->m_Reputation == NO_REPUTATION || _abs(
-						spec_char.Reputation() - char_info.data()->m_Reputation) < REPUTATION_DELTA)
+				if (character_reputation == NO_REPUTATION ||
+					_abs(spec_data->m_Reputation - character_reputation) < REPUTATION_DELTA)
 					{
 #ifdef XRGAME_EXPORTS
 						int* count = NULL;
 						if(ai().get_alife())
 							count = ai().alife().registry().get<CSpecificCharacterRegistry>().object(id, true);
-						//если индекс еще не был использован
 						if (NULL == count)
 #endif
 							m_CheckedCharacters.push_back(id);
 					}
 				}
 			}
-		}
+#ifdef XRGAME_EXPORTS
+		CSpecificCharacter::EndLoadProfileBatch(character_profile().c_str(), 0);
+#endif
 		VERIFY3(!m_DefaultCharacters.empty(),
 		          "no default specific character set for class", *char_info.data()->m_Class);
 

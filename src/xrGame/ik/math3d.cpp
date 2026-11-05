@@ -31,6 +31,43 @@
  */
 #include "StdAfx.h"
 #include "math3d.h"
+#include <immintrin.h>
+
+namespace
+{
+IC __m256 matrix_row_pair_coeff(const float low, const float high)
+{
+	return _mm256_setr_ps(low, low, low, low, high, high, high, high);
+}
+
+IC __m256 matrix_broadcast_row(const float* row)
+{
+	return _mm256_broadcast_ps(reinterpret_cast<const __m128*>(row));
+}
+
+IC __m256 matrix_mul_pair4(const float* low_row, const float* high_row, const Matrix right)
+{
+	__m256 result = _mm256_mul_ps(matrix_row_pair_coeff(low_row[0], high_row[0]), matrix_broadcast_row(right[0]));
+	result = _mm256_add_ps(result, _mm256_mul_ps(matrix_row_pair_coeff(low_row[1], high_row[1]), matrix_broadcast_row(right[1])));
+	result = _mm256_add_ps(result, _mm256_mul_ps(matrix_row_pair_coeff(low_row[2], high_row[2]), matrix_broadcast_row(right[2])));
+	result = _mm256_add_ps(result, _mm256_mul_ps(matrix_row_pair_coeff(low_row[3], high_row[3]), matrix_broadcast_row(right[3])));
+	return result;
+}
+
+IC __m256 matrix_mul_pair3(const float* low_row, const float* high_row, const Matrix right)
+{
+	__m256 result = _mm256_mul_ps(matrix_row_pair_coeff(low_row[0], high_row[0]), matrix_broadcast_row(right[0]));
+	result = _mm256_add_ps(result, _mm256_mul_ps(matrix_row_pair_coeff(low_row[1], high_row[1]), matrix_broadcast_row(right[1])));
+	result = _mm256_add_ps(result, _mm256_mul_ps(matrix_row_pair_coeff(low_row[2], high_row[2]), matrix_broadcast_row(right[2])));
+	return result;
+}
+
+IC __m256 clear_homogeneous_w(__m256 value)
+{
+	const __m256 mask = _mm256_castsi256_ps(_mm256_setr_epi32(-1, -1, -1, 0, -1, -1, -1, 0));
+	return _mm256_and_ps(value, mask);
+}
+}
 
 #ifndef JACK
 
@@ -46,202 +83,94 @@ Matrix idmat =
 void
 matmult(Matrix A, Matrix B, Matrix C)
 /*
- * Multiply 4x4 matrices:
- *
- *  A = B * C
- *
- * Don't use this if the matrices are homogeneous: use hmatmult instead!
- *
- * A *CAN* point to the same matrix as B or C.
+ * Multiply two arbitrary 4x4 matrices.  Two destination rows are evaluated
+ * together so every right-hand row load feeds both independent dot-product
+ * chains.  The temporary keeps the documented A == B / A == C behaviour.
  */
 {
-	int i, j, k;
-	Matrix a;
-
-
-	for (i = 0; i < 4; i++)
-	{
-		for (j = 0; j < 4; j++)
-		{
-			a[i][j] = 0.0;
-			for (k = 0; k < 4; k++)
-			{
-				a[i][j] += B[i][k] * C[k][j];
-			}
-		}
-	}
-	cpmatrix(A, a);
+	Matrix result;
+	_mm256_storeu_ps(&result[0][0], matrix_mul_pair4(B[0], B[1], C));
+	_mm256_storeu_ps(&result[2][0], matrix_mul_pair4(B[2], B[3], C));
+	_mm256_zeroupper();
+	CopyMemory(A, result, sizeof(result));
 }
 
 void hmatmult(Matrix A, Matrix B, Matrix C)
 /*
- * Homogeneous transformation multiplication:
- *
- * A = B * C
- *
- * This routine is optimized for homogeneous transformations. It does
- * *NOT* work on arbitrary 4x4 matrices.
- *
- * A *CAN* point to the same matrix as B or C.
+ * Homogeneous transform multiplication.  The upper three rows omit the
+ * known-zero fourth column, while the translation row adds C translation
+ * directly.  A local result preserves aliasing support.
  */
 {
-	register float *a, *b, *c, *bp, *cp;
-	register float *bmax, *cmax, *cpmax;
-	register float *b32, *c00, *c03;
-	Matrix Bt, Ct;
+	Matrix result;
+	const __m256 upper = clear_homogeneous_w(matrix_mul_pair3(B[0], B[1], C));
+	_mm256_storeu_ps(&result[0][0], upper);
 
-	if (A == B)
-	{
-		cpmatrix(Bt, B);
-		bmax = &Bt[3][0];
-		b = &Bt[0][0];
-		b32 = &Bt[3][2];
-	}
-	else
-	{
-		bmax = &B[3][0];
-		b = &B[0][0];
-		b32 = &B[3][2];
-	}
+	__m256 lower = clear_homogeneous_w(matrix_mul_pair3(B[2], B[3], C));
+	const __m128 translation = _mm_setr_ps(C[3][0], C[3][1], C[3][2], 1.f);
+	lower = _mm256_insertf128_ps(lower, _mm_add_ps(_mm256_extractf128_ps(lower, 1), translation), 1);
+	_mm256_storeu_ps(&result[2][0], lower);
 
-	if (A == C)
-	{
-		cpmatrix(Ct, C);
-		c00 = &Ct[0][0];
-		c03 = &Ct[0][3];
-	}
-	else
-	{
-		c00 = &C[0][0];
-		c03 = &C[0][3];
-	}
-
-	a = (float *)&A[0][0];
-
-	while (b < bmax)
-	{
-		c = c00;
-		cmax = c03;
-		while (c < cmax)
-		{
-			cp = c;
-			cpmax = c + 8;
-			bp = b;
-			*a = (*bp++) * (*cp);
-			do
-			{
-				cp += 4;
-				*a += *bp++ * (*cp);
-			}
-			while (cp < cpmax);
-			a++;
-			c++;
-		}
-		b += 4;
-		*a++ = 0.0;
-	}
-
-	c = c00;
-	cmax = c03;
-	while (c < cmax)
-	{
-		cp = c + 12;
-		bp = b32;
-		*a = *cp;
-		do
-		{
-			cp -= 4;
-			*a += *bp-- * (*cp);
-		}
-		while (cp > c);
-		a++;
-		c++;
-	}
-	*a = 1.0;
+	_mm256_zeroupper();
+	CopyMemory(A, result, sizeof(result));
 }
 
 void inverthomomatrix(Matrix N, Matrix M)
-/*
- * Invert a homogeneous transform.  A homogeneous transform is any
- * combination of rotation and translation, but no scaling or perspective!
- * This does not check where the matrix is homogeneous.
- * 
- * n = inverse of m
- */
+/* Invert a rotation + translation homogeneous transform. */
 {
-	register float *n, *m, *nmax, *C, *m3;
+	const __m256 rows01 = _mm256_loadu_ps(&M[0][0]);
+	const __m256 rows23 = _mm256_loadu_ps(&M[2][0]);
+	__m128 r0 = _mm256_castps256_ps128(rows01);
+	__m128 r1 = _mm256_extractf128_ps(rows01, 1);
+	__m128 r2 = _mm256_castps256_ps128(rows23);
+	__m128 r3 = _mm256_extractf128_ps(rows23, 1);
+	_MM_TRANSPOSE4_PS(r0, r1, r2, r3);
 
-	nmax = &N[2][3];
-	n = &N[0][0];
-	C = &M[0][0];
-	while (n < nmax)
-	{
-		m = C;
-		*n++ = *m;
-		m += 4;
-		*n++ = *m;
-		m += 4;
-		*n++ = *m;
-		*n++ = 0.0;
-		C++;
-	}
-
-	m3 = &M[3][0];
-
-	m = &M[0][0];
-	*n++ = - DOT(m3, m);
-
-	m = &M[1][0];
-	*n++ = - DOT(m3, m);
-
-	m = &M[2][0];
-	*n++ = - DOT(m3, m);
-
-	*n++ = 1.0;
+	const float tx = -(M[3][0] * M[0][0] + M[3][1] * M[0][1] + M[3][2] * M[0][2]);
+	const float ty = -(M[3][0] * M[1][0] + M[3][1] * M[1][1] + M[3][2] * M[1][2]);
+	const float tz = -(M[3][0] * M[2][0] + M[3][1] * M[2][1] + M[3][2] * M[2][2]);
+	const __m128 xyz_mask = _mm_castsi128_ps(_mm_setr_epi32(-1, -1, -1, 0));
+	_mm_storeu_ps(&N[0][0], _mm_and_ps(r0, xyz_mask));
+	_mm_storeu_ps(&N[1][0], _mm_and_ps(r1, xyz_mask));
+	_mm_storeu_ps(&N[2][0], _mm_and_ps(r2, xyz_mask));
+	N[3][0] = tx;
+	N[3][1] = ty;
+	N[3][2] = tz;
+	N[3][3] = 1.f;
+	_mm256_zeroupper();
 }
 
 void vecmult0(float y[], float x[], Matrix M)
-/*
- * 'direction' transformation:
- * y = x * M, with y[3] = 0
- */
+/* Direction transform: y = x * M, with y.w = 0. */
 {
-	register int i, j;
-	float Y[3];
-
-	for (i = 0; i < 3; i++)
-	{
-		Y[i] = 0;
-		for (j = 0; j < 3; j++)
-		{
-			Y[i] += x[j] * M[j][i];
-		}
-	}
-	y[0] = Y[0];
-	y[1] = Y[1];
-	y[2] = Y[2];
+	const float x0 = x[0];
+	const float x1 = x[1];
+	const float x2 = x[2];
+	__m128 result = _mm_mul_ps(_mm_set1_ps(x0), _mm_loadu_ps(M[0]));
+	result = _mm_add_ps(result, _mm_mul_ps(_mm_set1_ps(x1), _mm_loadu_ps(M[1])));
+	result = _mm_add_ps(result, _mm_mul_ps(_mm_set1_ps(x2), _mm_loadu_ps(M[2])));
+	alignas(16) float transformed[4];
+	_mm_store_ps(transformed, result);
+	y[0] = transformed[0];
+	y[1] = transformed[1];
+	y[2] = transformed[2];
 }
 
 void vecmult(float y[], float x[], Matrix M)
-/*
- * point transformation:
- * y = x * M, with y[3] = 1
- */
+/* Point transform: y = x * M, with y.w = 1. */
 {
-	register int i, j;
-	float Y[3];
-
-	for (i = 0; i < 3; i++)
-	{
-		Y[i] = M[3][i];
-		for (j = 0; j < 3; j++)
-		{
-			Y[i] += x[j] * M[j][i];
-		}
-	}
-	y[0] = Y[0];
-	y[1] = Y[1];
-	y[2] = Y[2];
+	const float x0 = x[0];
+	const float x1 = x[1];
+	const float x2 = x[2];
+	__m128 result = _mm_loadu_ps(M[3]);
+	result = _mm_add_ps(result, _mm_mul_ps(_mm_set1_ps(x0), _mm_loadu_ps(M[0])));
+	result = _mm_add_ps(result, _mm_mul_ps(_mm_set1_ps(x1), _mm_loadu_ps(M[1])));
+	result = _mm_add_ps(result, _mm_mul_ps(_mm_set1_ps(x2), _mm_loadu_ps(M[2])));
+	alignas(16) float transformed[4];
+	_mm_store_ps(transformed, result);
+	y[0] = transformed[0];
+	y[1] = transformed[1];
+	y[2] = transformed[2];
 }
 
 
@@ -603,100 +532,34 @@ void find_normal_vector(float v[3], float n[3])
 //
 void rmatmult(Matrix A, Matrix B, Matrix C)
 {
-	Matrix Temp1;
-	Matrix Temp2;
+	Matrix result;
+	_mm256_storeu_ps(&result[0][0], clear_homogeneous_w(matrix_mul_pair3(B[0], B[1], C)));
 
-	register float* a = (float *)A;
-	register float* b;
-	register float* c;
+	__m256 lower = clear_homogeneous_w(matrix_mul_pair3(B[2], B[3], C));
+	lower = _mm256_insertf128_ps(lower, _mm_setr_ps(0.f, 0.f, 0.f, 1.f), 1);
+	_mm256_storeu_ps(&result[2][0], lower);
 
-	if (A == B)
-	{
-		cpmatrix(Temp1, B);
-		b = (float *)Temp1;
-	}
-	else
-		b = (float *)B;
-	if (A == C)
-	{
-		cpmatrix(Temp2, C);
-		c = (float *)Temp2;
-	}
-	else
-		c = (float *)C;
-
-	float c11 = *c++;
-	float c12 = *c++;
-	float c13 = *c++;
-	c++;
-	float c21 = *c++;
-	float c22 = *c++;
-	float c23 = *c++;
-	c++;
-	float c31 = *c++;
-	float c32 = *c++;
-	float c33 = *c++;
-	float v1, v2, v3;
-
-	v1 = *b++;
-	v2 = *b++;
-	v3 = *b++;
-	b++;
-	*a++ = v1 * c11 + v2 * c21 + v3 * c31;
-	*a++ = v1 * c12 + v2 * c22 + v3 * c32;
-	*a++ = v1 * c13 + v2 * c23 + v3 * c33;
-	*a++ = 0;
-
-	v1 = *b++;
-	v2 = *b++;
-	v3 = *b++;
-	b++;
-	*a++ = v1 * c11 + v2 * c21 + v3 * c31;
-	*a++ = v1 * c12 + v2 * c22 + v3 * c32;
-	*a++ = v1 * c13 + v2 * c23 + v3 * c33;
-	*a++ = 0;
-
-	v1 = *b++;
-	v2 = *b++;
-	v3 = *b++;
-	*a++ = v1 * c11 + v2 * c21 + v3 * c31;
-	*a++ = v1 * c12 + v2 * c22 + v3 * c32;
-	*a++ = v1 * c13 + v2 * c23 + v3 * c33;
-	*a++ = 0;
-
-	*a++ = 0;
-	*a++ = 0;
-	*a++ = 0;
-	*a = 1;
+	_mm256_zeroupper();
+	CopyMemory(A, result, sizeof(result));
 }
 
 void invertrmatrix(Matrix N, Matrix M)
-/*
- * Invert a rotation matrix 
- * n = inverse of m
- */
+/* Invert a pure rotation matrix. */
 {
-	register float *n, *m, *nmax, *C;
+	const __m256 rows01 = _mm256_loadu_ps(&M[0][0]);
+	const __m256 rows23 = _mm256_loadu_ps(&M[2][0]);
+	__m128 r0 = _mm256_castps256_ps128(rows01);
+	__m128 r1 = _mm256_extractf128_ps(rows01, 1);
+	__m128 r2 = _mm256_castps256_ps128(rows23);
+	__m128 r3 = _mm256_extractf128_ps(rows23, 1);
+	_MM_TRANSPOSE4_PS(r0, r1, r2, r3);
 
-	nmax = &N[2][3];
-	n = &N[0][0];
-	C = &M[0][0];
-	while (n < nmax)
-	{
-		m = C;
-		*n++ = *m;
-		m += 4;
-		*n++ = *m;
-		m += 4;
-		*n++ = *m;
-		*n++ = 0.0;
-		C++;
-	}
-
-	*n++ = 0;
-	*n++ = 0;
-	*n++ = 0;
-	*n++ = 1.0;
+	const __m128 xyz_mask = _mm_castsi128_ps(_mm_setr_epi32(-1, -1, -1, 0));
+	_mm_storeu_ps(&N[0][0], _mm_and_ps(r0, xyz_mask));
+	_mm_storeu_ps(&N[1][0], _mm_and_ps(r1, xyz_mask));
+	_mm_storeu_ps(&N[2][0], _mm_and_ps(r2, xyz_mask));
+	_mm_storeu_ps(&N[3][0], _mm_setr_ps(0.f, 0.f, 0.f, 1.f));
+	_mm256_zeroupper();
 }
 
 //

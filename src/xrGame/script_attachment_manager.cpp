@@ -60,6 +60,7 @@ script_attachment::script_attachment(LPCSTR name, LPCSTR model_name)
 	m_parent_object = nullptr;
 	m_parent_level = false;
 	m_script_ui = nullptr;
+	m_script_ui_owner = nullptr;
 	m_script_ui_func = 0;
 	m_script_ui_mat = Fidentity;
 	m_script_ui_offset[0].set(0, 0, 0);
@@ -82,6 +83,7 @@ script_attachment::script_attachment(LPCSTR name, LPCSTR model_name)
 	m_anim_end = 0;
 	m_type = eSA_World;
 	m_last_upd_frame = 0;
+	m_invalid_bone_warning_reported = false;
 	m_current_motion = "idle";
 	m_model_name = "";
 	m_userdata = nullptr;
@@ -129,6 +131,7 @@ void script_attachment::spatial_move()
 
 void script_attachment::renderable_Render(IDSGraphManager* DM)
 {
+
 	if (GetType() != eSA_World) return;
 
 	if (m_script_light)
@@ -167,6 +170,7 @@ void script_attachment::renderable_Render(IDSGraphManager* DM)
 
 void script_attachment::Render(IKinematics* model, Fmatrix* mat, IDSGraphManager* DM)
 {
+
 	if (!model || (m_bone_callbacks[0] && m_bone_callbacks[0]->m_bone_id != BI_NONE))
 		renderable.xform = *mat;
 	else
@@ -211,7 +215,7 @@ void script_attachment::Update()
 	if (m_last_upd_frame == Device.dwFrame) return;
 	m_last_upd_frame = Device.dwFrame;
 
-	if (m_script_ui)
+	if (m_script_ui && m_script_ui_owner && m_script_ui_owner->is_valid())
 		m_script_ui->Update();
 
 	if (m_bStopAtEndAnimIsRunning && Device.dwTimeGlobal >= m_anim_end)
@@ -297,7 +301,7 @@ void script_attachment::Update()
 
 void script_attachment::RenderUI()
 {
-	if (m_script_ui)
+	if (m_script_ui && m_script_ui_owner && m_script_ui_owner->is_valid())
 	{
 		IUIRender::ePointType bk;
 
@@ -669,7 +673,8 @@ extern BOOL print_bone_warnings;
 Fmatrix script_attachment::bone_transform(u16 bone_id)
 {
 	if (bone_id == BI_NONE || bone_id >= m_kinematics->LL_BoneCount()) {
-		if (Core.isDebug() && print_bone_warnings) {
+		if (Core.isDebug() && print_bone_warnings && !m_invalid_bone_warning_reported) {
+			m_invalid_bone_warning_reported = true;
 			Msg("![bone_position] Incorrect bone_id provided for %s (%s), fallback to root bone", GetName(), GetModelScript());
 			ai().script_engine().print_stack();
 		}
@@ -739,6 +744,7 @@ void script_attachment::LoadModel(LPCSTR model_name, bool keep_bc)
 		return;
 
 	m_model_name = model_name;
+	m_invalid_bone_warning_reported = false;
 
 	u16 count_prev = 0;
 
@@ -864,17 +870,26 @@ void script_attachment::SetUserdata(::luabind::object obj)
 
 void script_attachment::SetScriptUI(LPCSTR ui_func)
 {
-	if (m_script_ui_func != nullptr && 0 == xr_strcmp(m_script_ui_func, ui_func)) return;
+	if (!ui_func || !ui_func[0])
+		return;
+	const shared_str requested_function = ui_func;
+	if (m_script_ui_owner && m_script_ui_owner->is_valid() &&
+		m_script_ui_func.size() && !xr_strcmp(*m_script_ui_func, *requested_function))
+		return;
 
-	::luabind::functor<CUIDialogWndEx*> funct;
+	::luabind::functor<::luabind::object> funct;
 
 	if (ai().script_engine().functor(ui_func, funct))
 	{
-		CUIDialogWndEx* ret = funct();
+		::luabind::object result = funct();
+		CUIDialogWndEx* ret = ::luabind::object_cast<CUIDialogWndEx*>(result);
 		CUIWindow* pScriptWnd = ret ? smart_cast<CUIWindow*>(ret) : (0);
 		if (pScriptWnd)
 		{
-			m_script_ui_func = ui_func;
+			::luabind::object* owner = xr_new<::luabind::object>(result);
+			xr_delete(m_script_ui_owner);
+			m_script_ui_owner = owner;
+			m_script_ui_func = requested_function;
 			m_script_ui = pScriptWnd;
 		}
 		else
@@ -982,10 +997,12 @@ void script_attachment::SetBoneCallback(u16 bone_id, u16 parent_bone, bool overw
 		return;
 	}
 
-	if (m_bone_callbacks[bone_id])
+	auto callback_it = m_bone_callbacks.find(bone_id);
+	if (callback_it != m_bone_callbacks.end())
 	{
 		m_kinematics->LL_GetBoneInstance(bone_id).reset_callback();
-		m_bone_callbacks.erase(bone_id);
+		xr_delete(callback_it->second);
+		m_bone_callbacks.erase(callback_it);
 	}
 
 	m_bone_callbacks[bone_id] = xr_new<script_attachment_bone_cb>(parent_bone, this, bone_id, overwrite);
@@ -1000,10 +1017,12 @@ void script_attachment::SetBoneCallback(u16 bone_id, const ::luabind::functor<Fm
 		return;
 	}
 
-	if (m_bone_callbacks[bone_id])
+	auto callback_it = m_bone_callbacks.find(bone_id);
+	if (callback_it != m_bone_callbacks.end())
 	{
 		m_kinematics->LL_GetBoneInstance(bone_id).reset_callback();
-		m_bone_callbacks.erase(bone_id);
+		xr_delete(callback_it->second);
+		m_bone_callbacks.erase(callback_it);
 	}
 
 	m_bone_callbacks[bone_id] = xr_new<script_attachment_bone_cb>(func, this, bone_id, overwrite);
@@ -1014,10 +1033,12 @@ void script_attachment::SetBoneCallback(u16 bone_id, const ::luabind::functor<Fm
 
 void script_attachment::RemoveBoneCallback(u16 bone_id)
 {
-	if (m_bone_callbacks[bone_id])
+	auto callback_it = m_bone_callbacks.find(bone_id);
+	if (callback_it != m_bone_callbacks.end())
 	{
 		m_kinematics->LL_GetBoneInstance(bone_id).reset_callback();
-		m_bone_callbacks.erase(bone_id);
+		xr_delete(callback_it->second);
+		m_bone_callbacks.erase(callback_it);
 	}
 }
 

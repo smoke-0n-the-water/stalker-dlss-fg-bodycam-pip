@@ -13,4 +13,5 @@ IC CALifeStorageManager::CALifeStorageManager(xrServer* server, LPCSTR section) 
 {
 	m_section = section;
 	xr_strcpy(m_save_name, "");
+	m_last_save_succeeded = false;
 }

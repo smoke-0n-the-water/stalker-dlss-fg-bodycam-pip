@@ -12,6 +12,13 @@ IC CAgentMemoryManager::CAgentMemoryManager(CAgentManager* object)
 {
 	VERIFY(object);
 	m_object = object;
+	m_visible_objects = 0;
+	m_sound_objects = 0;
+	m_hit_objects = 0;
+	m_visual_merge_indices_valid = false;
+	m_visual_merge_source_size = 0;
+	m_visual_merge_member_count = 0;
+	m_visual_merge_revision = 1;
 }
 
 IC CAgentManager& CAgentMemoryManager::object() const
@@ -23,16 +30,25 @@ IC CAgentManager& CAgentMemoryManager::object() const
 IC void CAgentMemoryManager::set_squad_objects(VISIBLES* objects)
 {
 	m_visible_objects = objects;
+	m_visible_object_index.reset();
+	invalidate_visual_merge_candidates();
 }
 
 IC void CAgentMemoryManager::set_squad_objects(SOUNDS* objects)
 {
 	m_sound_objects = objects;
+	m_sound_index.clear();
 }
 
 IC void CAgentMemoryManager::set_squad_objects(HITS* objects)
 {
 	m_hit_objects = objects;
+	m_hit_index.clear();
+}
+
+IC u32 CAgentMemoryManager::visual_merge_revision() const
+{
+	return m_visual_merge_revision;
 }
 
 IC CAgentMemoryManager::VISIBLES& CAgentMemoryManager::visibles() const

@@ -111,6 +111,30 @@ void CStreamReader::r(void* _buffer, u32 buffer_size)
 	advance(buffer_size);
 }
 
+const void* CStreamReader::read_view(u32 buffer_size)
+{
+	VERIFY(buffer_size <= elapsed());
+
+	const u32 offset_inside_window = static_cast<u32>(m_current_pointer - m_start_pointer);
+	u32 remaining_in_window = m_current_window_size - offset_inside_window;
+	if (remaining_in_window < buffer_size)
+	{
+		const u32 absolute_offset = tell();
+		const u32 default_window_size = m_window_size;
+		m_window_size = _max(default_window_size, buffer_size);
+		remap(absolute_offset);
+		// Keep the larger mapping alive for this direct view, but preserve the
+		// normal window size for later remaps and child stream readers.
+		m_window_size = default_window_size;
+		remaining_in_window = m_current_window_size;
+		VERIFY(remaining_in_window >= buffer_size);
+	}
+
+	const void* result = m_current_pointer;
+	m_current_pointer += buffer_size;
+	return result;
+}
+
 CStreamReader* CStreamReader::open_chunk(const u32& chunk_id)
 {
 	BOOL compressed;

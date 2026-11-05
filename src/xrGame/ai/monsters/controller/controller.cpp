@@ -504,9 +504,6 @@ void CController::shedule_Update(u32 dt)
 		UpdateControlled();
 		if (can_tube_fire()) tube_fire();
 	}
-
-	// DEBUG
-	test_covers();
 }
 
 void CController::Die(CObject* who)

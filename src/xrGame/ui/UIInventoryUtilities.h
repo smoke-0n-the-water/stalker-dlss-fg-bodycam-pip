@@ -6,6 +6,9 @@
 #include "ui_defs.h"
 
 class CUITextWnd;
+class CInventoryOwner;
+
+extern int g_ui_inventory_icon_preload;
 
 //размеры сетки в текстуре инвентаря
 #define INV_GRID_WIDTH			50.0f
@@ -26,6 +29,17 @@ class CUITextWnd;
 
 namespace InventoryUtilities
 {
+
+	struct InventoryIconDesc
+	{
+		Fvector2 grid_size;
+		Frect texture_rect;
+		shared_str texture;
+	};
+
+	InventoryIconDesc GetInventoryIconDesc(LPCSTR section);
+	InventoryIconDesc GetInventoryIconDesc(const shared_str& section);
+	void ClearInventoryIconMetadataCache();
 	//сравнивает элементы по пространству занимаемому ими в рюкзаке
 	//для сортировки
 	bool GreaterRoomInRuck(PIItem item1, PIItem item2);
@@ -38,6 +52,7 @@ namespace InventoryUtilities
 	//получить shader на иконки инвенторя
 	const ui_shader& GetEquipmentIconsShader();
 	ui_shader & GetCustomIconTextureShader(LPCSTR name);
+	u32 PreloadInventoryIconShaders(CInventoryOwner* owner);
 	// shader на иконки персонажей в мультиплеере
 	const ui_shader& GetMPCharIconsShader();
 	//get shader for outfit icons in upgrade menu

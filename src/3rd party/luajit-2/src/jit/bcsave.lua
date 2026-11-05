@@ -1,7 +1,7 @@
 ----------------------------------------------------------------------------
 -- LuaJIT module to save/list bytecode.
 --
--- Copyright (C) 2005-2015 Mike Pall. All rights reserved.
+-- Copyright (C) 2005-2026 Mike Pall. All rights reserved.
 -- Released under the MIT license. See Copyright Notice in luajit.h
 ----------------------------------------------------------------------------
 --
@@ -11,7 +11,7 @@
 ------------------------------------------------------------------------------
 
 local jit = require("jit")
-assert(jit.version_num == 20004, "LuaJIT core/library version mismatch")
+assert(jit.version_num == 20099, "LuaJIT core/library version mismatch")
 local bit = require("bit")
 
 -- Symbol name prefix for LuaJIT bytecode.
@@ -119,7 +119,7 @@ local function bcsave_c(ctx, output, s)
   local fp = savefile(output, "w")
   if ctx.type == "c" then
     fp:write(string.format([[
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C"
 #endif
 #ifdef _WIN32
@@ -239,7 +239,7 @@ typedef struct {
   hdr.type = f16(1)
   hdr.machine = f16(({ x86=3, x64=62, arm=40, ppc=20, ppcspe=20, mips=8, mipsel=8 })[ctx.arch])
   if ctx.arch == "mips" or ctx.arch == "mipsel" then
-    hdr.flags = 0x50001006
+    hdr.flags = f32(0x50001006)
   end
   hdr.version = f32(1)
   hdr.shofs = fofs(ffi.offsetof(o, "sect"))
@@ -275,7 +275,7 @@ typedef struct {
   o.sect[2].size = fofs(ofs)
   o.sect[3].type = f32(3) -- .strtab
   o.sect[3].ofs = fofs(sofs + ofs)
-  o.sect[3].size = fofs(#symname+1)
+  o.sect[3].size = fofs(#symname+2)
   ffi.copy(o.space+ofs+1, symname)
   ofs = ofs + #symname + 2
   o.sect[4].type = f32(1) -- .rodata
@@ -553,7 +553,7 @@ typedef struct {
   o.sym_entry.strx = 1
   ffi.copy(o.space+1, symname)
 
-  -- Write Macho-O object file.
+  -- Write Mach-O object file.
   local fp = savefile(output, "wb")
   fp:write(ffi.string(o, mach_size))
   bcsave_tail(fp, output, s)

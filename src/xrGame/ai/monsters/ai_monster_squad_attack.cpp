@@ -59,17 +59,17 @@ void CMonsterSquad::ProcessAttack()
 
 struct sort_predicate
 {
-	const CEntity* enemy;
+	Fvector enemy_position;
 
-
-	sort_predicate(const CEntity* pEnemy) : enemy(pEnemy)
+	sort_predicate(const CEntity* enemy)
 	{
+		enemy_position = enemy->Position();
 	}
 
 	bool operator()(const CEntity* pE1, const CEntity* pE2) const
 	{
-		return (pE1->Position().distance_to(enemy->Position()) >
-			pE2->Position().distance_to(enemy->Position()));
+		return pE1->Position().distance_to_sqr(enemy_position) >
+			pE2->Position().distance_to_sqr(enemy_position);
 	};
 };
 

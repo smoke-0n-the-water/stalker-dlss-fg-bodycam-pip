@@ -25,8 +25,9 @@ EGameIDs ParseStringToGameType(const char* str);
 
 struct predicate_find_stat
 {
-	const char* id;
-	predicate_find_stat(const char* id) { this->id = id; }
+	// Docked once per lookup: comparing shared_str with const char* would dock id for every static.
+	shared_str id;
+	predicate_find_stat(const char* id) : id(id) {}
 
 	bool operator()(StaticDrawableWrapper* s)
 	{
@@ -53,6 +54,36 @@ CUIGameCustom::~CUIGameCustom()
 {
 	delete_data(CustomStatics);
 	g_b_ClearGameCaptions = false;
+}
+
+bool CUIGameCustom::extract_lua_instance(lua_State* L) const
+{
+	if (m_lua_instance_ref.empty())
+		return false;
+
+	m_lua_instance_ref.get(L);
+	if (lua_isuserdata(L, -1))
+		return true;
+
+	lua_pop(L, 1);
+	m_lua_instance_ref = luabind::weak_ref();
+	return false;
+}
+
+void CUIGameCustom::store_lua_instance(lua_State* L, int index) const
+{
+	m_lua_instance_ref = luabind::weak_ref(L, index);
+}
+
+bool luabind::identity_back_reference<CUIGameCustom>::extract(lua_State* L, const CUIGameCustom* object)
+{
+	return object->extract_lua_instance(L);
+}
+
+void luabind::identity_back_reference<CUIGameCustom>::store(
+	lua_State* L, const CUIGameCustom* object, int index)
+{
+	object->store_lua_instance(L, index);
 }
 
 void CUIGameCustom::OnFrame()
@@ -84,6 +115,7 @@ void CUIGameCustom::OnFrame()
 	if (GameIndicatorsShown() && psHUD_Flags.is(HUD_DRAW | HUD_DRAW_RT))
 		UIMainIngameWnd->Update();
 	m_pMessagesWnd->Update();
+
 }
 
 void CUIGameCustom::Render()
@@ -340,6 +372,37 @@ StaticDrawableWrapper::StaticDrawableWrapper()
 {
 	m_static = nullptr;
 	m_endTime = -1.0f;
+}
+
+bool StaticDrawableWrapper::extract_lua_instance(lua_State* L) const
+{
+	if (m_lua_instance_ref.empty())
+		return false;
+
+	m_lua_instance_ref.get(L);
+	if (lua_isuserdata(L, -1))
+		return true;
+
+	lua_pop(L, 1);
+	m_lua_instance_ref = luabind::weak_ref();
+	return false;
+}
+
+void StaticDrawableWrapper::store_lua_instance(lua_State* L, int index) const
+{
+	m_lua_instance_ref = luabind::weak_ref(L, index);
+}
+
+bool luabind::identity_back_reference<StaticDrawableWrapper>::extract(
+	lua_State* L, const StaticDrawableWrapper* object)
+{
+	return object->extract_lua_instance(L);
+}
+
+void luabind::identity_back_reference<StaticDrawableWrapper>::store(
+	lua_State* L, const StaticDrawableWrapper* object, int index)
+{
+	object->store_lua_instance(L, index);
 }
 
 void StaticDrawableWrapper::destroy()

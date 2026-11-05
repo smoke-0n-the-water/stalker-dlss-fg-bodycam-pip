@@ -56,6 +56,77 @@ IC void CProblemSolverAbstract::clear()
 TEMPLATE_SPECIALIZATION
 void CProblemSolverAbstract::init()
 {
+	m_solve_profile_enabled = false;
+	m_solve_profile = SSolveProfile{};
+}
+
+TEMPLATE_SPECIALIZATION
+IC void CProblemSolverAbstract::set_solve_profile_enabled(const bool enabled)
+{
+	m_solve_profile_enabled = enabled;
+	if (enabled)
+		m_solve_profile = SSolveProfile{};
+}
+
+TEMPLATE_SPECIALIZATION
+IC bool CProblemSolverAbstract::solve_profile_enabled() const
+{
+	return m_solve_profile_enabled;
+}
+
+TEMPLATE_SPECIALIZATION
+IC const typename CProblemSolverAbstract::SSolveProfile& CProblemSolverAbstract::solve_profile() const
+{
+	return m_solve_profile;
+}
+
+TEMPLATE_SPECIALIZATION
+IC void CProblemSolverAbstract::record_solution_rebuild_profile(const u64 elapsed_ticks) const
+{
+	if (!m_solve_profile_enabled)
+		return;
+	++m_solve_profile.solution_rebuild_calls;
+	m_solve_profile.solution_rebuild_ticks += elapsed_ticks;
+}
+
+TEMPLATE_SPECIALIZATION
+IC typename CProblemSolverAbstract::_value_type CProblemSolverAbstract::evaluate_profiled(
+	const _condition_type& condition_id, _condition_evaluator_ptr evaluator_ptr) const
+{
+	VERIFY(evaluator_ptr);
+#ifndef AI_COMPILER
+	if (m_solve_profile_enabled && CPU::qpc_freq)
+	{
+		const u64 started = CPU::QPC();
+		const _value_type result = evaluator_ptr->evaluate();
+		const u64 elapsed = CPU::QPC() - started;
+		m_solve_profile.evaluator_ticks += elapsed;
+		++m_solve_profile.evaluator_calls;
+
+		typename CProblemSolverAbstract::SSolveProfile::SEvaluatorProfile* profile = nullptr;
+		for (u32 index = 0; index < m_solve_profile.evaluator_profile_count; ++index)
+		{
+			if (m_solve_profile.evaluator_profiles[index].condition_id == static_cast<u32>(condition_id))
+			{
+				profile = &m_solve_profile.evaluator_profiles[index];
+				break;
+			}
+		}
+		if (!profile && m_solve_profile.evaluator_profile_count < CProblemSolverAbstract::SSolveProfile::max_evaluator_profiles)
+		{
+			profile = &m_solve_profile.evaluator_profiles[m_solve_profile.evaluator_profile_count++];
+			profile->condition_id = static_cast<u32>(condition_id);
+		}
+		if (profile)
+		{
+			++profile->calls;
+			profile->total_ticks += elapsed;
+			profile->max_ticks = _max(profile->max_ticks, elapsed);
+		}
+		return result;
+	}
+#endif
+	return evaluator_ptr->evaluate();
 }
 
 TEMPLATE_SPECIALIZATION
@@ -87,7 +158,7 @@ IC bool CProblemSolverAbstract::actual() const
 			i = std::lower_bound(i, e, (*I).condition(), evaluators().value_comp());
 		VERIFY(i != e);
 		VERIFY((*i).first == (*I).condition());
-		if ((*i).second->evaluate() != (*I).value())
+		if (evaluate_profiled((*I).condition(), (*i).second) != (*I).value())
 			return (false);
 	}
 	return (true);
@@ -209,7 +280,8 @@ IC void CProblemSolverAbstract::evaluate_condition(typename xr_vector<COperatorC
                                                    const _condition_type& condition_id) const
 {
 	size_t index = I - m_current_state.conditions().begin();
-	m_current_state.add_condition(I, COperatorCondition(condition_id, evaluator(condition_id)->evaluate()));
+	_condition_evaluator_ptr evaluator_ptr = evaluator(condition_id);
+	m_current_state.add_condition(I, COperatorCondition(condition_id, evaluate_profiled(condition_id, evaluator_ptr)));
 	I = m_current_state.conditions().begin() + index;
 	E = m_current_state.conditions().end();
 }
@@ -218,9 +290,19 @@ TEMPLATE_SPECIALIZATION
 IC typename CProblemSolverAbstract::_edge_value_type CProblemSolverAbstract::get_edge_weight(
 	const _index_type& vertex_index0, const _index_type& vertex_index1, const const_iterator& i) const
 {
+#ifndef AI_COMPILER
+	const u64 profile_started = m_solve_profile_enabled && CPU::qpc_freq ? CPU::QPC() : 0;
+#endif
 	_edge_value_type current, min;
 	current = (*i).m_operator->weight(vertex_index1, vertex_index0);
 	min = (*i).m_operator->min_weight();
+#ifndef AI_COMPILER
+	if (profile_started)
+	{
+		m_solve_profile.operator_weight_ticks += CPU::QPC() - profile_started;
+		++m_solve_profile.operator_weight_calls;
+	}
+#endif
 	THROW(current >= min);
 	return (current);
 }
@@ -235,6 +317,9 @@ TEMPLATE_SPECIALIZATION
 IC const typename CProblemSolverAbstract::_index_type&CProblemSolverAbstract::value(
 	const _index_type& vertex_index, const_iterator& i, bool reverse_search) const
 {
+#ifndef AI_COMPILER
+	const u64 profile_started = m_solve_profile_enabled && CPU::qpc_freq ? CPU::QPC() : 0;
+#endif
 	if (reverse_search)
 	{
 		if ((*i).m_operator->applicable_reverse((*i).m_operator->effects(), (*i).m_operator->conditions(), vertex_index)
@@ -254,6 +339,13 @@ IC const typename CProblemSolverAbstract::_index_type&CProblemSolverAbstract::va
 		else
 			m_applied = false;
 	}
+#ifndef AI_COMPILER
+	if (profile_started)
+	{
+		m_solve_profile.operator_apply_ticks += CPU::QPC() - profile_started;
+		++m_solve_profile.operator_apply_calls;
+	}
+#endif
 	return (m_temp);
 }
 
@@ -267,7 +359,7 @@ IC void CProblemSolverAbstract::begin(const _index_type& vertex_index, const_ite
 TEMPLATE_SPECIALIZATION
 IC bool CProblemSolverAbstract::is_goal_reached(const _index_type& vertex_index) const
 {
-	return (is_goal_reached_impl<reverse_search>(vertex_index));
+	return (is_goal_reached_dispatch(vertex_index));
 }
 
 TEMPLATE_SPECIALIZATION
@@ -378,15 +470,32 @@ TEMPLATE_SPECIALIZATION
 IC void CProblemSolverAbstract::solve()
 {
 #ifndef AI_COMPILER
+	if (m_solve_profile_enabled)
+		m_solve_profile = SSolveProfile{};
+
 	m_solution_changed = false;
 
-	if (actual())
+	const u64 actuality_started = m_solve_profile_enabled && CPU::qpc_freq ? CPU::QPC() : 0;
+	const bool state_is_actual = actual();
+	if (actuality_started)
+		m_solve_profile.actuality_ticks += CPU::QPC() - actuality_started;
+	if (state_is_actual)
+	{
+		if (m_solve_profile_enabled)
+		{
+			m_solve_profile.actual_shortcut = true;
+			m_solve_profile.solution_size = static_cast<u32>(m_solution.size());
+		}
 		return;
+	}
 
 	m_actuality = true;
 	m_solution_changed = true;
 	m_current_state.clear();
 
+	const u64 search_started = m_solve_profile_enabled && CPU::qpc_freq ? CPU::QPC() : 0;
+	if (m_solve_profile_enabled)
+		m_solve_profile.search_performed = true;
 	m_failed = !
 		ai().graph_engine().search(
 			*this,
@@ -399,6 +508,14 @@ IC void CProblemSolverAbstract::solve()
 				8000
 			)
 		);
+	if (search_started)
+		m_solve_profile.search_ticks += CPU::QPC() - search_started;
+	if (m_solve_profile_enabled)
+	{
+		m_solve_profile.visited_nodes = ai().graph_engine().solver_algorithm().data_storage().get_visited_node_count();
+		m_solve_profile.solution_size = static_cast<u32>(m_solution.size());
+		m_solve_profile.failed = m_failed;
+	}
 #endif
 }
 
@@ -406,7 +523,7 @@ TEMPLATE_SPECIALIZATION
 IC typename CProblemSolverAbstract::_edge_value_type CProblemSolverAbstract::estimate_edge_weight(
 	const _index_type& condition) const
 {
-	return (helper<reverse_search>::estimate_edge_weight_impl(*this, condition));
+	return (estimate_edge_weight_dispatch(condition));
 }
 
 TEMPLATE_SPECIALIZATION

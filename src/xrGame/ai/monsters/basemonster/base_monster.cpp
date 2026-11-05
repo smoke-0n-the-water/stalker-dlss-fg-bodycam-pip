@@ -55,6 +55,8 @@
 #include "debug_text_tree.h"
 #endif
 
+int psMonsterRelcaseSelectiveMemory = 1;
+
 #pragma warning (disable:4355)
 #pragma warning (push)
 
@@ -95,7 +97,6 @@ CBaseMonster::CBaseMonster() : m_psy_aura(this, "psy"),
 	// inert until a script supplies strike motions (check_melee_jump refuses empty data)
 	m_com_manager.add_ability(ControlCom::eControlMeleeJump);
 
-
 	m_anomaly_detector = xr_new<CAnomalyDetector>(this);
 	CoverMan = xr_new<CMonsterCoverManager>(this);
 
@@ -114,6 +115,10 @@ CBaseMonster::CBaseMonster() : m_psy_aura(this, "psy"),
 
 	m_anti_aim = NULL;
 	m_head_bone_name = "bip01_head";
+	m_left_eye_bone_name = 0;
+	m_right_eye_bone_name = 0;
+	m_left_eye_bone_id = u16(-1);
+	m_right_eye_bone_id = u16(-1);
 
 	m_first_tick_enemy_inaccessible = 0;
 	m_last_tick_enemy_inaccessible = 0;
@@ -183,7 +188,6 @@ void CBaseMonster::update_pos_by_grouping_behaviour()
 
 	Fvector new_pos = old_pos + offs;
 
-
 	const u32 old_vertex = ai_location().level_vertex_id();
 	u32 new_vertex = ai().level_graph().check_position_in_direction(old_vertex, old_pos, new_pos);
 
@@ -235,34 +239,28 @@ bool accessible_epsilon(CBaseMonster* const object, Fvector const pos, float eps
 }
 
 static
-bool enemy_inaccessible(CBaseMonster* const object)
+bool enemy_inaccessible(CBaseMonster* const object, const CEntityAlive* const enemy)
 {
-	CEntityAlive const* enemy = object->EnemyMan.get_enemy();
-	if (!enemy)
-		return false;
-
 	Fvector const enemy_pos = enemy->Position();
-	Fvector const enemy_vert_pos = ai().level_graph().vertex_position(enemy->ai_location().level_vertex_id());
-
-	float const xz_dist_to_vertex = enemy_vert_pos.distance_to_xz(enemy_pos);
-	float const y_dist_to_vertex = _abs(enemy_vert_pos.y - enemy_pos.y);
-
-	if (xz_dist_to_vertex > 0.5f && y_dist_to_vertex > 3.f)
+	u32 const enemy_vertex = enemy->ai_location().level_vertex_id();
+	if (!ai().level_graph().valid_vertex_id(enemy_vertex) ||
+		!ai().level_graph().valid_vertex_position(enemy_pos))
 		return true;
 
-	if (xz_dist_to_vertex > 1.2f)
+	Fvector const enemy_vert_pos = ai().level_graph().vertex_position(enemy_vertex);
+	float const xz_dist_to_vertex_sqr = enemy_vert_pos.distance_to_xz_sqr(enemy_pos);
+	float const y_dist_to_vertex = _abs(enemy_vert_pos.y - enemy_pos.y);
+
+	if (xz_dist_to_vertex_sqr > _sqr(0.5f) && y_dist_to_vertex > 3.f)
+		return true;
+
+	if (xz_dist_to_vertex_sqr > _sqr(1.2f))
 		return true;
 
 	if (!object->Home->at_home(enemy_pos))
 		return true;
 
 	if (!accessible_epsilon(object, enemy_pos, 1.5f))
-		return true;
-
-	if (!ai().level_graph().valid_vertex_position(enemy_pos))
-		return true;
-
-	if (!ai().level_graph().valid_vertex_id(enemy->ai_location().level_vertex_id()))
 		return true;
 
 	return false;
@@ -273,9 +271,10 @@ bool CBaseMonster::enemy_accessible()
 	if (!m_first_tick_enemy_inaccessible)
 		return true;
 
-	if (EnemyMan.get_enemy())
+	const CEntityAlive* enemy = EnemyMan.get_enemy();
+	if (enemy)
 	{
-		u32 const enemy_vertex = EnemyMan.get_enemy()->ai_location().level_vertex_id();
+		u32 const enemy_vertex = enemy->ai_location().level_vertex_id();
 		if (ai_location().level_vertex_id() == enemy_vertex)
 			return false;
 	}
@@ -302,14 +301,15 @@ void CBaseMonster::update_enemy_accessible_and_at_home_info()
 	else
 		m_first_tick_object_not_at_home = 0;
 
-	if (!EnemyMan.get_enemy())
+	const CEntityAlive* enemy = EnemyMan.get_enemy();
+	if (!enemy)
 	{
 		m_first_tick_enemy_inaccessible = 0;
 		m_last_tick_enemy_inaccessible = 0;
 		return;
 	}
 
-	if (::enemy_inaccessible(this))
+	if (::enemy_inaccessible(this, enemy))
 	{
 		if (!m_first_tick_enemy_inaccessible)
 			m_first_tick_enemy_inaccessible = Device.dwTimeGlobal;
@@ -374,36 +374,50 @@ void CBaseMonster::shedule_Update(u32 dt)
 
 	inherited::shedule_Update(dt);
 
+	{
+
 	update_eyes_visibility();
+	}
+
+	{
 
 	if (m_anti_aim)
-	{
 		m_anti_aim->update_schedule();
-	}
 
 	m_psy_aura.update_schedule();
 	m_fire_aura.update_schedule();
 	m_base_aura.update_schedule();
 	m_radiation_aura.update_schedule();
+	}
+
+	{
 
 	control().update_schedule();
+	}
+
+	{
 
 	Morale.update_schedule(dt);
+	}
+
+	{
 
 	m_anomaly_detector->update_schedule();
+	}
+
+	{
 
 	m_pPhysics_support->in_shedule_Update(dt);
+	}
 
 #ifdef DEBUG
 	show_debug_info();
 #endif
 }
 
-
 //////////////////////////////////////////////////////////////////////
 // Other functions
 //////////////////////////////////////////////////////////////////////
-
 
 void CBaseMonster::Die(CObject* who)
 {
@@ -433,10 +447,8 @@ void CBaseMonster::Die(CObject* who)
 		m_grouping_behaviour->set_squad(NULL);
 	}
 
-
 	if (m_controlled) m_controlled->on_die();
 }
-
 
 void CBaseMonster::Hit(SHit* pHDS)
 {
@@ -598,9 +610,12 @@ void CBaseMonster::set_state_sound(u32 type, bool once)
 			switch (type)
 			{
 			case MonsterSound::eMonsterSoundIdle:
+			{
 				// check distance to actor
 
-				if (Actor()->Position().distance_to(Position()) > db().m_fDistantIdleSndRange)
+				const float distant_idle_range = db().m_fDistantIdleSndRange;
+				if (distant_idle_range < 0.f ||
+					Actor()->Position().distance_to_sqr(Position()) > _sqr(distant_idle_range))
 				{
 					delay = u32(float(db().m_dwDistantIdleSndDelay) * _sqrt(float(objects_count)));
 					type = MonsterSound::eMonsterSoundIdleDistant;
@@ -611,6 +626,7 @@ void CBaseMonster::set_state_sound(u32 type, bool once)
 				}
 
 				break;
+			}
 			case MonsterSound::eMonsterSoundEat:
 				delay = u32(float(db().m_dwEatSndDelay) * _sqrt(float(objects_count)));
 				break;
@@ -806,18 +822,33 @@ void CBaseMonster::net_Relcase(CObject* O)
 	// TODO: do not clear, remove only object O
 	if (g_Alive())
 	{
-		EnemyMemory.remove_links(O);
-		SoundMemory.remove_links(O);
-		HitMemory.remove_hit_info(O);
+		// A destroyed object is relevant to only a small subset of monsters. The
+		// legacy path rebuilt every live monster's complete perception state for
+		// every relcase, producing O(monsters * destroyed objects) update spikes.
+		// Remove all raw references immediately, but refresh the derived managers
+		// only when this monster actually remembered or selected the object.
+		bool memory_changed = EnemyMan.get_enemy() == O || EnemyMan.get_script_enemy() == O ||
+			CorpseMan.get_corpse() == O;
+		memory_changed |= EnemyMemory.remove_links(O);
+		memory_changed |= SoundMemory.remove_links(O);
+		memory_changed |= HitMemory.remove_hit_info(O);
+		memory_changed |= CorpseMemory.remove_links(O);
 
 		EnemyMan.remove_links(O);
 		CorpseMan.remove_links(O);
 
+		if (!psMonsterRelcaseSelectiveMemory || memory_changed)
+		{
+
 		UpdateMemory();
+		}
 
 		monster_squad().remove_links(O);
 	}
+	else
+	{
 	CorpseMemory.remove_links(O);
+	}
 	m_pPhysics_support->in_NetRelcase(O);
 }
 
@@ -1080,6 +1111,13 @@ u32 CBaseMonster::script_combat_substate()
 	return (proposed < 0) ? u32(-1) : (u32)proposed;
 }
 
+void CBaseMonster::OnChangeVisual()
+{
+	inherited::OnChangeVisual();
+	m_left_eye_bone_id = u16(-1);
+	m_right_eye_bone_id = u16(-1);
+}
+
 void CBaseMonster::update_eyes_visibility()
 {
 	if (!m_left_eye_bone_name)
@@ -1093,21 +1131,27 @@ void CBaseMonster::update_eyes_visibility()
 		return;
 	}
 
-	u16 const left_eye_bone_id = skeleton->LL_BoneID(m_left_eye_bone_name);
-	u16 const right_eye_bone_id = skeleton->LL_BoneID(m_right_eye_bone_name);
-
-	if (!(left_eye_bone_id != u16(-1) && right_eye_bone_id != u16(-1))) {
-		Msg("%s, section %s, id %d left_eye_bone_id != u16(-1) && right_eye_bone_id != u16(-1), crash", cName().c_str(), cNameSect().c_str(), ID());
-		R_ASSERT(left_eye_bone_id != u16(-1) && right_eye_bone_id != u16(-1));
+	if (m_left_eye_bone_id == u16(-1) || m_right_eye_bone_id == u16(-1))
+	{
+		m_left_eye_bone_id = skeleton->LL_BoneID(m_left_eye_bone_name);
+		m_right_eye_bone_id = skeleton->LL_BoneID(m_right_eye_bone_name);
 	}	
 
-	bool eyes_visible = !g_Alive() || get_screen_space_coverage_diagonal() > 0.05f;
+	if (!(m_left_eye_bone_id != u16(-1) && m_right_eye_bone_id != u16(-1))) {
+		Msg("%s, section %s, id %d left_eye_bone_id != u16(-1) && right_eye_bone_id != u16(-1), crash", cName().c_str(), cNameSect().c_str(), ID());
+		R_ASSERT(m_left_eye_bone_id != u16(-1) && m_right_eye_bone_id != u16(-1));
+	}	
 
-	bool const was_visible = !!skeleton->LL_GetBoneVisible(left_eye_bone_id);
-	skeleton->LL_SetBoneVisible(left_eye_bone_id, eyes_visible, true);
-	skeleton->LL_SetBoneVisible(right_eye_bone_id, eyes_visible, true);
+	const bool eyes_visible = !g_Alive() || get_screen_space_coverage_diagonal() > 0.05f;
 
-	if (!was_visible && eyes_visible)
+	const bool left_was_visible = !!skeleton->LL_GetBoneVisible(m_left_eye_bone_id);
+	if (left_was_visible != eyes_visible)
+		skeleton->LL_SetBoneVisible(m_left_eye_bone_id, eyes_visible, true);
+	const bool right_was_visible = !!skeleton->LL_GetBoneVisible(m_right_eye_bone_id);
+	if (right_was_visible != eyes_visible)
+		skeleton->LL_SetBoneVisible(m_right_eye_bone_id, eyes_visible, true);
+
+	if (!left_was_visible && eyes_visible)
 	{
 		skeleton->CalculateBones_Invalidate();
 		skeleton->CalculateBones();

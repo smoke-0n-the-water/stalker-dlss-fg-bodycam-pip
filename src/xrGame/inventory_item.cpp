@@ -145,10 +145,26 @@ void CInventoryItem::Load(LPCSTR section)
 	m_fLowestBatteryCharge = READ_IF_EXISTS(pSettings, r_float, section, "power_critical", .03f);
 }
 
+void CInventoryItem::InvalidateInventoryUI()
+{
+	if (m_pInventory)
+		m_pInventory->InvalidateUIState();
+}
+
+void CInventoryItem::SetCondition(float val)
+{
+	if (m_fCondition == val)
+		return;
+
+	m_fCondition = val;
+	InvalidateInventoryUI();
+}
+
 void CInventoryItem::ChangeCondition(float fDeltaCondition)
 {
-	m_fCondition += fDeltaCondition;
-	clamp(m_fCondition, 0.f, 1.f);
+	float condition = m_fCondition + fDeltaCondition;
+	clamp(condition, 0.f, 1.f);
+	SetCondition(condition);
 }
 
 
@@ -266,6 +282,7 @@ void CInventoryItem::OnEvent(NET_Packet& P, u16 type)
 			CInventoryItem* ItemToAttach = smart_cast<CInventoryItem*>(Level().Objects.net_Find(ItemID));
 			if (!ItemToAttach) break;
 			Attach(ItemToAttach, true);
+			InvalidateInventoryUI();
 		}
 		break;
 	case GE_ADDON_DETACH:
@@ -273,6 +290,7 @@ void CInventoryItem::OnEvent(NET_Packet& P, u16 type)
 			string64 i_name;
 			P.r_stringZ(i_name);
 			Detach(i_name, true);
+			InvalidateInventoryUI();
 		}
 		break;
 	case GE_CHANGE_POS:

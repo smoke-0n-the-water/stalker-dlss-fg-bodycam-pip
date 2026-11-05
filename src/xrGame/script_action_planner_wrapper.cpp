@@ -31,7 +31,7 @@ void CScriptActionPlannerWrapper::update()
 		set_use_log							(!!psAI_Flags.test(aiGOAPScript));
 #endif
 
-	::luabind::call_member<void>(this, "update");
+	call_void_noargs("update");
 }
 
 void CScriptActionPlannerWrapper::update_static(CScriptActionPlanner* planner)

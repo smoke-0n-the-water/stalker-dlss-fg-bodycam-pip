@@ -31,6 +31,15 @@ u32 ENEMY_INERTIA_TIME_TO_SOMEBODY = 3000;
 u32 ENEMY_INERTIA_TIME_TO_ACTOR = 0;
 u32 ENEMY_INERTIA_TIME_FROM_ACTOR = 6000;
 
+namespace
+{
+const ::luabind::functor<void>* enemy_selected_callback()
+{
+	static cached_script_functor<void> callback_cache("_G.CAI_Stalker__OnEnemySelected");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 #ifdef _DEBUG
 bool g_enemy_manager_second_update	 = false;
 #endif // _DEBUG
@@ -49,6 +58,10 @@ CEnemyManager::CEnemyManager(CCustomMonster* object)
 	m_stalker = smart_cast<CAI_Stalker*>(object);
 	m_enable_enemy_change = true;
 	m_smart_cover_enemy = 0;
+	// GAMMA firefights can expose one NPC to dozens of potential enemies in a
+	// short burst. Keep enough buckets hot so the existing short-lived Lua
+	// usefulness cache does not rehash repeatedly during first contact.
+	m_useful_cache.reserve(64);
 	m_visible_enemy_bias_actor = -1.f;
 	m_visible_enemy_bias_npc = -1.f;
 }
@@ -67,55 +80,122 @@ void CEnemyManager::set_hit_redirect(float max, float falloff)
 	m_hit_redirect_falloff = (falloff > 0.f) ? falloff : 60.f;
 }
 
+void CEnemyManager::reinit()
+{
+	inherited::reinit();
+	m_useful_cache.clear();
+	m_last_enemy = 0;
+	m_smart_cover_enemy = 0;
+}
+
 bool CEnemyManager::is_useful(const CEntityAlive* entity_alive) const
 {
 	return (m_object->useful(this, entity_alive));
 }
 
-int enemy_manager_useful_cache_time = 200;
-bool CEnemyManager::useful(const CEntityAlive* entity_alive) const
+int enemy_manager_useful_cache_time = 250;
+
+bool CEnemyManager::useful_native(const CEntityAlive* entity_alive) const
 {
 	PROF_EVENT("CEnemyManager::useful");
 	if (!entity_alive->g_Alive())
-		return (false);
+		return false;
 
 	if ((entity_alive->SpatialComponent->spatial.type & STYPE_VISIBLEFORAI) != STYPE_VISIBLEFORAI)
 		return (false);
 
 	if ((m_object->ID() == entity_alive->ID()) || !m_object->is_relation_enemy(entity_alive))
-		return (false);
+		return false;
 
 	if (!ai().get_level_graph() || !ai().level_graph().valid_vertex_id(entity_alive->ai_location().level_vertex_id()))
-		return (false);
+		return false;
 
 	if (
 		m_object->human_being() &&
 		!entity_alive->human_being() &&
+		(m_object->Position().distance_to_sqr(entity_alive->Position()) >= _sqr(m_max_ignore_distance)) &&
 		!expedient(entity_alive) &&
-		(evaluate(entity_alive) >= m_ignore_monster_threshold) &&
-		(m_object->Position().distance_to(entity_alive->Position()) >= m_max_ignore_distance)
+		(evaluate(entity_alive) >= m_ignore_monster_threshold)
 	)
-		return (false);
+		return false;
 
-    // Disable caching if time is negative for testing
-    if (enemy_manager_useful_cache_time < 0)
-        return (m_useful_callback ? m_useful_callback(m_object->lua_game_object(), entity_alive->lua_game_object()) : true);
+	return true;
+}
 
-    // demonized: Cache useful checks to avoid expensive Lua calls
-    u32 current_time = Device.dwTimeGlobal;
-    auto& cache = m_useful_cache[entity_alive->ID()]; // create if not exists
-    if (current_time < cache.check_time)
-        return cache.result;
+namespace
+{
+u32 enemy_useful_pair_hash(u16 observer_id, u16 enemy_id)
+{
+	u32 value = (static_cast<u32>(observer_id) << 16) | static_cast<u32>(enemy_id);
+	value ^= value >> 16;
+	value *= 0x7feb352du;
+	value ^= value >> 15;
+	value *= 0x846ca68bu;
+	value ^= value >> 16;
+	return value;
+}
+}
 
-    bool result = (m_useful_callback ? m_useful_callback(m_object->lua_game_object(), entity_alive->lua_game_object()) : true);
+bool CEnemyManager::useful(const CEntityAlive* entity_alive) const
+{
+	if (!useful_native(entity_alive))
+		return false;
 
-    // Add id based jitter so that next updates will be spread between frames for different entities
-    int jitter = (entity_alive->ID() % 97 + 1) * (entity_alive->ID() & 1 ? -1 : 1);
-    u32 next_time = current_time + _max(0, enemy_manager_useful_cache_time + jitter);
-    cache.result = result;
-    cache.check_time = next_time;
+	// The default path has no Lua predicate. Avoid creating and probing a hash
+	// entry for every perceived entity when there is nothing to call.
+	if (!m_useful_callback)
+		return true;
+
+	const auto invoke_callback = [this, entity_alive]()
+	{
+
+		const bool result = m_useful_callback(m_object->lua_game_object(), entity_alive->lua_game_object());
 
 	return result;
+	};
+
+	// Disable caching if time is negative for testing.
+	if (enemy_manager_useful_cache_time < 0)
+		return invoke_callback();
+
+	const u32 current_time = Device.dwTimeGlobal;
+	const u16 enemy_id = entity_alive->ID();
+	auto found = m_useful_cache.find(enemy_id);
+	if (found != m_useful_cache.end() && current_time < found->second.check_time)
+		return found->second.result;
+
+	const bool result = invoke_callback();
+	if (found == m_useful_cache.end())
+		found = m_useful_cache.emplace(enemy_id, cached_useful{}).first;
+
+	// Refresh time used to depend only on enemy ID. Every member of a squad then
+	// refreshed the same Lua predicate for the same enemy in one agent-manager
+	// burst. Hash the observer/enemy pair instead, preserving the original
+	// approximately +/-97 ms jitter range while decorrelating squad members.
+	const int jitter = static_cast<int>(enemy_useful_pair_hash(m_object->ID(), enemy_id) % 195u) - 97;
+	found->second.result = result;
+	found->second.check_time = current_time + _max(0, enemy_manager_useful_cache_time + jitter);
+	return result;
+}
+
+bool CEnemyManager::useful_cached(const CEntityAlive* entity_alive) const
+{
+	if (!useful_native(entity_alive))
+		return false;
+
+	if (!m_useful_callback || enemy_manager_useful_cache_time < 0)
+		return useful(entity_alive);
+
+	// CMemoryManager already evaluates useful() while rebuilding this member's
+	// enemy set. Agent-group aggregation can reuse that member-owned predicate
+	// result instead of synchronously refreshing Lua again for N squad members.
+	// Native validity/relation checks above remain live on every call. If this is
+	// the first encounter, fall back to the full path to preserve semantics.
+	const auto found = m_useful_cache.find(entity_alive->ID());
+	if (found != m_useful_cache.end())
+		return found->second.result;
+
+	return useful(entity_alive);
 }
 
 float CEnemyManager::do_evaluate(const CEntityAlive* object) const
@@ -225,6 +305,7 @@ void CEnemyManager::reload(LPCSTR section)
 	m_last_enemy = 0;
 	m_last_enemy_change = 0;
 	m_useful_callback.clear();
+	m_useful_cache.clear();
 	VERIFY(m_ready_to_save);
 }
 
@@ -242,9 +323,9 @@ void CEnemyManager::remove_links(CObject* object)
 {
 	// since we use no members in CEntityAlive during search,
 	// we just use the pinter itself, we can just statically cast object
-	OBJECTS::iterator I = std::find(m_objects.begin(), m_objects.end(), (CEntityAlive*)object);
-	if (I != m_objects.end())
-		m_objects.erase_fast(I);
+	// Search uses pointer identity only; keep the ordered lookup synchronized.
+	inherited::remove_object((const CEntityAlive*)object);
+	m_useful_cache.erase(object->ID());
 
 	if (m_last_enemy == object)
 		m_last_enemy = 0;
@@ -363,14 +444,16 @@ void CEnemyManager::remove_wounded()
 		}
 	};
 
-	m_objects.erase(
-		std::remove_if(
+	const OBJECTS::iterator new_end = std::remove_if(
 			m_objects.begin(),
 			m_objects.end(),
 			&no_wounded::predicate
-		),
-		m_objects.end()
 	);
+	if (new_end != m_objects.end())
+	{
+		m_objects.erase(new_end, m_objects.end());
+		rebuild_object_lookup();
+	}
 }
 
 void CEnemyManager::process_wounded(bool& only_wounded)
@@ -463,9 +546,8 @@ void CEnemyManager::try_change_enemy()
 
 	if (selected() != previous_selected)
 	{
-		::luabind::functor<void> funct;
-		if (ai().script_engine().functor("_G.CAI_Stalker__OnEnemySelected", funct))
-			funct(m_object->lua_game_object(), selected() ? selected()->lua_game_object() : nullptr);
+		if (const auto* funct = enemy_selected_callback())
+			(*funct)(m_object->lua_game_object(), selected() ? selected()->lua_game_object() : nullptr);
 	}
 }
 

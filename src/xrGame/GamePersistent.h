@@ -53,6 +53,10 @@ class CGamePersistent :
 
 	void WeathersUpdate();
 	void UpdateDof();
+	u16 ResolveModelMaterial(LPCSTR name);
+
+	xrSRWLock modelMaterialGuard;
+	xr_unordered_map<shared_str, u16> modelMaterialIndices;
 
 public:
 	virtual float OnThunderboltSound(LPCSTR file, float distance);

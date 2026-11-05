@@ -25,6 +25,9 @@ public:
 	float m_probability;
 	Fvector m_enemy_position;
 	u32 m_level_time;
+	u32 m_visible_index;
+	u32 m_sound_index;
+	u32 m_hit_index;
 
 public:
 	IC CMemberEnemy(const CEntityAlive* object, squad_mask_type mask);

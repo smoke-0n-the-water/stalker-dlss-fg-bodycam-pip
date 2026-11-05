@@ -16,7 +16,9 @@ IC CSoundMemoryManager::CSoundMemoryManager(CCustomMonster* object, CAI_Stalker*
 	VERIFY(visitor);
 	m_visitor = visitor;
 	m_stalker = stalker;
+	m_sounds = 0;
 	m_max_sound_count = 0;
+	m_object_indices.reserve(16);
 #ifdef USE_SELECTED_SOUND
 	m_selected_sound			= 0;
 #endif
@@ -44,6 +46,8 @@ IC	const MemorySpace::CSoundObject *CSoundMemoryManager::sound		() const
 
 IC void CSoundMemoryManager::set_squad_objects(SOUNDS* squad_objects)
 {
+	if (m_sounds != squad_objects)
+		m_object_indices.clear();
 	m_sounds = squad_objects;
 }
 

@@ -60,11 +60,18 @@ IC bool CCoverManager::inertia(Fvector const& position, float radius, _evaluator
 
 template <typename _evaluator_type, typename _restrictor_type>
 IC const CCoverPoint* CCoverManager::best_cover(const Fvector& position, float radius, _evaluator_type& evaluator,
-                                                const _restrictor_type& restrictor) const
+                                                const _restrictor_type& restrictor, float min_radius, bool* search_performed) const
 {
+
 	START_PROFILE("Covers/best_cover")
+		if (search_performed)
+			*search_performed = false;
+
 		if (inertia(position, radius, evaluator, restrictor))
 			return (evaluator.selected());
+
+		if (search_performed)
+			*search_performed = true;
 
 		const CCoverPoint* last = evaluator.selected();
 
@@ -80,32 +87,45 @@ IC const CCoverPoint* CCoverManager::best_cover(const Fvector& position, float r
 			}
 		}
 
-		covers().nearest(position, radius, m_nearest);
-
-		float radius_sqr = _sqr(radius);
-
-		xr_vector<CCoverPoint*>::const_iterator I = m_nearest.begin();
-		xr_vector<CCoverPoint*>::const_iterator E = m_nearest.end();
-		for (; I != E; ++I)
 		{
-			if (radius_sqr < position.distance_to_sqr((*I)->position()))
-				continue;
 
-			if (_abs(position.y - (*I)->position().y) > 3.f)
-				continue;
-
-			if (!evaluator.accessible((*I)->position()))
-				continue;
-
-			if (!restrictor(*I))
-				continue;
-
-			evaluator.evaluate(*I, restrictor.weight(*I));
+			covers().nearest(position, radius, m_nearest);
 		}
 
-		evaluator.finalize();
+		float radius_sqr = _sqr(radius);
+		float min_radius_sqr = _sqr(min_radius);
 
-		restrictor.finalize(evaluator.selected());
+		{
+
+			xr_vector<CCoverPoint*>::const_iterator I = m_nearest.begin();
+			xr_vector<CCoverPoint*>::const_iterator E = m_nearest.end();
+			for (; I != E; ++I)
+			{
+				const float distance_sqr = position.distance_to_sqr((*I)->position());
+				if (radius_sqr < distance_sqr)
+					continue;
+
+				if ((min_radius > 0.f) && (distance_sqr <= min_radius_sqr))
+					continue;
+
+				if (_abs(position.y - (*I)->position().y) > 3.f)
+					continue;
+
+				if (!evaluator.accessible((*I)->position()))
+					continue;
+
+				if (!restrictor(*I))
+					continue;
+
+				evaluator.evaluate(*I, restrictor.weight(*I));
+			}
+		}
+
+		{
+
+			evaluator.finalize();
+			restrictor.finalize(evaluator.selected());
+		}
 
 		return (evaluator.selected());
 
@@ -115,7 +135,7 @@ IC const CCoverPoint* CCoverManager::best_cover(const Fvector& position, float r
 template <typename _evaluator_type>
 IC const CCoverPoint* CCoverManager::best_cover(const Fvector& position, float radius, _evaluator_type& evaluator) const
 {
-	return (best_cover<_evaluator_type, CCoverManager>(position, radius, evaluator, *this));
+	return (best_cover<_evaluator_type, CCoverManager>(position, radius, evaluator, *this, 0.f, nullptr));
 }
 
 IC bool CCoverManager::operator()(const CCoverPoint*) const
@@ -129,5 +149,4 @@ IC float CCoverManager::weight(const CCoverPoint*) const
 }
 
 IC void CCoverManager::finalize(const CCoverPoint*) const
-{
-}
+{}

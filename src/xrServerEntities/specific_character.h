@@ -1,4 +1,4 @@
-//////////////////////////////////////////////////////////////////////////
+﻿//////////////////////////////////////////////////////////////////////////
 // specific_character.h:	игровая информация для о конкретном 
 //							персонажей в игре
 //////////////////////////////////////////////////////////////////////////
@@ -132,6 +132,13 @@ public:
 
 	virtual void Load(shared_str id);
 
+	// One immutable index preserves XML order while avoiding a full shared-data
+	// load for entries that cannot match the requested class. Optional prewarming
+	// moves the remaining cold Lua/XML initialization to the level-loading phase.
+	static void PrewarmSelectionCache(bool load_shared_data);
+	static void ClearSelectionCache();
+	static const xr_vector<shared_str>& RandomSelectionIds(const shared_str& character_class);
+
 protected:
 	const SSpecificCharacterData* data() const
 	{
@@ -153,6 +160,9 @@ protected:
 public:
 
 #ifdef  XRGAME_EXPORTS
+	static void BeginLoadProfileBatch();
+	static void EndLoadProfileBatch(LPCSTR object_name, u32 object_id);
+
 	LPCSTR Name() const;
 	shared_str Bio() const;
 	const CHARACTER_COMMUNITY& Community() const;

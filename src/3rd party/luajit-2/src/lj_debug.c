@@ -1,6 +1,6 @@
 /*
 ** Debugging and introspection.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #define lj_debug_c
@@ -63,6 +63,7 @@ static BCPos debug_framepc(lua_State *L, GCfunc *fn, cTValue *nextframe)
     if (cf == NULL || (char *)cframe_pc(cf) == (char *)cframe_L(cf))
       return NO_BCPOS;
     ins = cframe_pc(cf);  /* Only happens during error/hook handling. */
+    if (!ins) return NO_BCPOS;
   } else {
     if (frame_islua(nextframe)) {
       ins = frame_pc(nextframe);
@@ -94,15 +95,20 @@ static BCPos debug_framepc(lua_State *L, GCfunc *fn, cTValue *nextframe)
 	}
       }
       ins = cframe_pc(cf);
+      if (!ins) return NO_BCPOS;
     }
   }
   pt = funcproto(fn);
   pos = proto_bcpos(pt, ins) - 1;
 #if LJ_HASJIT
+  if (pos == NO_BCPOS) return 1;  /* Pretend it's the first bytecode. */
   if (pos > pt->sizebc) {  /* Undo the effects of lj_trace_exit for JLOOP. */
-    GCtrace *T = (GCtrace *)((char *)(ins-1) - offsetof(GCtrace, startins));
-    lua_assert(bc_isret(bc_op(ins[-1])));
-    pos = proto_bcpos(pt, mref(T->startpc, const BCIns));
+    if (bc_isret(bc_op(ins[-1]))) {
+      GCtrace *T = (GCtrace *)((char *)(ins-1) - offsetof(GCtrace, startins));
+      pos = proto_bcpos(pt, mref(T->startpc, const BCIns));
+    } else {
+      pos = NO_BCPOS;  /* Punt in case of stack overflow. */
+    }
   }
 #endif
   return pos;
@@ -235,19 +241,22 @@ const char *lj_debug_uvname(GCproto *pt, uint32_t idx)
 }
 
 /* Get name and value of upvalue. */
-const char *lj_debug_uvnamev(cTValue *o, uint32_t idx, TValue **tvp)
+const char *lj_debug_uvnamev(cTValue *o, uint32_t idx, TValue **tvp, GCobj **op)
 {
   if (tvisfunc(o)) {
     GCfunc *fn = funcV(o);
     if (isluafunc(fn)) {
       GCproto *pt = funcproto(fn);
       if (idx < pt->sizeuv) {
-	*tvp = uvval(&gcref(fn->l.uvptr[idx])->uv);
+	GCobj *uvo = gcref(fn->l.uvptr[idx]);
+	*tvp = uvval(&uvo->uv);
+	*op = uvo;
 	return lj_debug_uvname(pt, idx);
       }
     } else {
       if (idx < fn->c.nupvalues) {
 	*tvp = &fn->c.upvalue[idx];
+	*op = obj2gco(fn);
 	return "";
       }
     }
@@ -440,8 +449,7 @@ int lj_debug_getinfo(lua_State *L, const char *what, lj_Debug *ar, int ext)
   GCfunc *fn;
   if (*what == '>') {
     TValue *func = L->top - 1;
-    if (!tvisfunc(func))
-      return 0;
+    if (!tvisfunc(func)) return 0;
     fn = funcV(func);
     L->top--;
     what++;

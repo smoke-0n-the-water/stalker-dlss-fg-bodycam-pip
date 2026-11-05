@@ -175,6 +175,14 @@ void CRenderTarget::render_3DSS_reticles()
 		RImplementation.GMBase.r_dsgraph_render_ReflexSorted();
 	}
 
+	// r_upscaler_scope_after: the lenses are drawn at display resolution after
+	// reconstruction (phase_dlss_scope), without the reticle glow.
+	if (!G.mapScopeHUDSorted.empty() && ScopeAfterUpscale())
+	{
+		dlss_scope_frame = Device.dwFrame;
+		return;
+	}
+
 	CopyTextureSurface(rt_Generic_2->pTexture._get(), RImplementation.Target->rt_Position->pTexture._get());
 
 	CopyTextureSurface(rt_Generic_temp->pTexture._get(), rt_Generic_0->pTexture._get());

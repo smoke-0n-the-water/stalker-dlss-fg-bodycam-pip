@@ -1,4 +1,4 @@
-#include "stdafx.h"
+﻿#include "stdafx.h"
 #include "igame_level.h"
 
 //#include "xr_effgamma.h"
@@ -6,6 +6,7 @@
 #include "xr_ioconsole.h"
 #include "xr_ioc_cmd.h"
 #include "svp_gameplay_cvars.h"
+#include "../xrCore/cpu_placement.h"
 //#include "fbasicvisual.h"
 #include "cameramanager.h"
 #include "environment.h"
@@ -1318,6 +1319,26 @@ Fvector3 ssfx_wetness_multiplier = Fvector3().set(1.0f, 0.3f, 0.0f);
 
 BOOL dump_cvar_enable = TRUE;
 
+// orchestration_threads on|off - soft placement of engine threads on the CPU topology
+//                          (xrCore/cpu_placement.cpp); on by default, kept in user.ltx
+static Flags32 ps_orchestration_threads = {TRUE};
+class CCC_OrchestrationThreads : public CCC_Mask
+{
+public:
+	CCC_OrchestrationThreads(LPCSTR N) : CCC_Mask(N, &ps_orchestration_threads, TRUE) {}
+
+	virtual void Execute(LPCSTR args)
+	{
+		const BOOL previous = GetValue();
+		CCC_Mask::Execute(args);
+		cpu_placement::set_enabled(GetValue() != FALSE);
+		// A player's change is saved at once, not only on a clean exit: a crash must not
+		// bring the feature back. Frame 0 is user.ltx itself being executed at startup.
+		if (GetValue() != previous && Device.dwFrame)
+			Console->Execute("cfg_save");
+	}
+};
+
 void CCC_Register()
 {
 	// General
@@ -1334,6 +1355,7 @@ void CCC_Register()
 	CMD1(CCC_RenderDocOverlay, "rdoc_overlay");
 
 	CMD3(CCC_Mask, "mt_particles", &psDeviceFlags, mtParticles);
+	CMD1(CCC_OrchestrationThreads, "orchestration_threads");
 
 #ifdef DEBUG
     CMD1(CCC_MotionsStat, "stat_motions");
@@ -1530,7 +1552,9 @@ void CCC_Register()
 	CMD1(CCC_ProfCaptureStop, "prof_capture_stop");
 	CMD1(CCC_ProfCaptureToggle, "prof_capture");
 
-	CMD4(CCC_Integer, "r__framelimit", &ps_framelimiter, 0, 500);
+	// 2000, not 500: with frame generation the cap counts displayed frames, so DLSS 4x
+	// at 500 left only 125 rendered frames.
+	CMD4(CCC_Integer, "r__framelimit", &ps_framelimiter, 0, 2000);
 	CMD3(CCC_Mask, "rs_refresh_60hz", &psDeviceFlags, rsRefresh60hz);
 	CMD2(CCC_Color, "g_crosshair_color", &g_crosshair_color);
 	CMD4(CCC_Float, "mouse_sens_aim", &g_AimLookFactor, 0.01f, 5.0f);

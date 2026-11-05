@@ -463,20 +463,24 @@ void moving_objects::generate_collisions(moving_object* object)
 	}
 }
 
-typedef std::pair<moving_object*, moving_object::action_type> decision;
-
-struct decision_predicate
+struct collision_pair_less
 {
-	const moving_object* m_object;
-
-	IC decision_predicate(const moving_object* object) :
-		m_object(object)
+	IC bool operator()(const moving_objects::COLLISION& left, const moving_objects::COLLISION& right) const
 	{
+		std::less<moving_object*> less;
+		if (less(left.first, right.first))
+			return true;
+		if (less(right.first, left.first))
+			return false;
+		return less(left.second, right.second);
 	}
+};
 
-	IC bool operator()(const decision& decision) const
+struct collision_pair_equal
+{
+	IC bool operator()(const moving_objects::COLLISION& left, const moving_objects::COLLISION& right) const
 	{
-		return (m_object == decision.first);
+		return (left.first == right.first) && (left.second == right.second);
 	}
 };
 
@@ -485,6 +489,18 @@ void moving_objects::resolve_collisions()
 	std::sort(m_collisions.begin(), m_collisions.end(), &priority::predicate2);
 
 	m_previous_collisions = m_collisions;
+	m_previous_collision_pairs.resize(m_previous_collisions.size());
+	for (u32 i = 0; i < m_previous_collisions.size(); ++i)
+		m_previous_collision_pairs[i] = m_previous_collisions[i].second.second;
+	std::sort(m_previous_collision_pairs.begin(), m_previous_collision_pairs.end(), collision_pair_less());
+	m_previous_collision_pairs.erase(
+		std::unique(
+			m_previous_collision_pairs.begin(),
+			m_previous_collision_pairs.end(),
+			collision_pair_equal()
+		),
+		m_previous_collision_pairs.end()
+	);
 
 	u32 collidee_count = m_collisions.size() * 2 + m_visited_emitters.size();
 	moving_object** collidees = (moving_object **)_alloca(collidee_count * sizeof(moving_object*));
@@ -512,16 +528,9 @@ void moving_objects::resolve_collisions()
 		collidee_count = u32(std::unique(collidees, collidees + collidee_count) - collidees);
 	}
 
-	u32 decision_count = collidee_count;
-	decision* decisions = (decision*)_alloca(decision_count * sizeof(decision));
-
-	{
-		moving_object** I = collidees;
-		moving_object** E = collidees + collidee_count;
-		decision* J = decisions;
-		for (; I != E; ++I, ++J)
-			*J = std::make_pair(*I, moving_object::action_move);
-	}
+	moving_object::action_type* decisions =
+		(moving_object::action_type*)_alloca(collidee_count * sizeof(moving_object::action_type));
+	std::fill(decisions, decisions + collidee_count, moving_object::action_move);
 
 	{
 		COLLISIONS::const_iterator I = m_collisions.begin();
@@ -532,22 +541,30 @@ void moving_objects::resolve_collisions()
 			{
 			case possible_action_1_can_wait_2:
 				{
-					decision* object = std::find_if(decisions, decisions + decision_count,
-					                                decision_predicate((*I).second.second.first));
-					VERIFY(object != (decisions + decision_count));
-					*object = std::make_pair(object->first, moving_object::action_wait);
+					moving_object** object = std::lower_bound(
+						collidees,
+						collidees + collidee_count,
+						(*I).second.second.first
+					);
+					VERIFY(object != (collidees + collidee_count));
+					VERIFY(*object == (*I).second.second.first);
+					decisions[object - collidees] = moving_object::action_wait;
 					//					(*I).second.second.second->dynamic_query().merge((*I).second.second.first->dynamic_query());
-					(*I).second.second.second->dynamic_query().add(&object->first->object());
+					(*I).second.second.second->dynamic_query().add(&(*object)->object());
 					continue;
 				}
 			case possible_action_2_can_wait_1:
 				{
-					decision* object = std::find_if(decisions, decisions + decision_count,
-					                                decision_predicate((*I).second.second.second));
-					VERIFY(object != (decisions + decision_count));
-					*object = std::make_pair(object->first, moving_object::action_wait);
+					moving_object** object = std::lower_bound(
+						collidees,
+						collidees + collidee_count,
+						(*I).second.second.second
+					);
+					VERIFY(object != (collidees + collidee_count));
+					VERIFY(*object == (*I).second.second.second);
+					decisions[object - collidees] = moving_object::action_wait;
 					//					(*I).second.second.first->dynamic_query().merge((*I).second.second.second->dynamic_query());
-					(*I).second.second.first->dynamic_query().add(&object->first->object());
+					(*I).second.second.first->dynamic_query().add(&(*object)->object());
 					continue;
 				}
 			default: NODEFAULT;
@@ -556,10 +573,8 @@ void moving_objects::resolve_collisions()
 	}
 
 	{
-		decision* I = decisions;
-		decision* E = decisions + decision_count;
-		for (; I != E; ++I)
-			(*I).first->action((*I).second);
+		for (u32 i = 0; i < collidee_count; ++i)
+			collidees[i]->action(decisions[i]);
 	}
 }
 
@@ -612,6 +627,7 @@ void moving_objects::query_action_dynamic(moving_object* object)
 	}
 
 	m_previous_collisions		= m_collisions;
+	m_previous_collision_pairs.clear_not_free();
 
 #if 0//def DEBUG
 	{

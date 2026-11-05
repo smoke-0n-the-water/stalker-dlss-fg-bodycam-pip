@@ -7,6 +7,7 @@
 #include "../MathUtils.h"
 #include "../console_vars.h"
 #include "../phworld.h"
+#include "../AVX2Math.h"
 #include "../../xrcdb/xr_area.h"
 #include "../../xrEngine/gamemtllib.h"
 #ifdef DEBUG
@@ -198,19 +199,34 @@ IC int dcTriListCollider::dSortTriPrimitiveCollide(
 	gl_cl_tries_state.resize(data->cashed_tries.size(), Flags8().assign(0));
 	B = data->cashed_tries.begin(), E = data->cashed_tries.end();
 	bool gb_pased = false;
-	for (I = B; I != E; ++I)
+	I = B;
+	while (I != E)
 	{
+		const auto remaining = E - I;
+		const int batch_count = remaining >= 8 ? 8 : static_cast<int>(remaining);
+		const bool avx2_batch = batch_count == 8;
+		const std::uint32_t aabb_mask = avx2_batch
+			? xr_physics_simd::triangle_aabb_plane_mask_8(
+				T_array, &*I, V_array, reinterpret_cast<const float*>(p),
+				reinterpret_cast<const float*>(&AABB))
+			: 0xFFu;
+
+		for (int batch_lane = 0; batch_lane < batch_count; ++batch_lane)
+		{
 #ifdef DEBUG
-		debug_output().dbg_saved_tries_for_active_objects()++;
+			debug_output().dbg_saved_tries_for_active_objects()++;
 #endif
-		//if(ignored_tries[I-B])continue;
-		CDB::TRI* T = T_array + *I;
-		const Point vertices[3] = {
-			Point((dReal*)&V_array[T->verts[0]]), Point((dReal*)&V_array[T->verts[1]]),
-			Point((dReal*)&V_array[T->verts[2]])
-		};
-		if (!aabb_tri_aabb(Point(p), Point((float*)&AABB), vertices))
-			continue;
+			//if(ignored_tries[I-B])continue;
+			CDB::TRI* T = T_array + *(I + batch_lane);
+			if (avx2_batch && !(aabb_mask & (1u << batch_lane)))
+				continue;
+
+			const Point vertices[3] = {
+				Point((dReal*)&V_array[T->verts[0]]), Point((dReal*)&V_array[T->verts[1]]),
+				Point((dReal*)&V_array[T->verts[2]])
+			};
+			if (!avx2_batch && !aabb_tri_aabb(Point(p), Point((float*)&AABB), vertices))
+				continue;
 #ifdef DEBUG
 		if(debug_output().ph_dbg_draw_mask().test(phDBgDrawIntersectedTries))
 										debug_output().DBG_DrawTri(T,V_array,D3DCOLOR_XRGB(0,255,0));
@@ -345,7 +361,10 @@ IC int dcTriListCollider::dSortTriPrimitiveCollide(
 					CONTACT(contact, ret * skip), skip);
 			if (no_last_pos)
 				pos_tries.push_back(tri);
+			}
 		}
+
+		I += batch_count;
 	}
 
 	//if(intersect) ret=0;

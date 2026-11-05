@@ -53,9 +53,33 @@ public:
     u32 stat_strdock ;
 #endif // DEBUG_MEMORY_MANAGER
 
-	u32 stat_calls;
+	__declspec(align(64)) volatile LONG stat_calls;
+	volatile LONG stat_calls_enabled;
 	s32 stat_counter;
 public:
+	IC void mem_calls_enable(bool enabled)
+	{
+		const LONG value = enabled ? TRUE : FALSE;
+		if (stat_calls_enabled != value)
+			InterlockedExchange(&stat_calls_enabled, value);
+	}
+	IC void mem_calls_record()
+	{
+#ifdef DEBUG_MEMORY_MANAGER
+		if (!stat_calls_enabled && !g_bMEMO)
+			return;
+#else
+		if (!stat_calls_enabled)
+			return;
+#endif
+		InterlockedIncrement(&stat_calls);
+	}
+	IC void mem_calls_reset() { InterlockedExchange(&stat_calls, 0); }
+	IC u32 mem_calls_get() const
+	{
+		return static_cast<u32>(InterlockedCompareExchange(
+			const_cast<volatile LONG*>(&stat_calls), 0, 0));
+	}
 	void dbg_register(void* _p, size_t _size, const char* _name);
 	void dbg_unregister(void* _p);
 	void dbg_check();
@@ -68,9 +92,11 @@ public:
 #ifdef DEBUG_MEMORY_NAME
     void mem_statistic(LPCSTR fn);
     void* mem_alloc(size_t size, const char* _name, bool zeroMemory = true);
+    void* mem_alloc_uninitialized(size_t size, const char* _name);
     void* mem_realloc(void* p, size_t size, const char* _name);
 #else // DEBUG_MEMORY_NAME
 	void* mem_alloc(size_t size, bool zeroMemory = true);
+	void* mem_alloc_uninitialized(size_t size);
 	void* mem_realloc(void* p, size_t size);
 #endif // DEBUG_MEMORY_NAME
 	void mem_free(void* p);
@@ -103,12 +129,17 @@ extern XRCORE_API xrMemory Memory;
 template <class T>
 IC T* xr_alloc(u32 count) { return (T*)Memory.mem_alloc(count*sizeof(T), typeid(T).name()); }
 template <class T>
+IC T* xr_alloc_uninitialized(u32 count) { return (T*)Memory.mem_alloc_uninitialized(count*sizeof(T), typeid(T).name()); }
+template <class T>
 IC void xr_free(T*& P) { if (P) { Memory.mem_free((void*)P); P = NULL; }; }
 IC void* xr_malloc(size_t size) { return Memory.mem_alloc(size, "xr_malloc"); }
+IC void* xr_malloc_uninitialized(size_t size) { return Memory.mem_alloc_uninitialized(size, "xr_malloc_uninitialized"); }
 IC void* xr_realloc(void* P, size_t size) { return Memory.mem_realloc(P, size, "xr_realloc"); }
 #else // DEBUG_MEMORY_NAME
 template <class T>
 IC T* xr_alloc(u32 count) { return (T*)Memory.mem_alloc(count * sizeof(T)); }
+template <class T>
+IC T* xr_alloc_uninitialized(u32 count) { return (T*)Memory.mem_alloc_uninitialized(count * sizeof(T)); }
 
 template <class T>
 IC void xr_free(T*& P)
@@ -121,6 +152,7 @@ IC void xr_free(T*& P)
 }
 
 IC void* xr_malloc(size_t size) { return Memory.mem_alloc(size); }
+IC void* xr_malloc_uninitialized(size_t size) { return Memory.mem_alloc_uninitialized(size); }
 IC void* xr_realloc(void* P, size_t size) { return Memory.mem_realloc(P, size); }
 #endif // DEBUG_MEMORY_NAME
 

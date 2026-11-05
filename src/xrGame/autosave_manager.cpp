@@ -10,6 +10,7 @@
 #include "autosave_manager.h"
 #include "date_time.h"
 #include "ai_space.h"
+#include "alife_simulator.h"
 #include "level.h"
 #include "xrMessages.h"
 #include "UIGameCustom.h"
@@ -74,6 +75,12 @@ void CAutosaveManager::shedule_Update(u32 dt)
 	net_packet.w_stringZ(temp);
 	net_packet.w_u8(0);
 	Level().Send(net_packet, net_flags(TRUE));
+	if (!ai().get_alife() || !ai().alife().last_save_succeeded())
+	{
+		Msg("! Autosave failed: '%s' was not committed", temp);
+		delay_autosave();
+		return;
+	}
 
 	string_path S1;
 	xr_strcat(temp, sizeof(temp), ".dds");

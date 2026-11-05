@@ -42,25 +42,16 @@ IC MagicBox3& moving_objects::continuous_box(moving_object* object, const Fvecto
 	return (result);
 }
 
-struct collision_predicate
+struct previous_collision_pair_less
 {
-	const moving_objects::COLLISION* m_collision;
-
-	IC collision_predicate(const moving_objects::COLLISION& collision) :
-		m_collision(&collision)
+	IC bool operator()(const moving_objects::COLLISION& left, const moving_objects::COLLISION& right) const
 	{
-	}
-
-	IC bool operator()(const moving_objects::COLLISION_TIME& collision_time) const
-	{
-		const moving_objects::COLLISION& object = collision_time.second.second;
-		if (m_collision->first != object.first)
-			return (false);
-
-		if (m_collision->second != object.second)
-			return (false);
-
-		return (true);
+		std::less<moving_object*> less;
+		if (less(left.first, right.first))
+			return true;
+		if (less(right.first, left.first))
+			return false;
+		return less(left.second, right.second);
 	}
 };
 
@@ -220,17 +211,12 @@ void moving_objects::resolve_collision(boxes& current, moving_object* object0, c
 	VERIFY2(object1->action_frame() != Device.dwFrame, make_string("%d %s",Device.dwFrame,*object0->object().cName()));
 	VERIFY2(object1->action_frame() < Device.dwFrame, make_string("%d %s",Device.dwFrame,*object0->object().cName()));
 
-	bool first_time = (
-		std::find_if(
-			m_previous_collisions.begin(),
-			m_previous_collisions.end(),
-			collision_predicate(
-				std::make_pair(
-					object0,
-					object1
-				)
-			)
-		) == m_previous_collisions.end()
+	const COLLISION collision_pair = std::make_pair(object0, object1);
+	const bool first_time = !std::binary_search(
+		m_previous_collision_pairs.begin(),
+		m_previous_collision_pairs.end(),
+		collision_pair,
+		previous_collision_pair_less()
 	);
 
 	if (first_time)

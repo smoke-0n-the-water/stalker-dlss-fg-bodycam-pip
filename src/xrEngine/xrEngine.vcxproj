@@ -91,6 +91,7 @@
     <CharacterSet>MultiByte</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+    <InterproceduralOptimization>true</InterproceduralOptimization>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ProfiledDX11|x64'" Label="Configuration">
     <PlatformToolset>v143</PlatformToolset>
@@ -128,6 +129,7 @@
     <CharacterSet>MultiByte</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+    <InterproceduralOptimization>true</InterproceduralOptimization>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseR3|x64'" Label="Configuration">
     <PlatformToolset>v143</PlatformToolset>
@@ -462,9 +464,9 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseR4-DX12|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>.;$(SolutionDir)3rd party\imgui\;$(SolutionDir)3rd party\luajit-2\src\;$(SolutionDir)3rd party\luabind\;$(SolutionDir)3rd party\giflib\;$(XRAY_16X_LIBS)OpenAutomate\inc;$(XRAY_16X_LIBS)libogg-1.1.4\include;$(XRAY_16X_LIBS)libtheora-1.1.1\include;$(xrSdkDir)include;$(xrSdkDir)include\OpenAutomate;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>XR_DX12_BRIDGE;STATIC_RENDERER_R4;NDEBUG;WIN32;_WINDOWS;ENGINE_BUILD;_SECURE_SCL=0;AL_LIBTYPE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <ExceptionHandling>false</ExceptionHandling>
-      <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
+      <PreprocessorDefinitions>XRAY_ALLOW_RELEASE_CPP_EXCEPTIONS;XR_DX12_BRIDGE;STATIC_RENDERER_R4;NDEBUG;WIN32;_WINDOWS;ENGINE_BUILD;_SECURE_SCL=0;AL_LIBTYPE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <BrowseInformation>
@@ -474,20 +476,25 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <OmitFramePointers>true</OmitFramePointers>
-      <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
       <StringPooling>true</StringPooling>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <WholeProgramOptimization>true</WholeProgramOptimization>
       <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
       <InlineFunctionExpansion>Default</InlineFunctionExpansion>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <CallingConvention>Cdecl</CallingConvention>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName).pch</PrecompiledHeaderOutputFile>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>vfw32.lib;libogg_static.lib;libtheora_static.lib;winmm.lib;OpenAL32.lib;giflib.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(OutDir)$(Platform)\Release\;$(SolutionDir)3rd party\luajit-2\src\;$(XRAY_16X_LIBS)OpenAutomate\libraries;$(SolutionDir)..\lib\$(Platform)\Release;$(SolutionDir)$(Platform)\Release;$(xrSdkDir)libraries\x64;$(xrLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(OutDir)$(Platform)\Release-AVX\;$(SolutionDir)3rd party\luajit-2\src\;$(XRAY_16X_LIBS)OpenAutomate\libraries;$(SolutionDir)..\lib\$(Platform)\Release;$(SolutionDir)$(Platform)\Release;$(xrSdkDir)libraries\x64;$(xrLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <ImportLibrary>$(xrLibDir)$(TargetName).lib</ImportLibrary>
       <AdditionalOptions>/ignore:4099 /LTCG:INCREMENTAL</AdditionalOptions>
@@ -495,6 +502,7 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
     </Link>
     <PostBuildEvent>
       <Command>xcopy /D /Y "$(xrSdkDir)binaries\tbb12.dll" "$(OutDir)"
@@ -728,9 +736,9 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseR4-AVX|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>.;$(SolutionDir)3rd party\imgui\;$(SolutionDir)3rd party\luajit-2\src\;$(SolutionDir)3rd party\luabind\;$(SolutionDir)3rd party\giflib\;$(XRAY_16X_LIBS)OpenAutomate\inc;$(XRAY_16X_LIBS)libogg-1.1.4\include;$(XRAY_16X_LIBS)libtheora-1.1.1\include;$(xrSdkDir)include;$(xrSdkDir)include\OpenAutomate;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>$(XrProfilerDefines);STATIC_RENDERER_R4;NDEBUG;WIN32;_WINDOWS;ENGINE_BUILD;_SECURE_SCL=0;AL_LIBTYPE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <ExceptionHandling>false</ExceptionHandling>
-      <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
+      <PreprocessorDefinitions>XRAY_ALLOW_RELEASE_CPP_EXCEPTIONS;$(XrProfilerDefines);STATIC_RENDERER_R4;NDEBUG;WIN32;_WINDOWS;ENGINE_BUILD;_SECURE_SCL=0;AL_LIBTYPE_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <BrowseInformation>
@@ -740,13 +748,18 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <OmitFramePointers>true</OmitFramePointers>
-      <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
       <StringPooling>true</StringPooling>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <WholeProgramOptimization>true</WholeProgramOptimization>
       <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
       <InlineFunctionExpansion>Default</InlineFunctionExpansion>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <CallingConvention>Cdecl</CallingConvention>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName).pch</PrecompiledHeaderOutputFile>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -761,6 +774,7 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
     </Link>
     <PostBuildEvent>
       <Command>xcopy /D /Y "$(xrSdkDir)binaries\tbb12.dll" "$(OutDir)"
@@ -1101,22 +1115,13 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
     <ClInclude Include="xr_object_list.h" />
     <ClInclude Include="x_ray.h" />
     <ClInclude Include="_d3d_extensions.h" />
+    <ClInclude Include="AIAsyncPrepare.h" />
+    <ClInclude Include="DeferredDeviceReset.h" />
+    <ClInclude Include="DiscordRpcClient.h" />
+    <ClInclude Include="engine_version.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\3rd party\discord\achievement_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\activity_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\application_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\core.cpp" />
-    <ClCompile Include="..\3rd party\discord\image_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\lobby_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\network_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\overlay_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\relationship_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\storage_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\store_manager.cpp" />
     <ClCompile Include="..\3rd party\discord\types.cpp" />
-    <ClCompile Include="..\3rd party\discord\user_manager.cpp" />
-    <ClCompile Include="..\3rd party\discord\voice_manager.cpp" />
     <ClCompile Include="ai_script_lua_debug.cpp" />
     <ClCompile Include="ai_script_lua_extension.cpp" />
     <ClCompile Include="bone.cpp" />
@@ -1231,6 +1236,8 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
     <ClCompile Include="xr_object_list.cpp" />
     <ClCompile Include="x_ray.cpp" />
     <ClCompile Include="_scripting.cpp" />
+    <ClCompile Include="AIAsyncPrepare.cpp" />
+    <ClCompile Include="DiscordRpcClient.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="resource.rc" />
@@ -1403,4 +1410,7 @@ xcopy /D /Y "$(xrSdkDir)binaries\tbbmalloc.dll" "$(OutDir)"</Command>
       <UserProperties DevPartner_IsInstrumented="1" />
     </VisualStudio>
   </ProjectExtensions>
+  <ItemGroup>
+    <ProjectReference Include="$(SolutionDir)ReShadeCompat\ReShadeCompat.vcxproj" />
+  </ItemGroup>
 </Project>

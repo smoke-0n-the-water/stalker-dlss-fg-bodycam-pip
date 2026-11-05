@@ -101,11 +101,10 @@ TEMPLATE_SPECIALIZATION
 bool CStateBloodsuckerPredatorAbstract::check_completion()
 {
 	if (object->HitMemory.get_last_hit_time() > time_state_started) return true;
-	if (object->EnemyMan.get_enemy() && object->EnemyMan.see_enemy_now() && (object
-	                                                                         ->Position().distance_to(
-		                                                                         object->EnemyMan.get_enemy()->
-		                                                                                 Position()) < 4.f)) return
-		true;
+	const CEntityAlive* enemy = object->EnemyMan.get_enemy();
+	if (enemy && object->EnemyMan.see_enemy_now() &&
+		object->Position().distance_to_sqr(enemy->Position()) < _sqr(4.f))
+		return true;
 
 	return false;
 }

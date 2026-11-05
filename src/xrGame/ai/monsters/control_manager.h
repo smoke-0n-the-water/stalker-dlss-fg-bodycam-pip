@@ -30,6 +30,7 @@ class CControl_Manager
 
 	DEFINE_VECTOR(CControl_Com*, COM_VEC, COM_VEC_IT);
 	COM_VEC m_active_elems;
+	bool m_active_elems_dirty;
 
 	CControlAnimation* m_animation;
 	CControlDirection* m_direction;
@@ -118,4 +119,5 @@ private:
 	bool is_base(CControl_Com*);
 	bool is_locked(CControl_Com*);
 	void check_active_com(CControl_Com* com, bool b_add);
+	void cleanup_active_coms();
 };

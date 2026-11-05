@@ -6,6 +6,7 @@
 #include "../Include/xrRender/DebugRender.h"
 #include "../Include/xrRender/UIRender.h"
 #include "../UIGameCustom.h"
+#include "../UIDialogHolder.h"
 #include "../ui/UIDialogWnd.h"
 //#include "UIHelper.h"
 //#include "UIHint.h"
@@ -150,6 +151,7 @@ static void erase_capture_subtree(CUIWindow* w)
 
 CUIWindow::CUIWindow()
 	: m_pParentWnd(NULL),
+	  m_pDialogHolder(NULL),
 	  m_pMessageTarget(NULL),
 	  m_pKeyboardCapturer(NULL),
 	  m_bAutoDelete(false),
@@ -308,12 +310,42 @@ void CUIWindow::CollectGarbage()
 void CUIWindow::AttachChild(CUIWindow* pChild)
 {
 	R_ASSERT(pChild);
-	if (!pChild) return;
+	if (!pChild || pChild == this)
+		return;
 
-	// Ncenka: Print in console instead of crash
-	if (IsChild(pChild)) {
+	if (IsChild(pChild))
+	{
 		Msg("!CUIWindow::AttachChild, %s child element is already attached to %s", pChild->WindowName_script(), WindowName_script());
 		return;
+	}
+
+	// A script can reuse the same window object for another container. The old
+	// implementation let SetParent() reject that operation but still appended the
+	// pointer to the new parent's child list, so one window could be rendered from
+	// two parents. Transfer it atomically instead. Preserve AutoDelete ownership
+	// without allowing DetachChild() to destroy the object during the move.
+	if (CUIWindow* const old_parent = pChild->GetParent())
+	{
+		if (old_parent != this)
+		{
+			if (old_parent->IsChild(pChild))
+			{
+				const bool auto_delete = pChild->IsAutoDelete();
+				if (auto_delete)
+					pChild->SetAutoDelete(false);
+
+				old_parent->DetachChild(pChild);
+
+				if (auto_delete)
+					pChild->SetAutoDelete(true);
+			}
+			else
+			{
+				// Repair an inconsistent backlink rather than creating another stale
+				// render path for the same UI object.
+				pChild->m_pParentWnd = NULL;
+			}
+		}
 	}
 
 	pChild->SetParent(this);

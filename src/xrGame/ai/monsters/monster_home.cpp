@@ -486,14 +486,14 @@ bool CMonsterHome::at_mid_home(const Fvector& pos)
 
 bool CMonsterHome::at_home(const Fvector& pos, float const radius)
 {
+	const float radius_sqr = _sqr(radius);
 	if (!m_path)
 	{
 		if (!ai().level_graph().valid_vertex_id(m_level_vertex_id))
 			return true;
 
-		float dist = pos.distance_to(ai().level_graph().vertex_position(m_level_vertex_id));
-
-		if (dist < radius)
+		if (radius > 0.f &&
+			pos.distance_to_sqr(ai().level_graph().vertex_position(m_level_vertex_id)) < radius_sqr)
 			return true;
 	}
 	else
@@ -507,8 +507,7 @@ bool CMonsterHome::at_home(const Fvector& pos, float const radius)
 			if (!ai().level_graph().valid_vertex_id(level_vertex))
 				continue;
 
-			float dist = pos.distance_to(ai().level_graph().vertex_position(level_vertex));
-			if (dist < radius)
+			if (radius > 0.f && pos.distance_to_sqr(ai().level_graph().vertex_position(level_vertex)) < radius_sqr)
 				return true;
 		}
 	}

@@ -5,6 +5,7 @@
  #define dSINGLE
 #endif
 #include "PHObject.h"
+#include "IPhysicsShellHolder.h"
 //#include "ode_include.h"
 #include "../3rd party/ode/include/ode/common.h"
 #include "../3rd party/ode/include/ode/collision.h"
@@ -18,9 +19,6 @@
 #ifdef DEBUG
 //extern	u32				dbg_total_saved_tries					;
 #endif
-class IPhysicsShellHolder;
-
-
 class CObjectContactCallback
 {
 	CObjectContactCallback* next;
@@ -120,6 +118,7 @@ struct dxGeomUserData
 	CDB::TRI *neg_tri, *b_neg_tri;
 	CPHObject* ph_object;
 	IPhysicsShellHolder* ph_ref_object;
+	u16 ph_ref_object_id;
 	u16 material;
 	u16 tri_material;
 	ContactCallbackFun* callback;
@@ -198,6 +197,7 @@ IC void dGeomCreateUserData(dxGeom* geom)
 	(dGeomGetUserData(geom))->callback = NULL;
 	(dGeomGetUserData(geom))->object_callbacks = NULL;
 	(dGeomGetUserData(geom))->ph_ref_object = NULL;
+	(dGeomGetUserData(geom))->ph_ref_object_id = u16(-1);
 	(dGeomGetUserData(geom))->element_position = u16(-1);
 	(dGeomGetUserData(geom))->bone_id = u16(-1);
 	(dGeomGetUserData(geom))->callback_data = NULL;
@@ -239,7 +239,9 @@ IC void dGeomUserDataSetPhObject(dxGeom* geom, CPHObject* phObject)
 
 IC void dGeomUserDataSetPhysicsRefObject(dxGeom* geom, IPhysicsShellHolder* phRefObject)
 {
-	(dGeomGetUserData(geom))->ph_ref_object = phRefObject;
+	dxGeomUserData* data = dGeomGetUserData(geom);
+	data->ph_ref_object = phRefObject;
+	data->ph_ref_object_id = phRefObject ? phRefObject->ObjectID() : u16(-1);
 }
 
 IC void dGeomUserDataSetContactCallback(dxGeom* geom, ContactCallbackFun* callback)

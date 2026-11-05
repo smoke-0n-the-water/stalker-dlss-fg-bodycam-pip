@@ -7,6 +7,8 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+#include <cstdlib>
+#include <memory>
 
 #include "script_space_forward.h"
 #include "script_bind_macroses.h"
@@ -38,6 +40,8 @@
 #include "BottleItem.h"
 #include "Missile.h"
 #include "WeaponKnife.h"
+#include "script_game_object_identity.h"
+#include <luabind/weak_ref.hpp>
 
 #ifdef PROJECTOR_NEW
 #include "searchlight.h"
@@ -178,12 +182,33 @@ namespace luabind
 class CScriptGameObject
 {
 	mutable CGameObject* m_game_object;
+	mutable luabind::weak_ref m_lua_instance_ref;
+	mutable CInventoryOwner* m_inventory_owner_cache;
+	mutable bool m_inventory_owner_cache_initialized;
+	bool m_invalid_bone_warning_reported[2];
 	CScriptGameObject(CScriptGameObject const& game_object);
+	CInventoryOwner* cached_inventory_owner() const;
+
+public:
+	// CScriptGameObject is owned by its CGameObject and freed in CGameObject::net_Destroy(),
+	// but value structs copied into Lua (e.g. script_rq_result) can outlive it. Such structs
+	// must not keep a raw CScriptGameObject*: they keep a weak_ptr to this token instead and
+	// re-validate it on every access. The token is cleared in ~CScriptGameObject().
+	struct lifetime_token
+	{
+		CScriptGameObject* object;
+	};
+	std::weak_ptr<lifetime_token> lifetime() const;
+
+private:
+	mutable std::shared_ptr<lifetime_token> m_lifetime_token;
 
 public:
 
 	CScriptGameObject(CGameObject* tpGameObject);
 	virtual ~CScriptGameObject();
+	bool extract_lua_instance(lua_State* L) const;
+	void store_lua_instance(lua_State* L, int index) const;
 	operator CObject*();
 
     IC bool is_valid() const
@@ -1328,11 +1353,16 @@ struct SafeWrapBase
     template <typename Ret>
     static Ret handle_invalid()
     {
-        // This part is never reached because we crash the game,
-        // but we need to satisfy the compiler.
-        if constexpr (std::is_reference_v<Ret>)
+        if constexpr (!std::is_void_v<Ret> && (std::is_reference_v<Ret> || !std::is_default_constructible_v<Ret>))
         {
-            return *static_cast<std::remove_reference_t<Ret>*>(nullptr);
+            // A borrowed reference cannot represent an absent object. Never
+            // manufacture a reference by dereferencing a null pointer.
+            FATAL("Cannot return a reference/value from a destroyed Lua object");
+            std::abort();
+        }
+        else if constexpr (std::is_void_v<Ret>)
+        {
+            return;
         }
         else
         {
@@ -1357,26 +1387,22 @@ struct SafeWrapBase
     static auto execute(InstanceT instance, FuncT memFunc, Args&&... args)
         -> decltype((instance->*memFunc)(std::forward<Args>(args)...))
     {
-        if (lua_busy_hands_debug)
-        {
-            bool is_valid = false;
-
-            if (instance != nullptr)
-            {
+        bool valid = instance != nullptr;
                 if constexpr (has_is_valid<InstanceT>::value)
-                    // The class has is_valid(), so we use it
-                    is_valid = instance->is_valid();
-                else
-                    // The class does NOT have is_valid(), so being non-null is good enough
-                    is_valid = true;
+            valid = valid && instance->is_valid();
+
+        // Lifetime checks are required even when diagnostic logging is off.
+        // A prevented native call does not corrupt Lua and must not invoke the
+        // fatal-error UI/autosave callback or continue into the member function.
+        if (!valid)
+        {
+            if (lua_busy_hands_debug)
+                log("Skipping method call on a destroyed object");
+
+            using Ret = decltype((instance->*memFunc)(std::forward<Args>(args)...));
+            return handle_invalid<Ret>();
             }
 
-            // Send one last call to Lua to warn users that Lua is about to die
-            if (!is_valid)
-                log_and_callback("Accessing destroyed object");
-        }
-
-        // Sayonara
         return (instance->*memFunc)(std::forward<Args>(args)...);
     }
 };

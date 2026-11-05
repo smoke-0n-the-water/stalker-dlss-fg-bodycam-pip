@@ -13,7 +13,13 @@
 
 class CCustomMonster;
 class CAI_Stalker;
+class CAgentMemoryManager;
 class vision_client;
+
+namespace luabind
+{
+	template <class T> class functor;
+}
 
 class CVisualMemoryManager
 {
@@ -43,9 +49,25 @@ private:
 	vision_client* m_client;
 
 private:
-	RAW_VISIBLES m_visible_objects;
+	mutable RAW_VISIBLES m_visible_objects;
 	VISIBLES* m_objects;
+	// Non-owning pointer to the index owned by this group's agent manager.
+	// Group registration detaches it before that manager is destroyed.
+	CAgentMemoryManager* m_squad_merge_index;
 	NOT_YET_VISIBLES m_not_yet_visible_objects;
+
+	struct SVisionObserverContext
+	{
+		Fvector eye_position;
+		Fvector eye_direction;
+		float object_range;
+		float half_fov;
+		float cos_half_fov;
+	};
+
+	typedef xr_unordered_flat_map<u16, u32> OBJECT_INDEX_CACHE;
+	mutable OBJECT_INDEX_CACHE m_visible_object_indices;
+	mutable OBJECT_INDEX_CACHE m_not_yet_visible_object_indices;
 
 private:
 	DELAYED_VISIBLE_OBJECTS m_delayed_objects;
@@ -63,6 +85,24 @@ private:
 
 public:
 	void add_visible_object(const CObject* object, float time_delta, bool fictitious = false);
+	u32 add_fictitious_visible_mask(const CObject* object, squad_mask_type knowledge_mask);
+
+private:
+	void build_observer_context(SVisionObserverContext& context) const;
+	float object_visible_distance(const CGameObject* game_object, float& object_distance,
+	                              const SVisionObserverContext& context, const CVisionParameters& parameters) const;
+	float object_luminocity(const CGameObject* game_object, const CVisionParameters& parameters) const;
+	float get_visible_value(const CGameObject* game_object, float distance, float object_distance, float time_delta,
+	                        float object_velocity, float luminocity, const CVisionParameters& parameters,
+	                        const ::luabind::functor<float>* callback) const;
+	bool visible(const CGameObject* game_object, float time_delta, const SVisionObserverContext& context,
+	             const ::luabind::functor<float>* callback);
+	void add_visible_object(const CObject* object, float time_delta, bool fictitious,
+	                        const SVisionObserverContext& context, const ::luabind::functor<float>* callback);
+
+	VISIBLES::iterator find_visible_object(u16 id, bool use_shared_index = true);
+	VISIBLES::const_iterator find_visible_object(u16 id) const;
+	NOT_YET_VISIBLES::iterator find_not_yet_visible_object(u16 id);
 
 protected:
 	IC void fill_object(CVisibleObject& visible_object, const CGameObject* game_object);
@@ -85,6 +125,7 @@ public:
 
 private:
 	void initialize();
+	void refresh_visible_objects() const;
 
 public:
 	CVisualMemoryManager(CCustomMonster* object);
@@ -102,8 +143,10 @@ public:
 	bool visible(u32 level_vertex_id, float yaw, float eye_fov) const;
 
 public:
-	IC void set_squad_objects(xr_vector<CVisibleObject>* squad_objects);
+	void set_squad_objects(xr_vector<CVisibleObject>* squad_objects);
+	void set_squad_objects(xr_vector<CVisibleObject>* squad_objects, CAgentMemoryManager* merge_index);
 	CVisibleObject* visible_object(const CGameObject* game_object);
+	const CVisibleObject* object_by_id(u16 id) const;
 
 public:
 	// this function returns true if and only if 

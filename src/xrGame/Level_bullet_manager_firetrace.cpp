@@ -156,7 +156,6 @@ BOOL CBulletManager::test_callback(const collide::ray_defs& rd, CObject* object,
 		}
 	}
 
-
 	return bRes;
 }
 
@@ -171,6 +170,7 @@ BOOL CBulletManager::test_callback(const collide::ray_defs& rd, CObject* object,
 void CBulletManager::FireShotmark(SBullet* bullet, const Fvector& vDir, const Fvector& vEnd, collide::rq_result& R,
                                   u16 target_material, const Fvector& vNormal, bool ShowMark)
 {
+
 	SGameMtlPair* mtl_pair = GMLib.GetMaterialPair(bullet->bullet_material_idx, target_material);
 	Fvector particle_dir = vNormal;
 
@@ -279,9 +279,12 @@ void CBulletManager::DynamicObjectHit(CBulletManager::_event& E)
 
 	if (g_clear) E.Repeated = false;
 	if (GameID() == eGameIDSingle) E.Repeated = false;
+	CEntityAlive* const target_alive = smart_cast<CEntityAlive*>(E.R.O);
+
 	bool NeedShootmark = true; //!E.Repeated;
 
-	if (smart_cast<CActor*>(E.R.O))
+	CActor* const actor = smart_cast<CActor*>(E.R.O);
+	if (actor)
 	{
 		game_PlayerState* ps = Game().GetPlayerByGameID(E.R.O->ID());
 		if (ps && ps->testFlag(GAME_PLAYER_FLAG_INVINCIBLE))
@@ -298,6 +301,8 @@ void CBulletManager::DynamicObjectHit(CBulletManager::_event& E)
 	//	Fvector			hit_normal;
 	FireShotmark(&E.bullet, E.bullet.dir, E.point, E.R, E.tgt_material, E.normal, NeedShootmark);
 
+	if (E.bullet.flags.allow_sendhit && !E.Repeated)
+	{
 	Fvector original_dir = E.bullet.dir;
 	//ObjectHit(&E.bullet, E.end_point, E.R, E.tgt_material, hit_normal);
 
@@ -327,20 +332,14 @@ void CBulletManager::DynamicObjectHit(CBulletManager::_event& E)
 	}
 
 	//отправить хит пораженному объекту
-	if (E.bullet.flags.allow_sendhit && !E.Repeated)
-	{
 		//-------------------------------------------------
 		bool AddStatistic = false;
-		if (GameID() != eGameIDSingle && E.bullet.flags.allow_sendhit && smart_cast<CActor*>(E.R.O)
+		if (GameID() != eGameIDSingle && actor
 			&& Game().m_WeaponUsageStatistic->CollectData())
 		{
-			CActor* pActor = smart_cast<CActor*>(E.R.O);
-			if (pActor) // && pActor->g_Alive())
-			{
 				Game().m_WeaponUsageStatistic->OnBullet_Hit(&E.bullet, E.R.O->ID(), (s16)E.R.element, E.point);
 				AddStatistic = true;
 			};
-		};
 
 		SHit Hit = SHit((E.bullet.parent_id == 0 ? hit_param.power * hit_modifier : hit_param.power), //Make sure only damage dealt by actor is modified
 		                original_dir,
@@ -371,12 +370,28 @@ FvectorVec g_hit[3];
 
 extern void random_dir(Fvector& tgt_dir, const Fvector& src_dir, float dispersion);
 
+namespace
+{
+const ::luabind::functor<void>* bullet_object_hit_callback()
+{
+	static cached_script_functor<void> callback_cache("_g.CBulletManager__ObjectHit");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvector& end_point,
                                collide::rq_result& R, u16 target_material, Fvector& hit_normal)
 {
-	::luabind::functor<void> funct;
-	if (ai().script_engine().functor("_g.CBulletManager__ObjectHit", funct))
-		funct(bullet->section, smart_cast<CGameObject*>(R.O) ? smart_cast<CGameObject*>(R.O)->lua_game_object() : nullptr, end_point, bullet->dir, *GMLib.GetMaterialByIdx(target_material)->m_Name, bullet->speed, bullet->weapon_id);
+
+	if (const ::luabind::functor<void>* funct = bullet_object_hit_callback())
+	{
+		SGameMtl* const callback_mtl = GMLib.GetMaterialByIdx(target_material);
+		(*funct)(bullet->section, smart_cast<CGameObject*>(R.O) ? smart_cast<CGameObject*>(R.O)->lua_game_object() : nullptr, end_point, bullet->dir, *callback_mtl->m_Name, bullet->speed, bullet->weapon_id);
+	}
+
+	// Keep the callback lookup separate: a GAMMA callback may reload script or
+	// material state, so this pointer is only reused after that callback returns.
+	SGameMtl* const mtl = GMLib.GetMaterialByIdx(target_material);
 
 	//----------- normal - start
 	if (R.O)
@@ -411,12 +426,8 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
 		}
 		if (DOT(hit_normal, bullet->dir) < 0)
 		{
-			if (bullet->density_mode)
-			{
-				//				Log("WARNING: Material in material found while bullet tracing. Incorrect behaviour of shooting is possible.");
-			}
+
 			bullet->density_mode = true;
-			SGameMtl* mtl = GMLib.GetMaterialByIdx(target_material);
 			bullet->density = mtl->fDensityFactor;
 			bullet->begin_density.mad(bullet->bullet_pos, bullet->dir, R.range);
 		}
@@ -438,7 +449,6 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
 	//(Если = 0, то пуля либо рикошетит(если контакт идёт по касательной), либо застряёт в текущем 
 	//объекте, если больше 0, то пуля прошивает объект)
 
-	SGameMtl* mtl = GMLib.GetMaterialByIdx(target_material);
 	float mtl_ap = mtl->fShootFactor;
 	float shoot_factor = 0.0f; //default >> пуля НЕ пробила материал!
 	float ap = bullet->armor_piercing;
@@ -531,7 +541,6 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
 	float energy_lost = 1.0f - bullet->speed / old_speed;
 	//импульс переданный объекту равен прямопропорционален потерянной энергии
 	hit_res->impulse = bullet->hit_param.impulse * speed_factor * energy_lost;
-
 
 #ifdef DEBUG
 	extern BOOL g_bDrawBulletHit;

@@ -75,6 +75,7 @@ public:
 	IC CALifeLevelRegistry& level() const;
 	IC bool level_exists() const;
 	IC void set_process_time(const float& process_time);
+	IC void set_process_deadline(u64 deadline);
 	IC CSE_ALifeCreatureActor* actor() const;
 	IC const GRAPH_REGISTRY& objects() const;
 	template <typename F>

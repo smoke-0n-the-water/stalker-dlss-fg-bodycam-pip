@@ -309,6 +309,7 @@ class CPolterTele : public CPolterSpecialAbility
 	typedef CPolterSpecialAbility inherited;
 
 	xr_vector<CObject*> m_nearest;
+	xr_vector<CObject*> m_tele_candidates;
 
 	// external params
 	float m_pmt_radius;
@@ -350,8 +351,8 @@ public:
 	virtual void update_frame();
 
 private:
-	void tele_find_objects(xr_vector<CObject*>& objects, const Fvector& pos);
-	bool tele_raise_objects();
+	void tele_find_objects(const Fvector& pos, const Fvector& actor_center, const Fvector& actor_head);
+	bool tele_raise_objects(const Fvector& actor_pos);
 	void tele_fire_objects();
 
 	bool trace_object(CObject* obj, const Fvector& target);

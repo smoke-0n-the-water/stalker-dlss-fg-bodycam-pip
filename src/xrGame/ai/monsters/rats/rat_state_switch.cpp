@@ -133,15 +133,17 @@ void CAI_Rat::set_dir()
 	{
 		CMonsterSquad* squad = monster_squad().get_squad(this);
 		Fvector m_enemy_position = memory().enemy().selected()->Position();
-		if (squad && squad->SquadActive())
+		const u8 squad_size = squad ? squad->squad_alife_count() : u8(0);
+		if (squad_size)
 		{
-			float m_delta_Angle = angle_normalize((PI * 2) / squad->squad_alife_count());
+			float m_delta_Angle = angle_normalize((PI * 2) / squad_size);
 			float m_heading, m_pitch;
 			Fvector m_temp, m_dest_direction;
 			m_temp = squad->GetLeader()->Position();
-			m_dest_direction.x = (m_temp.x - m_enemy_position.x) / m_temp.distance_to(m_enemy_position);
-			m_dest_direction.y = (m_temp.y - m_enemy_position.y) / m_temp.distance_to(m_enemy_position);
-			m_dest_direction.z = (m_temp.z - m_enemy_position.z) / m_temp.distance_to(m_enemy_position);
+			const float enemy_distance = m_temp.distance_to(m_enemy_position);
+			m_dest_direction.x = (m_temp.x - m_enemy_position.x) / enemy_distance;
+			m_dest_direction.y = (m_temp.y - m_enemy_position.y) / enemy_distance;
+			m_dest_direction.z = (m_temp.z - m_enemy_position.z) / enemy_distance;
 			m_dest_direction.getHP(m_heading, m_pitch);
 			m_heading = angle_normalize(m_heading + m_delta_Angle * squad->get_index(this));
 			m_dest_direction.setHP(m_heading, m_pitch);

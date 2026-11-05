@@ -32,24 +32,14 @@ void CUIStatsIcon::InitTexInfo()
 
 	// artefact
 	LPCSTR artefact_name = pSettings->r_string("artefacthunt_gamedata", "artefact");
-	float fGridWidth = pSettings->r_float(artefact_name, "inv_grid_width");
-	float fGridHeight = pSettings->r_float(artefact_name, "inv_grid_height");
-	float fXPos = pSettings->r_float(artefact_name, "inv_grid_x");
-	float fYPos = pSettings->r_float(artefact_name, "inv_grid_y");
+	const InventoryUtilities::InventoryIconDesc icon_desc = InventoryUtilities::GetInventoryIconDesc(artefact_name);
 
-	if (pSettings->line_exist(artefact_name, "icons_texture"))
-	{
-		LPCSTR icons_texture = pSettings->r_string(artefact_name, "icons_texture");
-		m_tex_info[ARTEFACT][0].sh = InventoryUtilities::GetCustomIconTextureShader(icons_texture);
-	}
+	if (icon_desc.texture.size())
+		m_tex_info[ARTEFACT][0].sh = InventoryUtilities::GetCustomIconTextureShader(icon_desc.texture.c_str());
 	else
 		m_tex_info[ARTEFACT][0].sh = InventoryUtilities::GetEquipmentIconsShader();
 	
-	m_tex_info[ARTEFACT][0].rect.set(
-		fXPos * INV_GRID_WIDTH,
-		fYPos * INV_GRID_HEIGHT,
-		fXPos * INV_GRID_WIDTH + fGridWidth * INV_GRID_WIDTH,
-		fYPos * INV_GRID_HEIGHT + fGridHeight * INV_GRID_HEIGHT);
+	m_tex_info[ARTEFACT][0].rect = icon_desc.texture_rect;
 
 	m_tex_info[ARTEFACT][1] = m_tex_info[ARTEFACT][0];
 

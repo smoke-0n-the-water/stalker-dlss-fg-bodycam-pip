@@ -18,6 +18,7 @@ CGameMtlLibrary::CGameMtlLibrary()
 	material_pair_index = 0;
 #ifndef _EDITOR
 	material_count = 0;
+	material_pairs_dense_rt = false;
 #endif
 	PGMLib = &GMLib;
 }
@@ -343,16 +344,42 @@ void CGameMtlLibrary::Load()
 	}
 #endif // DEBUG_PRINT_MATERIAL
 
+	material_vis_transparency.resize(materials.size());
+	for (u32 material = 0; material < materials.size(); ++material)
+		material_vis_transparency[material] = materials[material]->fVisTransparencyFactor;
+
 #ifndef _EDITOR
 	material_count = (u32)materials.size();
-	material_pairs_rt.resize(material_count * material_count, 0);
+	constexpr size_t dense_pair_table_max_bytes = 8u * 1024u * 1024u;
+	const size_t dense_pair_count = static_cast<size_t>(material_count) * static_cast<size_t>(material_count);
+	material_pairs_dense_rt = dense_pair_count <= dense_pair_table_max_bytes / sizeof(SGameMtlPair*);
+
+	material_pairs_rt.clear_and_free();
+	decltype(material_pairs_sparse_rt) empty_sparse_pairs;
+	material_pairs_sparse_rt.swap(empty_sparse_pairs);
+
+	if (material_pairs_dense_rt)
+		material_pairs_rt.resize(dense_pair_count, nullptr);
+	else
+		material_pairs_sparse_rt.reserve(material_pairs.size());
+
 	for (GameMtlPairIt p_it = material_pairs.begin(); material_pairs.end() != p_it; ++p_it)
 	{
 		SGameMtlPair* S = *p_it;
-		int idx0 = GetMaterialIdx(S->mtl0) * material_count + GetMaterialIdx(S->mtl1);
-		int idx1 = GetMaterialIdx(S->mtl1) * material_count + GetMaterialIdx(S->mtl0);
-		material_pairs_rt[idx0] = S;
-		material_pairs_rt[idx1] = S;
+		const u16 material0 = GetMaterialIdx(S->mtl0);
+		const u16 material1 = GetMaterialIdx(S->mtl1);
+		if (material_pairs_dense_rt)
+		{
+			material_pairs_rt[static_cast<size_t>(material0) * material_count + material1] = S;
+			material_pairs_rt[static_cast<size_t>(material1) * material_count + material0] = S;
+		}
+		else
+		{
+			const u16 low = _min(material0, material1);
+			const u16 high = _max(material0, material1);
+			const u32 key = (static_cast<u32>(high) << 16u) | static_cast<u32>(low);
+			material_pairs_sparse_rt[key] = S;
+		}
 	}
 #endif
 

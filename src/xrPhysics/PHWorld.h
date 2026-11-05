@@ -56,6 +56,7 @@ class CPHWorld : public pureFrame,
 	PH_OBJECT_STORAGE m_recently_disabled_objects;
 	PH_UPDATE_OBJECT_STORAGE m_update_objects;
 	PH_UPDATE_OBJECT_STORAGE m_freezed_update_objects;
+	xr_vector<CPHIsland*> m_step_islands;
 	dGeomID m_motion_ray;
 	//CPHCommander				*m_commander;
 	IPHWorldUpdateCallbck* m_update_callback;

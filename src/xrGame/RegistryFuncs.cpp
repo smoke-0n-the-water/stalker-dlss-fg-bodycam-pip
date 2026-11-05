@@ -39,6 +39,7 @@ bool ReadRegistryValue(LPCSTR rKeyName, DWORD rKeyType, void* value)
 	default:
 		{
 			Msg("! Unknown registry data type.");
+			RegCloseKey(hKey);
 			return false;
 		}
 		break;
@@ -92,6 +93,7 @@ bool WriteRegistryValue(LPCSTR rKeyName, DWORD rKeyType, const void* value)
 	default:
 		{
 			Msg("! Unknown registry data type.");
+			RegCloseKey(hKey);
 			return false;
 		}
 		break;
@@ -143,6 +145,7 @@ u32 const ReadRegistry_BinaryValue(LPCSTR rKeyName, u8* buffer_dest, u32 const b
 	DWORD tmp_buffer_size = buffer_size;
 
 	res = RegQueryValueEx(hKey, rKeyName, NULL, &value_type, buffer_dest, &tmp_buffer_size);
+	RegCloseKey(hKey);
 
 	if (res != ERROR_SUCCESS)
 	{

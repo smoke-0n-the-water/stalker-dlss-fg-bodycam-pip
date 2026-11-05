@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#include <immintrin.h>
+#include <cstring>
+#include <array>
 #include "xrtheora_surface.h"
 #include "xrtheora_stream.h"
 
@@ -179,6 +182,75 @@ u32 CTheoraSurface::Height(bool bRealSize)
 		return btwPow2_Ceil((u32)m_rgb->t_info.frame_height);;
 }
 
+
+namespace
+{
+IC __m256i load_8_luma(const u8* source)
+{
+    return _mm256_cvtepu8_epi32(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(source)));
+}
+
+IC __m256i load_4_chroma_duplicated(const u8* source)
+{
+    int packed;
+    std::memcpy(&packed, source, sizeof(packed));
+    __m128i bytes = _mm_cvtsi32_si128(packed);
+    bytes = _mm_unpacklo_epi8(bytes, bytes);
+    return _mm256_cvtepu8_epi32(bytes);
+}
+
+IC __m256i clamp_byte_epi32(__m256i value)
+{
+    const __m256i zero = _mm256_setzero_si256();
+    const __m256i maximum = _mm256_set1_epi32(255);
+    return _mm256_min_epi32(_mm256_max_epi32(value, zero), maximum);
+}
+
+IC __m256i yuv420_to_rgba8(const u8* y_source, const u8* u_source, const u8* v_source)
+{
+    const __m256i y = load_8_luma(y_source);
+    const __m256i u = load_4_chroma_duplicated(u_source);
+    const __m256i v = load_4_chroma_duplicated(v_source);
+
+    const __m256i c = _mm256_sub_epi32(y, _mm256_set1_epi32(16));
+    const __m256i d = _mm256_sub_epi32(u, _mm256_set1_epi32(128));
+    const __m256i e = _mm256_sub_epi32(v, _mm256_set1_epi32(128));
+    const __m256i rounding = _mm256_set1_epi32(128);
+
+    __m256i red = _mm256_add_epi32(_mm256_mullo_epi32(c, _mm256_set1_epi32(298)),
+        _mm256_mullo_epi32(e, _mm256_set1_epi32(409)));
+    red = _mm256_srai_epi32(_mm256_add_epi32(red, rounding), 8);
+
+    __m256i green = _mm256_sub_epi32(_mm256_mullo_epi32(c, _mm256_set1_epi32(298)),
+        _mm256_mullo_epi32(d, _mm256_set1_epi32(100)));
+    green = _mm256_sub_epi32(green, _mm256_mullo_epi32(e, _mm256_set1_epi32(208)));
+    green = _mm256_srai_epi32(_mm256_add_epi32(green, rounding), 8);
+
+    __m256i blue = _mm256_add_epi32(_mm256_mullo_epi32(c, _mm256_set1_epi32(298)),
+        _mm256_mullo_epi32(d, _mm256_set1_epi32(516)));
+    blue = _mm256_srai_epi32(_mm256_add_epi32(blue, rounding), 8);
+
+    red = clamp_byte_epi32(red);
+    green = clamp_byte_epi32(green);
+    blue = clamp_byte_epi32(blue);
+
+    return _mm256_or_si256(_mm256_set1_epi32(static_cast<int>(0xff000000u)),
+        _mm256_or_si256(_mm256_slli_epi32(red, 16),
+            _mm256_or_si256(_mm256_slli_epi32(green, 8), blue)));
+}
+
+IC __m256i pack_yuv420_shader8(const u8* y_source, const u8* u_source, const u8* v_source)
+{
+    const __m256i y = load_8_luma(y_source);
+    const __m256i u = load_4_chroma_duplicated(u_source);
+    const __m256i v = load_4_chroma_duplicated(v_source);
+
+    return _mm256_or_si256(_mm256_set1_epi32(static_cast<int>(0xff000000u)),
+        _mm256_or_si256(_mm256_slli_epi32(y, 16),
+            _mm256_or_si256(_mm256_slli_epi32(u, 8), v)));
+}
+}
+
 void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 {
 	VERIFY(m_rgb);
@@ -202,91 +274,110 @@ void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 
 		if (!bShaderYUV2RGB)
 		{
+			const u32 destination_stride = width + _width;
 			for (u32 h = 0; h < height; ++h)
 			{
-				u32 uv_stride_add = yuv.uv_stride * (h >> 1);
-				u8* Y = yuv.y + yuv.y_stride * h;
-				u8* U = yuv.u + uv_stride_add;
-				u8* V = yuv.v + uv_stride_add;
+				const u32 uv_stride_add = yuv.uv_stride * (h >> 1);
+				const u8* Y = yuv.y + yuv.y_stride * h;
+				const u8* U = yuv.u + uv_stride_add;
+				const u8* V = yuv.v + uv_stride_add;
+				u32* destination = data + h * destination_stride;
 
-				for (u32 w = 0; w < width; ++w)
+				u32 w = 0;
+				for (; w + 8 <= width; w += 8)
 				{
-					u32 uv_idx = w >> 1;
-					u8 y = Y[w];
-					u8 u = U[uv_idx];
-					u8 v = V[uv_idx];
-
-					int C = y - 16;
-					int D = u - 128;
-					int E = v - 128;
-
-					int R = clampr((298 * C + 409 * E + 128) >> 8, 0, 255);
-					int G = clampr((298 * C - 100 * D - 208 * E + 128) >> 8, 0, 255);
-					int B = clampr((298 * C + 516 * D + 128) >> 8, 0, 255);
-
-					data[pos] = color_rgba(R, G, B, 255);
-
-					pos++;
+					const __m256i rgba = yuv420_to_rgba8(Y + w, U + (w >> 1), V + (w >> 1));
+					_mm256_storeu_si256(reinterpret_cast<__m256i*>(destination + w), rgba);
 				}
-				pos += _width;
+
+				for (; w < width; ++w)
+				{
+					const u32 uv_idx = w >> 1;
+					const int C = Y[w] - 16;
+					const int D = U[uv_idx] - 128;
+					const int E = V[uv_idx] - 128;
+					const int R = clampr((298 * C + 409 * E + 128) >> 8, 0, 255);
+					const int G = clampr((298 * C - 100 * D - 208 * E + 128) >> 8, 0, 255);
+					const int B = clampr((298 * C + 516 * D + 128) >> 8, 0, 255);
+					destination[w] = color_rgba(R, G, B, 255);
+				}
 			}
+			pos = destination_stride * height;
 		}
 		else
 		{
-			u32 buff_step = width + _width;
-			u32 buff_double_step = buff_step << 1;
+			const u32 buff_step = width + _width;
+			const u32 buff_double_step = buff_step << 1;
 
 			for (u32 y_h = 0, uv_h = 0; y_h < height; y_h += 2, ++uv_h, pos += buff_double_step)
 			{
-				u32 uv_stride_add = yuv.uv_stride * uv_h;
-				u8* Y0 = yuv.y + yuv.y_stride * y_h;
-				u8* U = yuv.u + uv_stride_add;
-				u8* Y1 = Y0 + yuv.y_stride;
-				u8* V = yuv.v + uv_stride_add;
+				const u32 uv_stride_add = yuv.uv_stride * uv_h;
+				const u8* Y0 = yuv.y + yuv.y_stride * y_h;
+				const u8* U = yuv.u + uv_stride_add;
+				const u8* Y1 = Y0 + yuv.y_stride;
+				const u8* V = yuv.v + uv_stride_add;
+				u32* destination0 = data + pos;
+				u32* destination1 = destination0 + buff_step;
 
-				for (u32 y_w = 0, uv_w = 0; y_w < width; y_w += 2, ++uv_w)
+				u32 y_w = 0;
+				for (; y_w + 8 <= width; y_w += 8)
 				{
-					u32 y00 = Y0[y_w] << 16;
-					u32 y01 = Y0[y_w + 1] << 16;
+					const u32 uv_w = y_w >> 1;
+					_mm256_storeu_si256(reinterpret_cast<__m256i*>(destination0 + y_w),
+						pack_yuv420_shader8(Y0 + y_w, U + uv_w, V + uv_w));
+					_mm256_storeu_si256(reinterpret_cast<__m256i*>(destination1 + y_w),
+						pack_yuv420_shader8(Y1 + y_w, U + uv_w, V + uv_w));
+				}
 
-					u32 y10 = Y1[y_w] << 16;
-					u32 y11 = Y1[y_w + 1] << 16;
-
-					u8 u = U[uv_w];
-					u8 v = V[uv_w];
-
-					u32 idx = pos + y_w;
-
-					u32 common_part = 255 << 24 | u << 8 | v;
-
-					data[idx] = (common_part | y00);
-					data[idx + 1] = (common_part | y01);
-
-					idx += buff_step;
-
-					data[idx] = (common_part | y10);
-					data[idx + 1] = (common_part | y11);
+				for (; y_w < width; y_w += 2)
+				{
+					const u32 uv_w = y_w >> 1;
+					const u32 common_part = 255u << 24 | static_cast<u32>(U[uv_w]) << 8 | V[uv_w];
+					destination0[y_w] = common_part | static_cast<u32>(Y0[y_w]) << 16;
+					destination0[y_w + 1] = common_part | static_cast<u32>(Y0[y_w + 1]) << 16;
+					destination1[y_w] = common_part | static_cast<u32>(Y1[y_w]) << 16;
+					destination1[y_w + 1] = common_part | static_cast<u32>(Y1[y_w + 1]) << 16;
 				}
 			}
 		}
+		_mm256_zeroupper();
 		_pos = pos;
 	}
 
 	// alpha
 	if (yuv_alpha)
 	{
+		static const std::array<u32, 256> alpha_table = []
+		{
+			std::array<u32, 256> table{};
+			constexpr float conversion = 0.256788f + 0.504129f + 0.097906f;
+			for (u32 value = 0; value < table.size(); ++value)
+				table[value] = static_cast<u32>(iFloor(float(static_cast<int>(value) - 16) / conversion) & 0xff) << 24;
+			return table;
+		}();
+
 		yuv_buffer& yuv = *yuv_alpha;
+		const __m256i rgb_mask = _mm256_set1_epi32(0x00ffffff);
 		u32 pos = 0;
 		for (u32 h = 0; h < height; ++h)
 		{
-			u8* Y = yuv.y + yuv.y_stride * h;
-			for (u32 w = 0; w < width; ++w)
+			const u8* Y = yuv.y + yuv.y_stride * h;
+			u32* destination = data + pos + 1;
+			u32 w = 0;
+			for (; w + 8 <= width; w += 8)
 			{
-				u8 y = Y[w];
-				u32& clr = data[++pos];
-				clr = subst_alpha(clr, iFloor(float((y - 16)) / K));
+				const __m256i indices = load_8_luma(Y + w);
+				const __m256i alpha_values = _mm256_i32gather_epi32(
+					reinterpret_cast<const int*>(alpha_table.data()), indices, sizeof(u32));
+				const __m256i colors = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(destination + w));
+				_mm256_storeu_si256(reinterpret_cast<__m256i*>(destination + w),
+					_mm256_or_si256(_mm256_and_si256(colors, rgb_mask), alpha_values));
 			}
+			for (; w < width; ++w)
+				destination[w] = subst_alpha(destination[w], iFloor(float((Y[w] - 16)) / K));
+			pos += width;
 		}
+		_mm256_zeroupper();
 	}
 }
 

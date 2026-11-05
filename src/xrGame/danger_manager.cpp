@@ -98,6 +98,21 @@ CDangerManager::~CDangerManager()
 {
 }
 
+CDangerManager::DANGER_KEY CDangerManager::danger_key(const CDangerObject& object) const
+{
+	const u64 object_id = object.object() ? static_cast<u64>(object.object()->ID()) : 0xffffull;
+	return object_id | (static_cast<u64>(object.type()) << 16) |
+		(static_cast<u64>(object.perceive_type()) << 24);
+}
+
+void CDangerManager::rebuild_object_index()
+{
+	m_object_index.clear();
+	m_object_index.reserve(m_objects.size() * 2 + 8);
+	for (u32 index = 0; index < m_objects.size(); ++index)
+		m_object_index[danger_key(m_objects[index])] = index;
+}
+
 void CDangerManager::Load(LPCSTR section)
 {
 }
@@ -105,6 +120,7 @@ void CDangerManager::Load(LPCSTR section)
 void CDangerManager::reinit()
 {
 	m_objects.clear();
+	m_object_index.clear();
 	m_ignored.clear();
 	m_time_line = 0;
 	m_selected = 0;
@@ -117,6 +133,7 @@ void CDangerManager::reload(LPCSTR section)
 void CDangerManager::update()
 {
 	START_PROFILE("Memory Manager/dangers::update")
+		const size_t old_count = m_objects.size();
 		m_objects.erase(
 			std::remove_if(
 				m_objects.begin(),
@@ -128,6 +145,8 @@ void CDangerManager::update()
 			),
 			m_objects.end()
 		);
+		if (m_objects.size() != old_count)
+			rebuild_object_index();
 
 		float result = flt_max;
 		m_selected = 0;
@@ -152,6 +171,7 @@ void CDangerManager::remove_links(const CObject* object)
 	if (m_selected && (m_selected->object() == object))
 		m_selected = 0;
 
+	const size_t old_count = m_objects.size();
 	m_objects.erase(
 		std::remove_if(
 			m_objects.begin(),
@@ -160,6 +180,8 @@ void CDangerManager::remove_links(const CObject* object)
 		),
 		m_objects.end()
 	);
+	if (m_objects.size() != old_count)
+		rebuild_object_index();
 
 	{
 		OBJECTS::iterator I = m_objects.begin();
@@ -176,17 +198,16 @@ void CDangerManager::remove_links(const CObject* object)
 		}
 	}
 
-	IGNORED::iterator I = std::find(m_ignored.begin(), m_ignored.end(), object->ID());
-	if (I != m_ignored.end())
-		m_ignored.erase_fast(I);
+	IGNORED::iterator I = std::lower_bound(m_ignored.begin(), m_ignored.end(), object->ID());
+	if ((I != m_ignored.end()) && (*I == object->ID()))
+		m_ignored.erase(I);
 }
 
 bool CDangerManager::useful(const CDangerObject& object) const
 {
 	if (object.object() && !object.dependent_object())
 	{
-		IGNORED::const_iterator I = std::find(m_ignored.begin(), m_ignored.end(), object.object()->ID());
-		if (I != m_ignored.end())
+		if (std::binary_search(m_ignored.begin(), m_ignored.end(), object.object()->ID()))
 			return (false);
 	}
 
@@ -268,66 +289,64 @@ float CDangerManager::do_evaluate(const CDangerObject& object) const
 	return (result);
 }
 
-void CDangerManager::add(const CVisibleObject& object)
+void CDangerManager::add(const CVisibleObject& object, const CEntityAlive* entity_alive)
 {
 	PROF_EVENT("DangerManager::add_VisibleObject");
 	if (!object.m_enabled || object.m_object->getDestroy())
 		return;
 
-	const CEntityAlive* obj = smart_cast<const CEntityAlive*>(object.m_object);
-	if (obj && !obj->g_Alive() && (obj->killer_id() != ALife::_OBJECT_ID(-1)))
+	if (entity_alive && !entity_alive->g_Alive() && (entity_alive->killer_id() != ALife::_OBJECT_ID(-1)))
 	{
-		add(CDangerObject(obj, obj->Position(), object.m_level_time, CDangerObject::eDangerTypeFreshEntityCorpse,
+		add(CDangerObject(entity_alive, entity_alive->Position(), object.m_level_time,
+		                  CDangerObject::eDangerTypeFreshEntityCorpse,
 		                  CDangerObject::eDangerPerceiveTypeVisual));
 		return;
 	}
 }
 
-void CDangerManager::add(const CSoundObject& object)
+void CDangerManager::add(const CSoundObject& object, const CEntityAlive* entity_alive)
 {
 	PROF_EVENT("DangerManager::add_SoundObject");
 	if (!object.m_enabled || object.m_object->getDestroy())
 		return;
 
-	const CEntityAlive* obj = smart_cast<const CEntityAlive*>(object.m_object);
-
 	if ((object.m_sound_type & SOUND_TYPE_BULLET_HIT) == SOUND_TYPE_BULLET_HIT)
 	{
-		add(CDangerObject(obj, object.m_object_params.m_position, object.m_level_time,
+		add(CDangerObject(entity_alive, object.m_object_params.m_position, object.m_level_time,
 		                  CDangerObject::eDangerTypeBulletRicochet, CDangerObject::eDangerPerceiveTypeSound));
 		return;
 	}
 
 	if ((object.m_sound_type & SOUND_TYPE_WEAPON_SHOOTING) == SOUND_TYPE_WEAPON_SHOOTING)
 	{
-		add(CDangerObject(obj, object.m_object_params.m_position, object.m_level_time,
+		add(CDangerObject(entity_alive, object.m_object_params.m_position, object.m_level_time,
 		                  CDangerObject::eDangerTypeAttackSound, CDangerObject::eDangerPerceiveTypeSound));
 		return;
 	}
 
 	if ((object.m_sound_type & SOUND_TYPE_INJURING) == SOUND_TYPE_INJURING)
 	{
-		add(CDangerObject(obj, object.m_object_params.m_position, object.m_level_time,
+		add(CDangerObject(entity_alive, object.m_object_params.m_position, object.m_level_time,
 		                  CDangerObject::eDangerTypeEntityAttacked, CDangerObject::eDangerPerceiveTypeSound));
 		return;
 	}
 
 	if ((object.m_sound_type & SOUND_TYPE_DYING) == SOUND_TYPE_DYING)
 	{
-		add(CDangerObject(obj, object.m_object_params.m_position, object.m_level_time,
+		add(CDangerObject(entity_alive, object.m_object_params.m_position, object.m_level_time,
 		                  CDangerObject::eDangerTypeEntityDeath, CDangerObject::eDangerPerceiveTypeSound));
 		return;
 	}
 
-	if (obj && m_object->is_relation_enemy(obj))
+	if (entity_alive && m_object->is_relation_enemy(entity_alive))
 	{
-		add(CDangerObject(obj, object.m_object_params.m_position, object.m_level_time,
+		add(CDangerObject(entity_alive, object.m_object_params.m_position, object.m_level_time,
 		                  CDangerObject::eDangerTypeEnemySound, CDangerObject::eDangerPerceiveTypeSound));
 		return;
 	}
 }
 
-void CDangerManager::add(const CHitObject& object)
+void CDangerManager::add(const CHitObject& object, const CEntityAlive* entity_alive)
 {
 	PROF_EVENT("DangerManager::add_HitObject");
 	if (!object.m_enabled || object.m_object->getDestroy())
@@ -339,8 +358,8 @@ void CDangerManager::add(const CHitObject& object)
 	if (object.m_object->ID() == m_object->ID())
 		return;
 
-	const CEntityAlive* obj = smart_cast<const CEntityAlive*>(object.m_object);
-	add(CDangerObject(obj, obj->Position(), object.m_level_time, CDangerObject::eDangerTypeAttacked,
+	VERIFY(entity_alive == object.m_object);
+	add(CDangerObject(entity_alive, entity_alive->Position(), object.m_level_time, CDangerObject::eDangerTypeAttacked,
 	                  CDangerObject::eDangerPerceiveTypeHit));
 }
 
@@ -353,24 +372,40 @@ void CDangerManager::add(const CDangerObject& object)
 	if (!is_useful(object))
 		return;
 
-	OBJECTS::iterator I = std::find_if(m_objects.begin(), m_objects.end(), CFindPredicate(object));
-	if (I != m_objects.end())
+	const DANGER_KEY key = danger_key(object);
+	DANGER_INDEX::iterator found = m_object_index.find(key);
+	if (found != m_object_index.end())
 	{
-		*I = object;
+		const u32 index = found->second;
+		if (index < m_objects.size() && m_objects[index] == object)
+		{
+			m_objects[index] = object;
 		return;
 	}
 
+		// A compaction or external load changed vector indices. Rebuild once and
+		// retry before falling back to append.
+		rebuild_object_index();
+		found = m_object_index.find(key);
+		if (found != m_object_index.end())
+		{
+			m_objects[found->second] = object;
+			return;
+		}
+	}
+
 	m_objects.push_back(object);
+	m_object_index[key] = static_cast<u32>(m_objects.size() - 1);
 }
 
 void CDangerManager::ignore(const CGameObject* object)
 {
 	VERIFY(object);
-	IGNORED::const_iterator I = std::find(m_ignored.begin(), m_ignored.end(), object->ID());
-	if (I != m_ignored.end())
+	IGNORED::iterator I = std::lower_bound(m_ignored.begin(), m_ignored.end(), object->ID());
+	if ((I != m_ignored.end()) && (*I == object->ID()))
 		return;
 
-	m_ignored.push_back(object->ID());
+	m_ignored.insert(I, object->ID());
 }
 
 void CDangerManager::save(NET_Packet& packet) const
@@ -381,4 +416,6 @@ void CDangerManager::save(NET_Packet& packet) const
 void CDangerManager::load(IReader& packet)
 {
 	load_data(m_ignored, packet);
+	std::sort(m_ignored.begin(), m_ignored.end());
+	m_ignored.erase(std::unique(m_ignored.begin(), m_ignored.end()), m_ignored.end());
 }

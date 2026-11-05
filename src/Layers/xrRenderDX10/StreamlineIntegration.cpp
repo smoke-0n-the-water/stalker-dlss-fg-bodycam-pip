@@ -9,6 +9,10 @@ namespace
 std::atomic<StreamlineIntegration::Logger> s_logger{};
 std::atomic<StreamlineIntegration::Support> s_support{StreamlineIntegration::Support::Unknown};
 std::atomic<bool> s_attempted{};
+// DLSSGState::numFramesToGenerateMax as last reported (0 = not known yet). Process-wide
+// so the options menu can hide multipliers the runtime will not accept. With an MFG
+// unlock loaded (OptiScaler [MFGUnlock]) the runtime reports the unlocked maximum.
+std::atomic<UINT> s_framesMax{};
 void StreamlineLog(sl::LogType type, const char* message)
 {
     if (type == sl::LogType::eInfo) return; // Full details remain in sl.log.
@@ -20,33 +24,45 @@ StreamlineIntegration::~StreamlineIntegration() { Shutdown(); Unload(); }
 
 StreamlineIntegration::Support StreamlineIntegration::FrameGenerationSupport() { return s_support.load(); }
 bool StreamlineIntegration::CanInitialize() { return !s_attempted.load(); }
+UINT StreamlineIntegration::MaxFramesToGenerate() { return s_framesMax.load(); }
+
+void StreamlineIntegration::NoteFramesMax(UINT reported)
+{
+    // Ignore unwritten/implausible fields; SL documents an upper bound of 5 (6x).
+    if (reported < 1 || reported > 7 || reported == m_framesMax) return;
+    m_framesMax = reported;
+    s_framesMax.store(reported);
+    char message[128]{};
+    snprintf(message, sizeof(message), "[DLSS FG] Runtime allows up to %ux frame generation.", reported + 1);
+    Log(message);
+}
 
 void StreamlineIntegration::Log(const char* message) const
 {
     if (m_logger) m_logger(message);
 }
 
+void StreamlineIntegration::NoteOutOfVram(const char* stage)
+{
+    m_outOfVram = true;
+    if (m_vramWarningLogged) return;
+    m_vramWarningLogged = true;
+    char message[320]{};
+    snprintf(message, sizeof(message), "! [DLSS FG] %s: Streamline is short of video memory (eWarnOutOfVRAM). "
+        "Frame generation stays on while DLSS-G can run and turns off if it cannot; repeats are not logged.", stage);
+    Log(message);
+}
+
 bool StreamlineIntegration::Check(sl::Result result, const char* stage)
 {
     if (result == sl::Result::eOk) return true;
-    // eWarnOutOfVRAM is the only eWarn* value in sl::Result and it is a WARNING:
-    // the call did what it could under memory pressure. Treating it as failure is
-    // what killed the game on 2026-10-23 - slDLSSGSetOptions returned it when
-    // DLSS-G could not fit (15497 MB allocated against a 14535 MB budget), the
-    // recovery SetEnabled(false) returned it again, so FailGeneration escalated
-    // to SubmitFrame -> HW.Present -> R_CHK -> FATAL. Degrade, never die: log it
-    // once and carry on, so frame generation simply declines to turn on.
+    // A warning, not a failure: the call took effect under memory pressure. Failing
+    // here also failed the recovery's own Off request with the same warning, and that
+    // ended the game. If DLSS-G cannot allocate, its post-Present status says so and
+    // AfterPresent turns frame generation off the normal way.
     if (result == sl::Result::eWarnOutOfVRAM)
     {
-        if (!m_vramWarned)
-        {
-            m_vramWarned = true;
-            char warning[256]{};
-            snprintf(warning, sizeof(warning),
-                "! [DLSS FG] %s: out of VRAM. Frame generation may not engage; "
-                "lower the upscaler quality or free texture memory. Not fatal.", stage);
-            Log(warning);
-        }
+        NoteOutOfVram(stage);
         return true;
     }
     m_failureStage = stage;
@@ -142,6 +158,7 @@ bool StreamlineIntegration::SetDevice(ID3D12Device* device)
     if (!Check(m_slDLSSGGetState(m_viewport, state, nullptr), "FG capabilities")) return false;
     m_minDimension = state.minWidthOrHeight;
     m_supportsVSync = state.bIsVsyncSupportAvailable == sl::eTrue;
+    NoteFramesMax(state.numFramesToGenerateMax);
     return true; // Default is Off; set the first options with the first presented frame.
 }
 
@@ -198,26 +215,51 @@ void StreamlineIntegration::Marker(sl::PCLMarker marker)
     if (Check(m_slPCLSetMarker(marker, *m_frame), "PCL marker")) m_markerMask |= bit;
 }
 
-bool StreamlineIntegration::SetEnabled(bool enabled)
+bool StreamlineIntegration::SetEnabled(bool enabled, UINT framesToGenerate)
 {
     if (!m_deviceReady) return false;
     enabled = enabled && !m_failed;
-    if (m_optionsSet && m_enabled == enabled) return true;
+    // 1 = 2x, 2 = 3x, 3 = 4x. Never ask for more than the runtime reports: SL rejects it.
+    UINT frames = framesToGenerate < 1 ? 1 : framesToGenerate;
+    if (frames > 1 && m_framesMax && frames > m_framesMax) frames = m_framesMax;
+    if (frames > 1 && !m_framesMax) frames = 1; // maximum unknown: stay on plain 2x
+    if (m_optionsSet && m_enabled == enabled && (!enabled || m_framesSet == frames)) return true;
     sl::DLSSGOptions options{};
     options.mode = enabled ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
-    options.numFramesToGenerate = 1;
+    options.numFramesToGenerate = frames;
     // Normal menu/toggle transitions retain resources. A failed feature instead
     // releases its internal allocations when Off takes effect at the next Present.
     options.flags = m_failed ? sl::DLSSGFlags{} : sl::DLSSGFlags::eRetainResourcesWhenOff;
     options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
-    if (!Check(m_slDLSSGSetOptions(m_viewport, options), "DLSS-G options")) return false;
+    sl::Result result = m_slDLSSGSetOptions(m_viewport, options);
+    if (result != sl::Result::eOk && enabled && frames > 1)
+    {
+        // A multiplier the runtime refuses is not a failure: fall back to 2x and
+        // remember it so the request is not repeated every frame.
+        char message[160]{};
+        snprintf(message, sizeof(message), "[DLSS FG] Runtime refused %ux (result %u); using 2x.", frames + 1, unsigned(result));
+        Log(message);
+        m_framesRefused = true;
+        m_framesMax = 1;
+        s_framesMax.store(1);
+        frames = options.numFramesToGenerate = 1;
+        result = m_slDLSSGSetOptions(m_viewport, options);
+    }
+    if (!Check(result, "DLSS-G options")) return false;
     char diagnostic[192]{};
-    snprintf(diagnostic, sizeof(diagnostic), "[FG DIAG] SetOptions: enabled=%u retain=%u failed=%u; sampling next 120 post-Present states (no extra queries).",
-        unsigned(enabled), unsigned(!m_failed), unsigned(m_failed));
+    snprintf(diagnostic, sizeof(diagnostic), "[FG DIAG] SetOptions: enabled=%u frames=%u retain=%u failed=%u; sampling next 120 post-Present states (no extra queries).",
+        unsigned(enabled), frames, unsigned(!m_failed), unsigned(m_failed));
     Log(diagnostic);
     m_diagnosticPresents = 120;
-    if (enabled != m_enabled) Log(enabled ? "[DLSS FG] Interpolation enabled (2x)." : "[DLSS FG] Interpolation suspended.");
+    if (enabled != m_enabled || (enabled && frames != m_framesSet))
+    {
+        char message[96]{};
+        if (enabled) snprintf(message, sizeof(message), "[DLSS FG] Interpolation enabled (%ux).", frames + 1);
+        else snprintf(message, sizeof(message), "[DLSS FG] Interpolation suspended.");
+        Log(message);
+    }
     m_enabled = enabled;
+    if (enabled) m_framesSet = frames;
     m_optionsSet = true;
     return true;
 }
@@ -309,17 +351,15 @@ bool StreamlineIntegration::AfterPresent(ID3D12Fence** inputFence, UINT64& input
     }
     if (result == sl::Result::eWarnOutOfVRAM)
     {
+        NoteOutOfVram("DLSS-G state");
         if (state.status == static_cast<sl::DLSSGStatus>(~0u) || state.numFramesActuallyPresented == ~0u ||
             state.lastPresentInputsProcessingCompletionFenceValue == ~UINT64(0) ||
             (m_enabled && (!state.inputsProcessingCompletionFence || !state.lastPresentInputsProcessingCompletionFenceValue)))
             return Check(sl::Result::eErrorInvalidState, "DLSS-G VRAM warning without usable state/input fence");
-        if (!m_vramWarningLogged)
-        {
-            Log("[DLSS FG] VRAM pressure warning (eWarnOutOfVRAM); processing returned state and input fence. Further VRAM warnings suppressed.");
-            m_vramWarningLogged = true;
-        }
     }
     else if (!Check(result, "DLSS-G state")) return false;
+    // An unlock may patch the provider after SetDevice; pick up a raised maximum.
+    if (state.numFramesToGenerateMax && !m_framesRefused) NoteFramesMax(state.numFramesToGenerateMax);
     ++m_presentNumber;
     const bool markerGap = m_enabled && (m_markerMask != 63 || m_tagFrame != m_frameNumber);
     if (markerGap) ++m_markerGaps;
@@ -389,7 +429,7 @@ void StreamlineIntegration::Shutdown()
     m_initialized = m_deviceReady = m_enabled = false;
     m_optionsSet = false;
     m_failed = false;
-    m_vramWarningLogged = false;
+    m_vramWarningLogged = m_outOfVram = false;
     m_diagnosticPresents = 0;
     m_frame = nullptr;
     m_frameLimitUs = ~0u;

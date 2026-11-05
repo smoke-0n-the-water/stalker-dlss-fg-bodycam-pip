@@ -298,6 +298,9 @@
       <Filter>FS</Filter>
     </ClCompile>
     <ClCompile Include="xrParams.cpp" />
+    <ClCompile Include="cpu_placement.cpp" />
+    <ClCompile Include="engine_error_logger.cpp" />
+    <ClCompile Include="job_system.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="FTimer.h">
@@ -640,6 +643,10 @@
     </ClInclude>
     <ClInclude Include="..\3rd party\fastdelegate\fastdelegate.h" />
     <ClInclude Include="..\3rd party\robin_hood\robin_hood.h" />
+    <ClInclude Include="cpu_placement.h" />
+    <ClInclude Include="diagnostic_privacy.h" />
+    <ClInclude Include="engine_error_logger.h" />
+    <ClInclude Include="job_system.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="xrCore.rc" />
@@ -653,8 +660,8 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <Library Include="..\3rd party\stackwalker\lib\StackWalker.lib">
-      <Filter>Debug core</Filter>
-    </Library>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="$(ProjectDir)..\3rd party\stackwalker\lib\StackWalker.lib" />
   </ItemGroup>
 </Project>

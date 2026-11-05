@@ -28,27 +28,6 @@
 #	include "ai_debug.h"
 #endif // MASTER_GOLD
 
-struct CHitObjectPredicate
-{
-	const CObject* m_object;
-
-	CHitObjectPredicate(const CObject* object) :
-		m_object(object)
-	{
-	}
-
-	bool operator()(const MemorySpace::CHitObject& hit_object) const
-	{
-		if (!m_object)
-			return (!hit_object.m_object);
-
-		if (!hit_object.m_object)
-			return (false);
-
-		return (m_object->ID() == hit_object.m_object->ID());
-	}
-};
-
 CHitMemoryManager::~CHitMemoryManager()
 {
 	clear_delayed_objects();
@@ -58,14 +37,38 @@ CHitMemoryManager::~CHitMemoryManager()
 #endif
 }
 
+u32 CHitMemoryManager::object_index(u16 id) const
+{
+	if (!m_hits)
+		return u32(-1);
+	auto cached = m_object_indices.find(id);
+	if (cached != m_object_indices.end())
+	{
+		const u32 index = cached->second;
+		if (index < m_hits->size() && object_id((*m_hits)[index].m_object) == id)
+			return index;
+		m_object_indices.erase(id);
+	}
+	for (u32 index = 0; index < m_hits->size(); ++index)
+	{
+		if (object_id((*m_hits)[index].m_object) != id)
+			continue;
+		m_object_indices[id] = index;
+		return index;
+	}
+	return u32(-1);
+}
+
+const CHitObject* CHitMemoryManager::object_by_id(u16 id) const
+{
+	const u32 index = object_index(id);
+	return index != u32(-1) ? &(*m_hits)[index] : nullptr;
+}
+
 const CHitObject* CHitMemoryManager::hit(const CEntityAlive* object) const
 {
 	VERIFY(m_hits);
-	HITS::const_iterator I = std::find_if(m_hits->begin(), m_hits->end(), CHitObjectPredicate(object));
-	if (m_hits->end() != I)
-		return (&*I);
-
-	return (0);
+	return object_by_id(object_id(object));
 }
 
 void CHitMemoryManager::add(const CEntityAlive* entity_alive)
@@ -80,6 +83,7 @@ void CHitMemoryManager::Load(LPCSTR section)
 void CHitMemoryManager::reinit()
 {
 	m_hits = 0;
+	m_object_indices.clear();
 	m_last_hit_object_id = ALife::_OBJECT_ID(-1);
 	m_last_hit_time = 0;
 }
@@ -128,8 +132,9 @@ void CHitMemoryManager::add(float amount, const Fvector& vLocalDir, const CObjec
 	if (!entity_alive || (m_object->tfGetRelationType(entity_alive) == ALife::eRelationTypeFriend))
 		return;
 
-	HITS::iterator J = std::find(m_hits->begin(), m_hits->end(), object_id(who));
-	if (m_hits->end() == J)
+	const u16 hit_id = object_id(who);
+	const u32 hit_index = object_index(hit_id);
+	if (hit_index == u32(-1))
 	{
 		CHitObject hit_object;
 
@@ -148,6 +153,8 @@ void CHitMemoryManager::add(float amount, const Fvector& vLocalDir, const CObjec
 		{
 			HITS::iterator I = std::min_element(m_hits->begin(), m_hits->end(), SLevelTimePredicate<CEntityAlive>());
 			VERIFY(m_hits->end() != I);
+			if (I->m_object)
+				m_object_indices.erase(object_id(I->m_object));
 			*I = hit_object;
 		}
 		else
@@ -155,11 +162,12 @@ void CHitMemoryManager::add(float amount, const Fvector& vLocalDir, const CObjec
 	}
 	else
 	{
-		(*J).fill(entity_alive, m_object,
+		CHitObject& existing = (*m_hits)[hit_index];
+		existing.fill(entity_alive, m_object,
 		          (!m_stalker
-			           ? (*J).m_squad_mask.get()
-			           : ((*J).m_squad_mask.get() | m_stalker->agent_manager().member().mask(m_stalker))));
-		(*J).m_amount = _max(amount, (*J).m_amount);
+			           ? existing.m_squad_mask.get()
+			           : (existing.m_squad_mask.get() | m_stalker->agent_manager().member().mask(m_stalker))));
+		existing.m_amount = _max(amount, existing.m_amount);
 	}
 }
 
@@ -179,13 +187,16 @@ void CHitMemoryManager::add(const CHitObject& _hit_object)
 	                            TRUE);
 
 	const CEntityAlive* entity_alive = hit_object.m_object;
-	HITS::iterator J = std::find(m_hits->begin(), m_hits->end(), object_id(entity_alive));
-	if (m_hits->end() == J)
+	const u16 hit_id = object_id(entity_alive);
+	const u32 hit_index = object_index(hit_id);
+	if (hit_index == u32(-1))
 	{
 		if (m_max_hit_count <= m_hits->size())
 		{
 			HITS::iterator I = std::min_element(m_hits->begin(), m_hits->end(), SLevelTimePredicate<CEntityAlive>());
 			VERIFY(m_hits->end() != I);
+			if (I->m_object)
+				m_object_indices.erase(object_id(I->m_object));
 			*I = hit_object;
 		}
 		else
@@ -193,8 +204,9 @@ void CHitMemoryManager::add(const CHitObject& _hit_object)
 	}
 	else
 	{
-		hit_object.m_squad_mask.assign(hit_object.m_squad_mask.get() | (*J).m_squad_mask.get());
-		*J = hit_object;
+		CHitObject& existing = (*m_hits)[hit_index];
+		hit_object.m_squad_mask.assign(hit_object.m_squad_mask.get() | existing.m_squad_mask.get());
+		existing = hit_object;
 	}
 }
 
@@ -213,6 +225,7 @@ void CHitMemoryManager::update()
 		clear_delayed_objects();
 
 		VERIFY(m_hits);
+		const u32 old_memory_count = m_hits->size();
 		m_hits->erase(
 			std::remove_if(
 				m_hits->begin(),
@@ -221,6 +234,8 @@ void CHitMemoryManager::update()
 			),
 			m_hits->end()
 		);
+		if (m_hits->size() != old_memory_count)
+			m_object_indices.clear();
 
 #ifdef USE_SELECTED_HIT
 	xr_delete					(m_selected_hit);
@@ -240,11 +255,11 @@ void CHitMemoryManager::update()
 
 void CHitMemoryManager::enable(const CObject* object, bool enable)
 {
-	HITS::iterator J = std::find(m_hits->begin(), m_hits->end(), object_id(object));
-	if (J == m_hits->end())
+	const u32 index = object_index(object_id(object));
+	if (index == u32(-1))
 		return;
 
-	(*J).m_enabled = enable;
+	(*m_hits)[index].m_enabled = enable;
 }
 
 void CHitMemoryManager::remove_links(CObject* object)
@@ -255,11 +270,14 @@ void CHitMemoryManager::remove_links(CObject* object)
 		m_last_hit_time = 0;
 	}
 
-	if (m_hits)
+	if (!m_hits)
+		return;
+	const u16 id = object_id(object);
+	const u32 index = object_index(id);
+	if (index != u32(-1))
 	{
-		HITS::iterator I = std::find_if(m_hits->begin(), m_hits->end(), CHitObjectPredicate(object));
-		if (I != m_hits->end())
-			m_hits->erase(I);
+		m_hits->erase(m_hits->begin() + index);
+		m_object_indices.erase(id);
 	}
 
 #ifdef USE_SELECTED_HIT

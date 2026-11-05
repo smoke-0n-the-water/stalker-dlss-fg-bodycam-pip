@@ -16,7 +16,7 @@
 #include <iostream>
 
 xr_map<shared_str, TEX_INFO> CUITextureMaster::m_textures;
-xr_map<sh_pair, ui_shader> CUITextureMaster::m_shaders;
+xr_map<sh_pair, ui_shader_cache_entry> CUITextureMaster::m_shaders;
 
 void CUITextureMaster::FreeTexInfo()
 {
@@ -27,6 +27,31 @@ void CUITextureMaster::FreeTexInfo()
 void CUITextureMaster::FreeCachedShaders()
 {
 	m_shaders.clear();
+}
+
+void CUITextureMaster::TrimCachedShaders(u32 current_frame, u32 max_age_frames, u32 max_releases)
+{
+	if (!max_releases)
+		return;
+
+	// Release a bounded number of stale cache-owned handles per maintenance pass.
+	// Live controls retain their own shader copies, so erasing an entry cannot
+	// invalidate an open HUD/menu. Limiting releases avoids the old all-at-once
+	// resource destruction spike while still bounding long-session cache growth.
+	u32 released = 0;
+	for (auto it = m_shaders.begin(); it != m_shaders.end() && released < max_releases;)
+	{
+		const u32 age = current_frame - it->second.last_used_frame;
+		if (age >= max_age_frames)
+		{
+			it = m_shaders.erase(it);
+			++released;
+		}
+		else
+		{
+			++it;
+		}
+	}
 }
 
 void CUITextureMaster::ParseShTexInfo(LPCSTR xml_file)
@@ -86,11 +111,15 @@ void CUITextureMaster::InitTexture(const shared_str& texture_name, const shared_
 	if (it != m_textures.end())
 	{
 		sh_pair p = {it->second.file, shader_name};
-		xr_map<sh_pair, ui_shader>::iterator sh_it = m_shaders.find(p);
+		xr_map<sh_pair, ui_shader_cache_entry>::iterator sh_it = m_shaders.find(p);
 		if (sh_it == m_shaders.end())
-			m_shaders[p]->create(shader_name.c_str(), it->second.file.c_str());
+		{
+			m_shaders[p].shader->create(shader_name.c_str(), it->second.file.c_str());
+			sh_it = m_shaders.find(p);
+		}
 
-		out_shader = m_shaders[p];
+		sh_it->second.last_used_frame = Device.dwFrame;
+		out_shader = sh_it->second.shader;
 		out_rect = (*it).second.rect;
 	}
 	else
@@ -103,11 +132,15 @@ void CUITextureMaster::InitTexture(const shared_str& texture_name, CUIStaticItem
 	if (it != m_textures.end())
 	{
 		sh_pair p = {it->second.file, shader_name};
-		xr_map<sh_pair, ui_shader>::iterator sh_it = m_shaders.find(p);
+		xr_map<sh_pair, ui_shader_cache_entry>::iterator sh_it = m_shaders.find(p);
 		if (sh_it == m_shaders.end())
-			m_shaders[p]->create(shader_name.c_str(), it->second.file.c_str());
+		{
+			m_shaders[p].shader->create(shader_name.c_str(), it->second.file.c_str());
+			sh_it = m_shaders.find(p);
+		}
 
-		tc->SetShader(m_shaders[p]);
+		sh_it->second.last_used_frame = Device.dwFrame;
+		tc->SetShader(sh_it->second.shader);
 		tc->SetTextureRect((*it).second.rect);
 		tc->SetSize(Fvector2().set(it->second.rect.width(), it->second.rect.height()));
 	}

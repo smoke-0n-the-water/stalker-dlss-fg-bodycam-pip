@@ -202,14 +202,17 @@ void CStalkerActionReachAmbushLocation::execute()
 	}
 
 	object().m_ce_ambush->setup(mem_object.m_object_params.m_position, mem_object.m_self_params.m_position, 10.f);
+	CStalkerMovementRestrictor near_restrictor(m_object, true);
+	bool near_search_performed = false;
 	const CCoverPoint* point = ai().cover_manager().best_cover(mem_object.m_object_params.m_position, 10.f,
-	                                                           *object().m_ce_ambush,
-	                                                           CStalkerMovementRestrictor(m_object, true));
+	                                                           *object().m_ce_ambush, near_restrictor, 0.f,
+	                                                           &near_search_performed);
 	if (!point)
 	{
 		object().m_ce_ambush->setup(mem_object.m_object_params.m_position, mem_object.m_self_params.m_position, 10.f);
 		point = ai().cover_manager().best_cover(mem_object.m_object_params.m_position, 30.f, *object().m_ce_ambush,
-		                                        CStalkerMovementRestrictor(m_object, true));
+		                                        CStalkerMovementRestrictor(m_object, true),
+		                                        near_search_performed ? 10.f : 0.f);
 	}
 
 	if (point)

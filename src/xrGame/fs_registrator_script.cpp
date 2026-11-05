@@ -25,6 +25,7 @@ LPCSTR update_path_script(CLocatorAPI* fs, LPCSTR initial, LPCSTR src)
 void rescan_path_script(CLocatorAPI* fs, LPCSTR initial)
 {
 	fs->get_path(initial)->m_Flags.set(FS_Path::flNeedRescan, TRUE);
+	fs->m_Flags.set(CLocatorAPI::flNeedRescan, TRUE);
 }
 
 //-Alundaio
@@ -34,6 +35,9 @@ void rescan_pathes_script(CLocatorAPI* fs)
 	fs->rescan_pathes();
 }
 
+// m_p is NULL when file_list_open found no such folder, and after Free()
+// (file_list_close nulls it through the reference). Treat NULL as an empty
+// list so scripts that skip the check don't crash the game.
 class FS_file_list
 {
 	xr_vector<LPSTR>* m_p;
@@ -42,12 +46,13 @@ public :
 	{
 	}
 
-	u32 Size() { return m_p->size(); }
-	LPCSTR GetAt(u32 idx) { return m_p->at(idx); }
+	u32 Size() { return m_p ? m_p->size() : 0; }
+	LPCSTR GetAt(u32 idx) { return m_p ? m_p->at(idx) : nullptr; } // nullptr reaches Lua as nil
 
 	void Free()
 	{
-		FS.file_list_close(m_p);
+		if (m_p)
+			FS.file_list_close(m_p);
 	};
 };
 
@@ -131,12 +136,31 @@ public:
 FS_file_list_ex::FS_file_list_ex(LPCSTR path, u32 flags, LPCSTR mask)
 {
 	FS_Path* P = FS.get_path(path);
-	P->m_Flags.set(FS_Path::flNeedRescan,TRUE);
-	FS.m_Flags.set(CLocatorAPI::flNeedCheck,TRUE);
+
+	// The file index is kept current by all engine-side writes. Rebuilding an
+	// entire recursive alias on every list query can stall the main thread for
+	// seconds with a large GAMMA gamedata tree. Preserve explicit refreshes made
+	// through FS.rescan_path()/rescan_pathes(), but make ordinary list queries
+	// use the already populated index just like file_list_open().
+	// User data under $app_data_root$ is small and written by Lua io (*.scoc saves,
+	// MCM logs) behind the index's back, so it is always re-read like in Monolith.
+	if (FS.path_exist("$app_data_root$"))
+	{
+		LPCSTR app_data = FS.get_path("$app_data_root$")->m_Path;
+		if (0 == _strnicmp(P->m_Path, app_data, xr_strlen(app_data)))
+			P->m_Flags.set(FS_Path::flNeedRescan, TRUE);
+	}
+	if (P->m_Flags.is(FS_Path::flNeedRescan))
+	{
+		const BOOL previous_need_check = FS.m_Flags.test(CLocatorAPI::flNeedCheck);
+		FS.m_Flags.set(CLocatorAPI::flNeedCheck, TRUE);
 	FS.rescan_pathes();
+		FS.m_Flags.set(CLocatorAPI::flNeedCheck, previous_need_check);
+	}
 
 	FS_FileSet files;
 	FS.file_list(files, path, flags, mask);
+	m_file_items.reserve(files.size());
 
 	for (FS_FileSetIt it = files.begin(); it != files.end(); ++it)
 	{
@@ -148,7 +172,6 @@ FS_file_list_ex::FS_file_list_ex(LPCSTR path, u32 flags, LPCSTR mask)
 		itm.size = it->size;
 	}
 
-	FS.m_Flags.set(CLocatorAPI::flNeedCheck,FALSE);
 }
 
 void FS_file_list_ex::Sort(u32 flags)

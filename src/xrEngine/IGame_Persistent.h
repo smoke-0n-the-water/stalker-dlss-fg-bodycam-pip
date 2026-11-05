@@ -85,6 +85,8 @@ public:
 	void GrassBendersReset(u8 idx);
 	void GrassBendersSet(u8 idx, u16 id, Fvector position, Fvector3 dir, float fade, float speed, float str, float radius, GrassBenders_Anim anim, bool resetTime);
 	float GrassBenderToValue(float& current, float go_to, float intensity, bool use_easing);
+	void PrepareGrassFrameState();
+	void InvalidateGrassFrameState();
 
 	CPerlinNoise1D* PerlinNoise1D;
 
@@ -104,6 +106,12 @@ public:
 		float speed[16];
 		Fvector4 prev_pos[16];
 		Fvector4 prev_dir[16];
+		// Packed once on the render thread and shared by DetailManager and
+		// FTreeVisual for all passes in the frame.
+		Fvector4 render_benders[32];
+		Fvector4 render_previous_benders[32];
+		u32 render_bender_count;
+		u32 render_frame;
 	} grass_shader_data;
 
 public:
@@ -119,6 +127,7 @@ public:
 	CEnvironment& Environment() { return *pEnvironment; };
 	void Prefetch();
 #endif
+	void RecordSlowTexture(LPCSTR texture_name, u32 elapsed_ms);
 	IMainMenu* m_pMainMenu;
 	ScriptWallmarksManager* m_pWallmarksManager;
 	IC ScriptWallmarksManager& GetWallmarksManager() const { return *m_pWallmarksManager; }
@@ -219,8 +228,23 @@ public:
 	} nv_shader_data;
 
 private:
+	void LoadTextureWarmupManifest(xr_vector<shared_str>& names);
+	void SaveTextureWarmupManifest();
+	void ProcessTextureWarmupPins();
+
 	CInifile* m_textures_prefetch_config;
+	xrCriticalSection m_texture_warmup_guard;
+	xr_unordered_set<shared_str> m_texture_warmup_unique;
+	xr_vector<shared_str> m_texture_warmup_order;
+	xr_vector<shared_str> m_texture_warmup_pending_pins;
+	bool m_texture_warmup_dirty;
 };
+
+extern ENGINE_API BOOL psTextureWarmupManifest;
+extern ENGINE_API BOOL psTextureWarmupUiOnly;
+extern ENGINE_API int psTextureWarmupSlowMs;
+extern ENGINE_API int psTextureWarmupMax;
+extern ENGINE_API int psTextureWarmupMemoryMb;
 
 class IMainMenu
 {

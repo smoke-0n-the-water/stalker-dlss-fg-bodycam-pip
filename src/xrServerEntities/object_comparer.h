@@ -11,156 +11,123 @@
 template <typename P>
 struct CComparer
 {
-	template <typename T>
-	struct CHelper
+	IC static bool compare(LPCSTR first, LPCSTR second, const P& p)
 	{
-		template <bool a>
-		IC static bool compare(const T& _1, const T& _2, const P& p)
-		{
-			return (p(_1, _2));
-		}
-
-		template <>
-		IC static bool compare<true>(const T& _1, const T& _2, const P& p)
-		{
-			return (CComparer::compare(*_1, *_2, p));
-		}
-	};
-
-	IC static bool compare(LPCSTR _1, LPCSTR _2, const P& p)
-	{
-		return (p(_1, _2));
+		return p(first, second);
 	}
 
-	IC static bool compare(LPSTR _1, LPSTR _2, const P& p)
+	IC static bool compare(LPSTR first, LPSTR second, const P& p)
 	{
-		return (p(_1, _2));
+		return p(first, second);
 	}
 
-	IC static bool compare(const shared_str& _1, const shared_str& _2, const P& p)
+	IC static bool compare(const shared_str& first, const shared_str& second, const P& p)
 	{
-		return (p(_1, _2));
+		return p(first, second);
 	}
 
 	template <typename T1, typename T2>
-	IC static bool compare(const std::pair<T1, T2>& _1, const std::pair<T1, T2>& _2, const P& p)
+	IC static bool compare(const std::pair<T1, T2>& first, const std::pair<T1, T2>& second, const P& p)
 	{
-		return (
-			compare(_1.first, _2.first, p)
-			&&
-			compare(_1.second, _2.second, p)
-		);
+		return compare(first.first, second.first, p) && compare(first.second, second.second, p);
 	}
 
 	template <typename T, int size>
-	IC static bool compare(const svector<T, size>& _1, const svector<T, size>& _2, const P& p)
+	IC static bool compare(const svector<T, size>& first, const svector<T, size>& second, const P& p)
 	{
-		if (_1.size() != _2.size())
-			return (p());
+		if (first.size() != second.size())
+			return p();
 
-		svector<T, size>::const_iterator I = _1.begin(), J = _2.begin();
-		svector<T, size>::const_iterator E = _1.end();
+		auto I = first.begin();
+		auto J = second.begin();
+		const auto E = first.end();
 		for (; I != E; ++I, ++J)
 			if (!compare(*I, *J, p))
-				return (false);
-		return (true);
+				return false;
+		return true;
 	}
 
 	template <typename T1, typename T2>
-	IC static bool compare(const std::queue<T1, T2>& __1, const std::queue<T1, T2>& __2, const P& p)
+	IC static bool compare(const std::queue<T1, T2>& source_first, const std::queue<T1, T2>& source_second,
+		const P& p)
 	{
-		std::queue<T1, T2> _1 = __1;
-		std::queue<T1, T2> _2 = __2;
+		std::queue<T1, T2> first = source_first;
+		std::queue<T1, T2> second = source_second;
+		if (first.size() != second.size())
+			return p();
 
-		if (_1.size() != _2.size())
-			return (p());
-
-		for (; !_1.empty(); _1.pop(), _2.pop())
-			if (!compare(_1.front(), _2.front(), p))
-				return (false);
-		return (true);
+		for (; !first.empty(); first.pop(), second.pop())
+			if (!compare(first.front(), second.front(), p))
+				return false;
+		return true;
 	}
 
-	template <template <typename _1, typename _2> class T1, typename T2, typename T3>
-	IC static bool compare(const T1<T2, T3>& __1, const T1<T2, T3>& __2, const P& p, bool)
+	template <template <typename, typename> class T1, typename T2, typename T3>
+	IC static bool compare(const T1<T2, T3>& source_first, const T1<T2, T3>& source_second, const P& p, bool)
 	{
-		T1<T2, T3> _1 = __1;
-		T1<T2, T3> _2 = __2;
+		T1<T2, T3> first = source_first;
+		T1<T2, T3> second = source_second;
+		if (first.size() != second.size())
+			return p();
 
-		if (_1.size() != _2.size())
-			return (p());
-
-		for (; !_1.empty(); _1.pop(), _2.pop())
-			if (!compare(_1.top(), _2.top(), p))
-				return (false);
-		return (true);
+		for (; !first.empty(); first.pop(), second.pop())
+			if (!compare(first.top(), second.top(), p))
+				return false;
+		return true;
 	}
 
-	template <template <typename _1, typename _2, typename _3> class T1, typename T2, typename T3, typename T4>
-	IC static bool compare(const T1<T2, T3, T4>& __1, const T1<T2, T3, T4>& __2, const P& p, bool)
+	template <template <typename, typename, typename> class T1, typename T2, typename T3, typename T4>
+	IC static bool compare(const T1<T2, T3, T4>& source_first, const T1<T2, T3, T4>& source_second,
+		const P& p, bool)
 	{
-		T1<T2, T3, T4> _1 = __1;
-		T1<T2, T3, T4> _2 = __2;
+		T1<T2, T3, T4> first = source_first;
+		T1<T2, T3, T4> second = source_second;
+		if (first.size() != second.size())
+			return p();
 
-		if (_1.size() != _2.size())
-			return (p());
-
-		for (; !_1.empty(); _1.pop(), _2.pop())
-			if (!compare(_1.top(), _2.top(), p))
-				return (false);
-		return (true);
+		for (; !first.empty(); first.pop(), second.pop())
+			if (!compare(first.top(), second.top(), p))
+				return false;
+		return true;
 	}
 
 	template <typename T1, typename T2>
-	IC static bool compare(const xr_stack<T1, T2>& _1, const xr_stack<T1, T2>& _2, const P& p)
+	IC static bool compare(const xr_stack<T1, T2>& first, const xr_stack<T1, T2>& second, const P& p)
 	{
-		return (compare(_1, _2, p, true));
+		return compare(first, second, p, true);
 	}
 
 	template <typename T1, typename T2, typename T3>
-	IC static bool compare(const std::priority_queue<T1, T2, T3>& _1, const std::priority_queue<T1, T2, T3>& _2,
-	                       const P& p)
+	IC static bool compare(const std::priority_queue<T1, T2, T3>& first,
+		const std::priority_queue<T1, T2, T3>& second, const P& p)
 	{
-		return (compare(_1, _2, p, true));
+		return compare(first, second, p, true);
 	}
 
-	struct CHelper3
+	template <typename T>
+	IC static bool compare(const T& first, const T& second, const P& p)
 	{
-		template <typename T>
-		IC static bool compare(const T& _1, const T& _2, const P& p)
+		if constexpr (object_type_traits::is_stl_container<T>::value)
 		{
-			if (_1.size() != _2.size())
-				return (p());
+			if (first.size() != second.size())
+				return p();
 
-			T::const_iterator I = _1.begin(), J = _2.begin();
-			T::const_iterator E = _1.end();
+			auto I = first.begin();
+			auto J = second.begin();
+			const auto E = first.end();
 			for (; I != E; ++I, ++J)
-				if (!CComparer::compare(*I, *J, p))
-					return (false);
-			return (true);
+				if (!CComparer<P>::compare(*I, *J, p))
+					return false;
+			return true;
 		}
-	};
-
-	template <typename T>
-	struct CHelper4
-	{
-		template <bool a>
-		IC static bool compare(const T& _1, const T& _2, const P& p)
+		else if constexpr (std::is_pointer_v<T>)
 		{
-			return (CHelper<T>::compare < object_type_traits::is_pointer<T>::value > (_1, _2, p));
+			return CComparer<P>::compare(*first, *second, p);
 		}
-
-		template <>
-		IC static bool compare<true>(const T& _1, const T& _2, const P& p)
+		else
 		{
-			return (CHelper3::compare(_1, _2, p));
+			return p(first, second);
 		}
-	};
-
-	template <typename T>
-	IC static bool compare(const T& _1, const T& _2, const P& p)
-	{
-		return (CHelper4<T>::compare < object_type_traits::is_stl_container<T>::value > (_1, _2, p));
 	}
 };
 

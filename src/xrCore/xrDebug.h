@@ -36,6 +36,10 @@ public:
 		m_on_dialog = on_dialog;
 	}
 
+	// Fatal dialogs pump the Windows message queue. Input deactivation must not
+	// call back into gameplay/Lua while the fatal path is already unwinding.
+	bool is_fatal_in_progress() const;
+
 	LPCSTR error2string(long code);
 
 	void gather_info(const char* expression, const char* description, const char* argument0, const char* argument1,

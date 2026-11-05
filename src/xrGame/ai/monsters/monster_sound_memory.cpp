@@ -59,22 +59,18 @@ void CMonsterSoundMemory::HearSound(const SoundElem& s)
 	if ((s.type == MONSTER_WALKING) && !s.who) return;
 
 	// поиск в массиве звука
-	xr_vector<SoundElem>::iterator it;
-
-	bool b_sound_replaced = false;
-	for (it = Sounds.begin(); Sounds.end() != it; ++it)
+	bool sound_found = false;
+	for (xr_vector<SoundElem>::iterator it = Sounds.begin(); Sounds.end() != it; ++it)
 	{
 		if ((s.who == it->who) && (it->type == s.type))
 		{
+			sound_found = true;
 			if (s.time >= it->time)
-			{
 				*it = s;
-				b_sound_replaced = true;
-			}
 		}
 	}
 
-	if (!b_sound_replaced) Sounds.push_back(s);
+	if (!sound_found) Sounds.push_back(s);
 }
 
 void CMonsterSoundMemory::HearSound(const CObject* who, int eType, const Fvector& Position, float power, TTime time)
@@ -196,9 +192,10 @@ struct pred_remove_relcase
 	}
 };
 
-void CMonsterSoundMemory::remove_links(CObject* O)
+bool CMonsterSoundMemory::remove_links(CObject* O)
 {
 	// удаление устаревших звуков
+	const size_t previous_size = Sounds.size();
 	Sounds.erase(
 		std::remove_if(
 			Sounds.begin(),
@@ -207,6 +204,7 @@ void CMonsterSoundMemory::remove_links(CObject* O)
 		),
 		Sounds.end()
 	);
+	return Sounds.size() != previous_size;
 }
 
 //////////////////////////////////////////////////////////////////////////

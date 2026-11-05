@@ -81,6 +81,7 @@ protected :
 	void UpdateSpot(CUICustomMap* map, CMapSpot* sp, CMapSpotPointer* pt);
 	void UpdateSpotPointer(CUICustomMap* map, CMapSpotPointer* sp);
 	void CalcLevelName();
+	void NotifyChanged();
 	CMapSpotPointer* GetSpotPointer(CMapSpot* sp);
 	CMapSpot* GetSpotBorder(CMapSpot* sp);
 public:
@@ -98,13 +99,14 @@ public:
 	CMiniMapSpot* MiniMapSpotNC() { return m_minimap_spot; }
 
 	IC bool PointerEnabled() { return SpotEnabled() && !!m_flags.test(ePointerEnabled); };
+	// UpdateTasks() turns pointers off and back on every frame, so these must not mark locations dirty.
 	IC void EnablePointer() { m_flags.set(ePointerEnabled,TRUE); };
 	IC void DisablePointer() { m_flags.set(ePointerEnabled,FALSE); };
 
 	IC bool Collidable() const { return !!m_flags.test(eCollidable); }
 	IC bool SpotEnabled() { return !!m_flags.test(eSpotEnabled); };
-	void EnableSpot() { m_flags.set(eSpotEnabled,TRUE); };
-	void DisableSpot() { m_flags.set(eSpotEnabled,FALSE); };
+	void EnableSpot();
+	void DisableSpot();
 	virtual void UpdateMiniMap(CUICustomMap* map);
 	// draws this location on another map with the spot and pointer the caller passes in
 	virtual void UpdateMiniMap(CUICustomMap* map, CMapSpot* sp, CMapSpotPointer* pt);

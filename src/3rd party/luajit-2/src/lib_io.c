@@ -1,6 +1,6 @@
 /*
 ** I/O library.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 **
 ** Major portions taken verbatim or adapted from the Lua interpreter.
 ** Copyright (C) 1994-2011 Lua.org, PUC-Rio. See Copyright Notice in lua.h
@@ -21,8 +21,10 @@
 #include "lj_err.h"
 #include "lj_str.h"
 #include "lj_state.h"
+#include "lj_udata.h"
 #include "lj_ff.h"
 #include "lj_lib.h"
+#include "lj_strscan.h"
 
 /* Userdata payload for I/O file. */
 typedef struct IOFileUD {
@@ -58,12 +60,12 @@ static IOFileUD *io_tofile(lua_State *L)
   return iof;
 }
 
-static FILE *io_stdfile(lua_State *L, ptrdiff_t id)
+static IOFileUD *io_stdfile(lua_State *L, ptrdiff_t id)
 {
   IOFileUD *iof = IOSTDF_IOF(L, id);
   if (iof->fp == NULL)
     lj_err_caller(L, LJ_ERR_IOSTDCL);
-  return iof->fp;
+  return iof;
 }
 
 static IOFileUD *io_file_new(lua_State *L)
@@ -72,7 +74,7 @@ static IOFileUD *io_file_new(lua_State *L)
   GCudata *ud = udataV(L->top-1);
   ud->udtype = UDTYPE_IO_FILE;
   /* NOBARRIER: The GCudata is new (marked white). */
-  setgcrefr(ud->metatable, curr_func(L)->c.env);
+  lj_udata_setmetatable(ud, tabref(curr_func(L)->c.env));
   iof->fp = NULL;
   iof->type = IOFILE_TYPE_FILE;
   return iof;
@@ -178,7 +180,7 @@ static int io_file_readlen(lua_State *L, FILE *fp, MSize m)
     MSize n = (MSize)fread(buf, 1, m, fp);
     setstrV(L, L->top++, lj_str_new(L, buf, (size_t)n));
     lj_gc_check(L);
-    return (n > 0 || m == 0);
+    return n > 0;
   } else {
     int c = getc(fp);
     ungetc(c, fp);
@@ -187,8 +189,9 @@ static int io_file_readlen(lua_State *L, FILE *fp, MSize m)
   }
 }
 
-static int io_file_read(lua_State *L, FILE *fp, int start)
+static int io_file_read(lua_State *L, IOFileUD *iof, int start)
 {
+  FILE *fp = iof->fp;
   int ok, n, nargs = (int)(L->top - L->base) - start;
   clearerr(fp);
   if (nargs == 0) {
@@ -225,8 +228,9 @@ static int io_file_read(lua_State *L, FILE *fp, int start)
   return n - start;
 }
 
-static int io_file_write(lua_State *L, FILE *fp, int start)
+static int io_file_write(lua_State *L, IOFileUD *iof, int start)
 {
+  FILE *fp = iof->fp;
   cTValue *tv;
   int status = 1;
   for (tv = L->base+start; tv < L->top; tv++) {
@@ -262,13 +266,11 @@ static int io_file_iter(lua_State *L)
     lj_err_caller(L, LJ_ERR_IOCLFL);
   L->top = L->base;
   if (n) {  /* Copy upvalues with options to stack. */
-    if (n > LUAI_MAXCSTACK)
-      lj_err_caller(L, LJ_ERR_STKOV);
     lj_state_checkstack(L, (MSize)n);
     memcpy(L->top, &fn->c.upvalue[1], n*sizeof(TValue));
     L->top += n;
   }
-  n = io_file_read(L, iof->fp, 0);
+  n = io_file_read(L, iof, 0);
   if (ferror(iof->fp))
     lj_err_callermsg(L, strVdata(L->top-2));
   if (tvisnil(L->base) && (iof->type & IOFILE_FLAG_CLOSE)) {
@@ -278,25 +280,40 @@ static int io_file_iter(lua_State *L)
   return n;
 }
 
+static int io_file_lines(lua_State *L)
+{
+  int n = (int)(L->top - L->base);
+  if (n > LJ_MAX_UPVAL)
+    lj_err_caller(L, LJ_ERR_UNPACK);
+  lua_pushcclosure(L, io_file_iter, n);
+  return 1;
+}
+
 /* -- I/O file methods ---------------------------------------------------- */
 
 #define LJLIB_MODULE_io_method
 
 LJLIB_CF(io_method_close)
 {
-  IOFileUD *iof = L->base < L->top ? io_tofile(L) :
-		  IOSTDF_IOF(L, GCROOT_IO_OUTPUT);
+  IOFileUD *iof;
+  if (L->base < L->top) {
+    iof = io_tofile(L);
+  } else {
+    iof = IOSTDF_IOF(L, GCROOT_IO_OUTPUT);
+    if (iof->fp == NULL)
+      lj_err_caller(L, LJ_ERR_IOCLFL);
+  }
   return io_file_close(L, iof);
 }
 
 LJLIB_CF(io_method_read)
 {
-  return io_file_read(L, io_tofile(L)->fp, 1);
+  return io_file_read(L, io_tofile(L), 1);
 }
 
 LJLIB_CF(io_method_write)		LJLIB_REC(io_write 0)
 {
-  return io_file_write(L, io_tofile(L)->fp, 1);
+  return io_file_write(L, io_tofile(L), 1);
 }
 
 LJLIB_CF(io_method_flush)		LJLIB_REC(io_flush 0)
@@ -309,13 +326,14 @@ LJLIB_CF(io_method_seek)
   FILE *fp = io_tofile(L)->fp;
   int opt = lj_lib_checkopt(L, 2, 1, "\3set\3cur\3end");
   int64_t ofs = 0;
-  cTValue *o;
+  TValue *o;
   int res;
   if (opt == 0) opt = SEEK_SET;
   else if (opt == 1) opt = SEEK_CUR;
   else if (opt == 2) opt = SEEK_END;
   o = L->base+2;
   if (o < L->top) {
+    if (tvisstr(o)) lj_strscan_num(strV(o), o);
     if (tvisint(o))
       ofs = (int64_t)intV(o);
     else if (tvisnum(o))
@@ -361,8 +379,7 @@ LJLIB_CF(io_method_setvbuf)
 LJLIB_CF(io_method_lines)
 {
   io_tofile(L);
-  lua_pushcclosure(L, io_file_iter, (int)(L->top - L->base));
-  return 1;
+  return io_file_lines(L);
 }
 
 LJLIB_CF(io_method___gc)
@@ -451,7 +468,7 @@ LJLIB_CF(io_write)		LJLIB_REC(io_write GCROOT_IO_OUTPUT)
 
 LJLIB_CF(io_flush)		LJLIB_REC(io_flush GCROOT_IO_OUTPUT)
 {
-  return luaL_fileresult(L, fflush(io_stdfile(L, GCROOT_IO_OUTPUT)) == 0, NULL);
+  return luaL_fileresult(L, fflush(io_stdfile(L, GCROOT_IO_OUTPUT)->fp) == 0, NULL);
 }
 
 static int io_std_getset(lua_State *L, ptrdiff_t id, const char *mode)
@@ -492,8 +509,7 @@ LJLIB_CF(io_lines)
   } else {  /* io.lines() iterates over stdin. */
     setudataV(L, L->base, IOSTDF_UD(L, GCROOT_IO_INPUT));
   }
-  lua_pushcclosure(L, io_file_iter, (int)(L->top - L->base));
-  return 1;
+  return io_file_lines(L);
 }
 
 LJLIB_CF(io_type)
@@ -518,7 +534,7 @@ static GCobj *io_std_new(lua_State *L, FILE *fp, const char *name)
   GCudata *ud = udataV(L->top-1);
   ud->udtype = UDTYPE_IO_FILE;
   /* NOBARRIER: The GCudata is new (marked white). */
-  setgcref(ud->metatable, gcV(L->top-3));
+  lj_udata_setmetatable(ud, tabV(L->top-3));
   iof->fp = fp;
   iof->type = IOFILE_TYPE_STDF;
   lua_setfield(L, -2, name);

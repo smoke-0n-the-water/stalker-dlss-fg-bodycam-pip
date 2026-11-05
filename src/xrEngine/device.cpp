@@ -1,4 +1,4 @@
-#include "stdafx.h"
+﻿#include "stdafx.h"
 #include "bodycam_reference_projection.h"
 #ifdef XR_DX12_BRIDGE
 #include "../Layers/xrRenderPC_R4/Dlss/FrameGeneration.h"
@@ -16,6 +16,7 @@ __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
 #include "xr_ioconsole.h"
 #include "xr_input.h"
 #include "../xrCore/profiler.h"
+#include "../xrCore/cpu_placement.h"
 
 #pragma warning(disable:4995)
 // mmsystem.h
@@ -30,7 +31,6 @@ __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
 #pragma warning(default:4995)
 
 #include "x_ray.h"
-#include "discord\discord.h"
 #include "render.h"
 #include "renderdoc_integration.h"
 #include <chrono>
@@ -66,14 +66,18 @@ extern ENGINE_API float psHUD_FOV;
 extern ENGINE_API float psCamAttachedFOV;
 
 BOOL g_bLoaded = FALSE;
+extern ENGINE_API void updateDiscordPresence();
+extern ENGINE_API void Init_Discord();
+extern ENGINE_API bool DiscordPresenceReady();
+extern ENGINE_API void PumpDiscordPresence();
+extern ENGINE_API void ShutdownDiscordPresence();
+extern ENGINE_API float discord_update_rate;
 ref_light precache_light = 0;
 
 BOOL mt_calc_bones = TRUE;
 BOOL psLua_ParallelGC = TRUE;
 BOOL psLua_ParallelGC_debug = FALSE;
 
-extern discord::Core* discord_core;
-extern bool use_discord;
 
 extern Fvector4 ps_ssfx_grass_interactive;
 
@@ -392,6 +396,10 @@ void CRenderDevice::on_idle()
 		return;
 	}
 
+	// Quark CPU placement: lets the once-per-second core check see the main thread's
+	// current core. Cheap when nothing is due.
+	cpu_placement::note_main_frame();
+
 	if (!Device.dwPrecacheFrame && !g_SASH.IsBenchmarkRunning() && g_bLoaded)
 	{
 		PROF_EVENT("Start xrSASH Benchmark");
@@ -673,28 +681,31 @@ void CRenderDevice::message_loop()
 
 void mt_DiscordThread(void*)
 {
-	while (true)
+	// Quark's RPC client replaces the Discord Game SDK; see x_ray.cpp.
+	while (pApp)
 	{
-		if (!pApp)
+		if (psDeviceFlags2.test(rsDiscord))
 		{
-			Msg("[Discord] pApp destroyed, killing thread");
-			return;
-		}
-
-		//Discord
-		if (use_discord && psDeviceFlags2.test(rsDiscord))
-		{
+			if (!g_bLoaded)
+			{
+				Sleep(50);
+				continue;
+			}
+			Init_Discord();
 			START_PROFILE("Discord");
-			discord_core->RunCallbacks();
-			updateDiscordPresence();
+			PumpDiscordPresence();
+			if (DiscordPresenceReady())
+				updateDiscordPresence();
 			STOP_PROFILE;
-			Sleep(int(discord_update_rate * 1000));
+			Sleep(static_cast<DWORD>(std::clamp(discord_update_rate, 0.05f, 1.0f) * 1000));
 		}
 		else
 		{
-			Sleep(1000); // Sleep for 1 second if Discord is not used or disabled
+			ShutdownDiscordPresence();
+			Sleep(1000);
 		}
 	}
+	ShutdownDiscordPresence();
 }
 
 void CRenderDevice::Run()

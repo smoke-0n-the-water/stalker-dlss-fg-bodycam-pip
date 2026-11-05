@@ -72,7 +72,7 @@
 
 bool CScriptGameObject::GiveInfoPortion(LPCSTR info_id)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return false;
 	pInventoryOwner->TransferInfo(info_id, true);
 	return true;
@@ -80,13 +80,23 @@ bool CScriptGameObject::GiveInfoPortion(LPCSTR info_id)
 
 bool CScriptGameObject::DisableInfoPortion(LPCSTR info_id)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return false;
 	pInventoryOwner->TransferInfo(info_id, false);
 	return true;
 }
 
 void _AddIconedTalkMessage(LPCSTR caption, LPCSTR text, LPCSTR texture_name, LPCSTR templ_name);
+
+CInventoryOwner* CScriptGameObject::cached_inventory_owner() const
+{
+	if (!m_inventory_owner_cache_initialized)
+	{
+		m_inventory_owner_cache = smart_cast<CInventoryOwner*>(&object());
+		m_inventory_owner_cache_initialized = true;
+	}
+	return m_inventory_owner_cache;
+}
 
 void CScriptGameObject::AddIconedTalkMessage(LPCSTR caption, LPCSTR text, LPCSTR texture_name, LPCSTR templ_name)
 {
@@ -139,7 +149,7 @@ void _give_news(LPCSTR caption, LPCSTR text, LPCSTR texture_name, int delay, int
 
 bool CScriptGameObject::HasInfo(LPCSTR info_id)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return false;
 
 	return pInventoryOwner->HasInfo(info_id);
@@ -147,7 +157,7 @@ bool CScriptGameObject::HasInfo(LPCSTR info_id)
 
 bool CScriptGameObject::DontHasInfo(LPCSTR info_id)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return true;
 
 	return !pInventoryOwner->HasInfo(info_id);
@@ -155,84 +165,84 @@ bool CScriptGameObject::DontHasInfo(LPCSTR info_id)
 
 bool CScriptGameObject::IsTalking()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return false;
 	return pInventoryOwner->IsTalking();
 }
 
 void CScriptGameObject::StopTalk()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return;
 	pInventoryOwner->StopTalk();
 }
 
 void CScriptGameObject::EnableTalk()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return;
 	pInventoryOwner->EnableTalk();
 }
 
 void CScriptGameObject::DisableTalk()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return;
 	pInventoryOwner->DisableTalk();
 }
 
 bool CScriptGameObject::IsTalkEnabled()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return false;
 	return pInventoryOwner->IsTalkEnabled();
 }
 
 void CScriptGameObject::EnableTrade()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return;
 	pInventoryOwner->EnableTrade();
 }
 
 void CScriptGameObject::DisableTrade()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return;
 	pInventoryOwner->DisableTrade();
 }
 
 bool CScriptGameObject::IsTradeEnabled()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return false;
 	return pInventoryOwner->IsTradeEnabled();
 }
 
 void CScriptGameObject::EnableInvUpgrade()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return;
 	pInventoryOwner->EnableInvUpgrade();
 }
 
 void CScriptGameObject::DisableInvUpgrade()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return;
 	pInventoryOwner->DisableInvUpgrade();
 }
 
 bool CScriptGameObject::IsInvUpgradeEnabled()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner) return false;
 	return pInventoryOwner->IsInvUpgradeEnabled();
 }
 
 void CScriptGameObject::ForEachInventoryItems(const ::luabind::functor<bool>& functor)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	if (!owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -259,7 +269,7 @@ void CScriptGameObject::ForEachInventoryItems(const ::luabind::functor<bool>& fu
 //1
 void CScriptGameObject::IterateInventory(::luabind::functor<bool> functor, ::luabind::object object)
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&this->object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -276,7 +286,7 @@ void CScriptGameObject::IterateInventory(::luabind::functor<bool> functor, ::lua
 
 void CScriptGameObject::IterateRuck(::luabind::functor<bool> functor, ::luabind::object object)
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&this->object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -293,7 +303,7 @@ void CScriptGameObject::IterateRuck(::luabind::functor<bool> functor, ::luabind:
 
 void CScriptGameObject::IterateBelt(::luabind::functor<bool> functor, ::luabind::object object)
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&this->object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -331,7 +341,7 @@ void CScriptGameObject::IterateInventoryBox(::luabind::functor<bool> functor, ::
 
 void CScriptGameObject::MarkItemDropped(CScriptGameObject* item, bool flag)
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -352,7 +362,7 @@ void CScriptGameObject::MarkItemDropped(CScriptGameObject* item, bool flag)
 
 bool CScriptGameObject::MarkedDropped(CScriptGameObject* item)
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -448,7 +458,7 @@ bool CScriptGameObject::CanBeHarmed()
 
 void CScriptGameObject::DropItem(CScriptGameObject* pItem)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
 	if (!owner || !item)
 	{
@@ -475,7 +485,7 @@ void CScriptGameObject::DropItemAndTeleport(CScriptGameObject* pItem, Fvector po
 
 void CScriptGameObject::MakeItemActive(CScriptGameObject* pItem)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
 	u16 slot = item->BaseSlot();
 
@@ -501,7 +511,7 @@ void CScriptGameObject::MakeItemActive(CScriptGameObject* pItem)
 
 void CScriptGameObject::MoveItemToRuck(CScriptGameObject* pItem)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
 	if (!owner)
 	{
@@ -521,7 +531,7 @@ void CScriptGameObject::MoveItemToRuck(CScriptGameObject* pItem)
 
 void CScriptGameObject::MoveItemToSlot(CScriptGameObject* pItem, u16 slot_id, bool doNotActivate)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
 	if (!owner)
 	{
@@ -559,7 +569,7 @@ void CScriptGameObject::MoveItemToSlot(CScriptGameObject* pItem, u16 slot_id, bo
 
 void CScriptGameObject::MoveItemToBelt(CScriptGameObject* pItem)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
 	if (!owner)
 	{
@@ -579,7 +589,7 @@ void CScriptGameObject::MoveItemToBelt(CScriptGameObject* pItem)
 
 void CScriptGameObject::ItemAllowTrade(CScriptGameObject* pItem)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
 	if (!owner || !item)
 	{
@@ -592,7 +602,7 @@ void CScriptGameObject::ItemAllowTrade(CScriptGameObject* pItem)
 
 void CScriptGameObject::ItemDenyTrade(CScriptGameObject* pItem)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
 	if (!owner || !item)
 	{
@@ -679,7 +689,7 @@ void CScriptGameObject::TakeItem(CScriptGameObject* pItem)
 
 u32 CScriptGameObject::Money()
 {
-	CInventoryOwner* pOurOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pOurOwner = cached_inventory_owner();
 	VERIFY(pOurOwner);
 	return pOurOwner->get_money();
 }
@@ -718,9 +728,9 @@ void CScriptGameObject::TransferMoney(int money, CScriptGameObject* pForWho)
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError, "cannot transfer money for NULL object");
 		return;
 	}
-	CInventoryOwner* pOurOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pOurOwner = cached_inventory_owner();
 	VERIFY(pOurOwner);
-	CInventoryOwner* pOtherOwner = smart_cast<CInventoryOwner*>(&pForWho->object());
+	CInventoryOwner* pOtherOwner = pForWho->cached_inventory_owner();
 	VERIFY(pOtherOwner);
 
 	if (pOurOwner->get_money() < money)
@@ -738,7 +748,7 @@ void CScriptGameObject::TransferMoney(int money, CScriptGameObject* pForWho)
 
 void CScriptGameObject::GiveMoney(int money)
 {
-	CInventoryOwner* pOurOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pOurOwner = cached_inventory_owner();
 	VERIFY(pOurOwner);
 
     GiveMoneySafe(pOurOwner, money, true);
@@ -749,7 +759,7 @@ void CScriptGameObject::GiveMoney(int money)
 
 int CScriptGameObject::GetGoodwill(CScriptGameObject* pToWho)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -762,7 +772,7 @@ int CScriptGameObject::GetGoodwill(CScriptGameObject* pToWho)
 
 void CScriptGameObject::SetGoodwill(int goodwill, CScriptGameObject* pWhoToSet)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -775,7 +785,7 @@ void CScriptGameObject::SetGoodwill(int goodwill, CScriptGameObject* pWhoToSet)
 
 void CScriptGameObject::ForceSetGoodwill(int goodwill, CScriptGameObject* pWhoToSet)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -788,7 +798,7 @@ void CScriptGameObject::ForceSetGoodwill(int goodwill, CScriptGameObject* pWhoTo
 
 void CScriptGameObject::ChangeGoodwill(int delta_goodwill, CScriptGameObject* pWhoToSet)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -803,7 +813,7 @@ void CScriptGameObject::ChangeGoodwill(int delta_goodwill, CScriptGameObject* pW
 
 void CScriptGameObject::SetRelation(ALife::ERelationType relation, CScriptGameObject* pWhoToSet)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -812,7 +822,7 @@ void CScriptGameObject::SetRelation(ALife::ERelationType relation, CScriptGameOb
 		return;
 	}
 
-	CInventoryOwner* pOthersInventoryOwner = smart_cast<CInventoryOwner*>(&pWhoToSet->object());
+	CInventoryOwner* pOthersInventoryOwner = pWhoToSet->cached_inventory_owner();
 	VERIFY(pOthersInventoryOwner);
 	if (!pOthersInventoryOwner)
 	{
@@ -825,7 +835,7 @@ void CScriptGameObject::SetRelation(ALife::ERelationType relation, CScriptGameOb
 
 float CScriptGameObject::GetSympathy()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -838,7 +848,7 @@ float CScriptGameObject::GetSympathy()
 
 void CScriptGameObject::SetSympathy(float sympathy)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -851,7 +861,7 @@ void CScriptGameObject::SetSympathy(float sympathy)
 
 int CScriptGameObject::GetCommunityGoodwill_obj(LPCSTR community)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -867,7 +877,7 @@ int CScriptGameObject::GetCommunityGoodwill_obj(LPCSTR community)
 
 void CScriptGameObject::SetCommunityGoodwill_obj(LPCSTR community, int goodwill)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -885,10 +895,15 @@ void CScriptGameObject::SetCommunityGoodwill_obj(LPCSTR community, int goodwill)
 
 int CScriptGameObject::GetAttitude(CScriptGameObject* pToWho)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
-	VERIFY(pInventoryOwner);
-	CInventoryOwner* pOthersInventoryOwner = smart_cast<CInventoryOwner*>(&pToWho->object());
-	VERIFY(pOthersInventoryOwner);
+	// CRASH-LOG 29.10: a mod asked general_goodwill of a non-InventoryOwner (monster/item)
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
+	CInventoryOwner* pOthersInventoryOwner = pToWho ? pToWho->cached_inventory_owner() : nullptr;
+	if (!pInventoryOwner || !pOthersInventoryOwner)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+		                                "GetAttitude available only for InventoryOwner");
+		return 0;
+	}
 	return RELATION_REGISTRY().GetAttitude(pInventoryOwner, pOthersInventoryOwner);
 }
 
@@ -896,7 +911,7 @@ int CScriptGameObject::GetAttitude(CScriptGameObject* pToWho)
 
 LPCSTR CScriptGameObject::ProfileName()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -913,7 +928,7 @@ LPCSTR CScriptGameObject::ProfileName()
 
 LPCSTR CScriptGameObject::CharacterName()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -926,7 +941,7 @@ LPCSTR CScriptGameObject::CharacterName()
 
 LPCSTR CScriptGameObject::CharacterIcon()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -943,7 +958,7 @@ int CScriptGameObject::CharacterRank()
 	CBaseMonster* monster = smart_cast<CBaseMonster*>(&object());
 	if (!monster)
 	{
-		CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+		CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 		if (!pInventoryOwner)
 		{
 			ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -957,7 +972,7 @@ int CScriptGameObject::CharacterRank()
 
 ::luabind::object CScriptGameObject::CharacterDialogs()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	::luabind::object table = ::luabind::newtable(ai().script_engine().lua());
 
@@ -979,7 +994,7 @@ int CScriptGameObject::CharacterRank()
 
 void CScriptGameObject::SetCharacterRank(int char_rank)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -992,7 +1007,7 @@ void CScriptGameObject::SetCharacterRank(int char_rank)
 
 void CScriptGameObject::ChangeCharacterRank(int char_rank)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -1005,7 +1020,7 @@ void CScriptGameObject::ChangeCharacterRank(int char_rank)
 
 int CScriptGameObject::CharacterReputation()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -1018,7 +1033,7 @@ int CScriptGameObject::CharacterReputation()
 
 void CScriptGameObject::ChangeCharacterReputation(int char_rep)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -1031,7 +1046,7 @@ void CScriptGameObject::ChangeCharacterReputation(int char_rep)
 
 void CScriptGameObject::SetCharacterReputation(int char_rep)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -1044,7 +1059,7 @@ void CScriptGameObject::SetCharacterReputation(int char_rep)
 
 LPCSTR CScriptGameObject::CharacterCommunity()
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{
@@ -1057,7 +1072,7 @@ LPCSTR CScriptGameObject::CharacterCommunity()
 
 void CScriptGameObject::SetCharacterCommunity(LPCSTR comm, int squad, int group)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	CEntity* entity = smart_cast<CEntity*>(&object());
 
 	if (!pInventoryOwner || !entity)
@@ -1080,7 +1095,7 @@ void CScriptGameObject::SetCharacterCommunity(LPCSTR comm, int squad, int group)
 
 LPCSTR CScriptGameObject::sound_voice_prefix() const
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 	if (!pInventoryOwner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -1149,7 +1164,7 @@ void CScriptGameObject::SwitchToTalk()
 
 void CScriptGameObject::AllowBreakTalkDialog(bool b)
 {
-	CInventoryOwner* inv_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inv_owner = cached_inventory_owner();
 	VERIFY(inv_owner);
 	inv_owner->bDisableBreakDialog = !b;
 }
@@ -1165,7 +1180,7 @@ void CScriptGameObject::RunTalkDialog(CScriptGameObject* pToWho, bool disable_br
 		return;
 	}
 
-	CInventoryOwner* pPartner = smart_cast<CInventoryOwner*>(&pToWho->object());
+	CInventoryOwner* pPartner = pToWho->cached_inventory_owner();
 	VERIFY(pPartner);
 	pActor->RunTalkDialog(pPartner, disable_break);
 }
@@ -1562,7 +1577,7 @@ int CScriptGameObject::animation_slot() const
 
 CScriptGameObject* CScriptGameObject::active_device() const
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -1583,7 +1598,7 @@ CScriptGameObject* CScriptGameObject::active_device() const
 
 void CScriptGameObject::show_device(bool bFast)
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -1602,7 +1617,7 @@ void CScriptGameObject::show_device(bool bFast)
 
 void CScriptGameObject::hide_device(bool bFast)
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -1621,7 +1636,7 @@ void CScriptGameObject::hide_device(bool bFast)
 
 void CScriptGameObject::force_hide_device()
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -1640,7 +1655,7 @@ void CScriptGameObject::force_hide_device()
 
 CScriptGameObject* CScriptGameObject::item_in_slot(u32 slot_id) const
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -1676,7 +1691,7 @@ bool CScriptGameObject::IsActiveTask(CGameTask* t)
 
 u32 CScriptGameObject::active_slot()
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -1688,7 +1703,7 @@ u32 CScriptGameObject::active_slot()
 
 void CScriptGameObject::activate_slot(u32 slot_id)
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -2187,7 +2202,7 @@ bool CScriptGameObject::take_items_enabled() const
 
 void CScriptGameObject::SetPlayShHdRldSounds(bool val)
 {
-	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* owner = cached_inventory_owner();
 	if (!owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -2402,7 +2417,7 @@ void CScriptGameObject::IterateInstalledUpgrades(const ::luabind::functor<bool>&
 
 CScriptGameObject* CScriptGameObject::ItemOnBelt(u32 item_id) const
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -2432,7 +2447,7 @@ bool CScriptGameObject::IsOnBelt(CScriptGameObject* obj) const
 		return (0);
 	}
 
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -2445,7 +2460,7 @@ bool CScriptGameObject::IsOnBelt(CScriptGameObject* obj) const
 
 u32 CScriptGameObject::BeltSize() const
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -2579,7 +2594,7 @@ void CScriptGameObject::SetAdditionalMaxWalkWeight(float add_max_walk_weight)
 // получить суммарный вес инвентаря
 float CScriptGameObject::GetTotalWeight() const
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -2592,7 +2607,7 @@ float CScriptGameObject::GetTotalWeight() const
 // demonized: force update of weight
 void CScriptGameObject::UpdateWeight() const
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -2604,7 +2619,7 @@ void CScriptGameObject::UpdateWeight() const
 
 float CScriptGameObject::GetTotalWeightForceUpdate() const
 {
-	CInventoryOwner* inventory_owner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* inventory_owner = cached_inventory_owner();
 	if (!inventory_owner)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
@@ -2812,7 +2827,7 @@ void CScriptGameObject::SetActorWalkBackCoef(float val)
 
 void CScriptGameObject::SetCharacterIcon(LPCSTR iconName)
 {
-	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
+	CInventoryOwner* pInventoryOwner = cached_inventory_owner();
 
 	if (!pInventoryOwner)
 	{

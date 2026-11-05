@@ -55,9 +55,7 @@ void CGroupHierarchyHolder::register_in_group(CEntity* member)
 		m_sound_objects = xr_new<SOUND_OBJECTS>();
 		m_hit_objects = xr_new<HIT_OBJECTS>();
 
-		//		m_visible_objects->reserve	(128);
-		//		m_sound_objects->reserve	(128);
-		//		m_hit_objects->reserve		(128);
+		m_visible_objects->reserve(32);
 	}
 
 	m_members.push_back(member);
@@ -83,6 +81,16 @@ void CGroupHierarchyHolder::register_in_agent_manager(CEntity* member)
 		agent_manager().memory().set_squad_objects(&visible_objects());
 		agent_manager().memory().set_squad_objects(&sound_objects());
 		agent_manager().memory().set_squad_objects(&hit_objects());
+
+		// A group can already contain non-stalker monsters when its first
+		// stalker arrives. Attach every visual manager to the new shared index,
+		// not just the member that caused the agent manager to be created.
+		for (MEMBER_REGISTRY::iterator I = m_members.begin(); I != m_members.end(); ++I)
+		{
+			CCustomMonster* monster = smart_cast<CCustomMonster*>(*I);
+			if (monster)
+				monster->memory().visual().set_squad_objects(&visible_objects(), &agent_manager().memory());
+		}
 	}
 
 	if (get_agent_manager())
@@ -94,7 +102,8 @@ void CGroupHierarchyHolder::register_in_group_senses(CEntity* member)
 	CCustomMonster* monster = smart_cast<CCustomMonster*>(member);
 	if (monster)
 	{
-		monster->memory().visual().set_squad_objects(&visible_objects());
+		monster->memory().visual().set_squad_objects(
+			&visible_objects(), get_agent_manager() ? &agent_manager().memory() : 0);
 		monster->memory().sound().set_squad_objects(&sound_objects());
 		monster->memory().hit().set_squad_objects(&hit_objects());
 	}
@@ -129,7 +138,20 @@ void CGroupHierarchyHolder::unregister_in_agent_manager(CEntity* member)
 	{
 		agent_manager().member().remove(member);
 		if (agent_manager().member().members().empty())
+		{
+			// Visual managers may outlive the last stalker (mixed monster groups).
+			// Remove their non-owning index pointer before deleting its owner.
+			CCustomMonster* departing = smart_cast<CCustomMonster*>(member);
+			if (departing)
+				departing->memory().visual().set_squad_objects(&visible_objects(), 0);
+			for (MEMBER_REGISTRY::iterator I = m_members.begin(); I != m_members.end(); ++I)
+			{
+				CCustomMonster* monster = smart_cast<CCustomMonster*>(*I);
+				if (monster)
+					monster->memory().visual().set_squad_objects(&visible_objects(), 0);
+			}
 			xr_delete(m_agent_manager);
+		}
 	}
 
 	if (m_members.empty())

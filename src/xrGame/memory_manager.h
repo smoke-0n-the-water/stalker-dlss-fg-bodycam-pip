@@ -17,6 +17,7 @@ class CDangerManager;
 class CCustomMonster;
 class CAI_Stalker;
 class CEntityAlive;
+class CGameObject;
 class CSound_UserDataVisitor;
 
 namespace MemorySpace
@@ -42,11 +43,52 @@ protected:
 	CAI_Stalker* m_stalker;
 
 private:
+	// Compact visual-only enemy snapshot built during this member's own memory
+	// merge. Agent-group aggregation can reuse it instead of rescanning and
+	// smart-casting the full visual memory list for every squad member.
+	xr_vector<const CEntityAlive*> m_visual_enemy_candidates;
+	bool m_visual_enemy_candidates_valid;
+
+	struct CMergeObjectClass
+	{
+		const CGameObject* object = nullptr;
+		const CEntityAlive* entity_alive = nullptr;
+		bool stalker = false;
+		bool inventory_item = false;
+		bool explosive = false;
+	};
+	typedef xr_unordered_flat_map<u16, CMergeObjectClass> MERGE_CLASS_CACHE;
+	static MERGE_CLASS_CACHE m_merge_class_cache;
+	const CMergeObjectClass& merge_object_class(const CGameObject* object);
+
+	struct CMergePlanEntry
+	{
+		const CGameObject* object = nullptr;
+		u16 object_id = u16(-1);
+		const CEntityAlive* entity_alive = nullptr;
+		bool stalker = false;
+		bool inventory_item = false;
+		bool explosive = false;
+	};
+
+	struct CMergePlan
+	{
+		xr_vector<CMergePlanEntry> entries;
+
+		void reset() { entries.clear(); }
+	};
+
+	CMergePlan m_visual_merge_plan;
+	CMergePlan m_sound_merge_plan;
+	CMergePlan m_hit_merge_plan;
+
 	void update_enemies(const bool& registered_in_combat);
 
 protected:
 	template <typename T>
-	void update(const xr_vector<T>& objects, bool add_enemies);
+	void update(const xr_vector<T>& objects, CMergePlan& plan, bool add_enemies,
+	            bool collect_visual_candidates = false, const xr_vector<u32>* candidate_indices = nullptr,
+	            u64 observer_mask = 0);
 
 public:
 	CMemoryManager(CEntityAlive* entity_alive, CSound_UserDataVisitor* visitor);

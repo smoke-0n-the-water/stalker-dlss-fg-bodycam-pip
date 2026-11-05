@@ -65,11 +65,15 @@ door* manager::register_door(CPhysicObject& object)
 
 void manager::unregister_door(door*& door)
 {
+	if (!door)
+		return;
+
 	//if ( !xr_strcmp(door->get_name(),"shkaf_work_01_door_0000") ) {
 	//	Msg					( "UNregistering door[\"shkaf_work_01_door_0000\"][%f][%f][%f]", VPUSH(door->position()) );
 	//}
 	//check_bug_door			( );
-	m_doors.remove(door);
+	if (m_doors.remove(door) != door)
+		Msg("! doors::manager: unregister requested for a door absent from the spatial tree [%p]", door);
 	//check_bug_door			( );
 	xr_delete(door);
 }

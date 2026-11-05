@@ -50,10 +50,11 @@ IC void stalker_movement_manager_base::set_body_state(EBodyState body_state)
 #ifdef COMBAT_BODY_STATE_OVERRIDE
 IC EBodyState stalker_movement_manager_base::body_state_combat_override(EWorldOperators wo, EBodyState body_state)
 {
-	::luabind::functor<EBodyState> lua_function;
-	if (ai().script_engine().functor("_G.CAI_Stalker__CombatSetBodyState", lua_function))
+	static cached_script_functor<EBodyState> lua_function_cache("_G.CAI_Stalker__CombatSetBodyState");
+	const ::luabind::functor<EBodyState>* lua_function = lua_function_cache.get(ai().script_engine());
+	if (lua_function)
 	{
-		body_state = lua_function(m_object->lua_game_object(), wo, body_state);
+		body_state = (*lua_function)(m_object->lua_game_object(), wo, body_state);
 	}
 	return body_state;
 }

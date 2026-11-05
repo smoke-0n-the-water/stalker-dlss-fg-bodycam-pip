@@ -59,6 +59,22 @@ IC bool CSQuadTree::empty() const
 }
 
 TEMPLATE_SPECIALIZATION
+IC bool CSQuadTree::same_leaf(const Fvector& position0, const Fvector& position1) const
+{
+	Fvector center0 = m_center;
+	Fvector center1 = m_center;
+	float distance = m_radius;
+	for (int depth = 0; depth < m_max_depth; ++depth)
+	{
+		distance *= .5f;
+		if (neighbour_index(position0, center0, distance) != neighbour_index(position1, center1, distance))
+			return false;
+	}
+
+	return true;
+}
+
+TEMPLATE_SPECIALIZATION
 IC u32 CSQuadTree::neighbour_index(const Fvector& position, Fvector& center, float distance) const
 {
 	if (position.x <= center.x)
@@ -153,20 +169,20 @@ IC void CSQuadTree::nearest(const Fvector& position, float radius, xr_vector<_ob
 	START_PROFILE("Covers/nearest")
 		if (clear)
 			objects.clear();
-		nearest(position, radius, objects, m_root, m_center, m_radius, 0);
+		nearest(position, radius, _sqr(radius), objects, m_root, m_center, m_radius, 0);
 	STOP_PROFILE
 }
 
 TEMPLATE_SPECIALIZATION
-IC void CSQuadTree::nearest(const Fvector& position, float radius, xr_vector<_object_type*>& objects, CQuadNode* node,
-                            Fvector center, float distance, int depth) const
+IC void CSQuadTree::nearest(const Fvector& position, float radius, float radius_sqr,
+                            xr_vector<_object_type*>& objects, CQuadNode* node, Fvector center, float distance,
+                            int depth) const
 {
 	if (!node)
 		return;
 
 	if (depth == m_max_depth)
 	{
-		float radius_sqr = _sqr(radius);
 		CListItem* leaf = ((CListItem*)((void*)(node)));
 		for (; leaf; leaf = leaf->m_next)
 			if (leaf->m_object->position().distance_to_xz_sqr(position) <= radius_sqr)
@@ -182,42 +198,42 @@ IC void CSQuadTree::nearest(const Fvector& position, float radius, xr_vector<_ob
 	{
 		if (_abs(position.x - center.x) < radius)
 		{
-			if (_sqr(position.z - center.z) + _sqr(position.x - center.x) < _sqr(radius))
+			if (_sqr(position.z - center.z) + _sqr(position.x - center.x) < radius_sqr)
 			{
-				nearest(position, radius, objects, node->m_neighbours[0],
+				nearest(position, radius, radius_sqr, objects, node->m_neighbours[0],
 				        next_center.set(center.x - distance, center.y, center.z - distance), distance, depth + 1);
-				nearest(position, radius, objects, node->m_neighbours[1],
+				nearest(position, radius, radius_sqr, objects, node->m_neighbours[1],
 				        next_center.set(center.x - distance, center.y, center.z + distance), distance, depth + 1);
-				nearest(position, radius, objects, node->m_neighbours[2],
+				nearest(position, radius, radius_sqr, objects, node->m_neighbours[2],
 				        next_center.set(center.x + distance, center.y, center.z - distance), distance, depth + 1);
-				nearest(position, radius, objects, node->m_neighbours[3],
+				nearest(position, radius, radius_sqr, objects, node->m_neighbours[3],
 				        next_center.set(center.x + distance, center.y, center.z + distance), distance, depth + 1);
 				return;
 			}
 
-			nearest(position, radius, objects, node->m_neighbours[index], next_center, distance, depth + 1);
+			nearest(position, radius, radius_sqr, objects, node->m_neighbours[index], next_center, distance, depth + 1);
 
 			if (position.z > center.z)
 			{
 				if (index & 1)
-					nearest(position, radius, objects, node->m_neighbours[index == 1 ? 0 : 2],
+					nearest(position, radius, radius_sqr, objects, node->m_neighbours[index == 1 ? 0 : 2],
 					        next_center.set(center.x + (index == 1 ? -1 : 1) * distance, center.y, center.z - distance),
 					        distance, depth + 1);
 			}
 			else if (!(index & 1))
-				nearest(position, radius, objects, node->m_neighbours[!index ? 1 : 3],
+				nearest(position, radius, radius_sqr, objects, node->m_neighbours[!index ? 1 : 3],
 				        next_center.set(center.x + (!index ? -1 : 1) * distance, center.y, center.z + distance),
 				        distance, depth + 1);
 
 			if (position.x > center.x)
 			{
 				if (index > 1)
-					nearest(position, radius, objects, node->m_neighbours[index == 2 ? 0 : 1],
+					nearest(position, radius, radius_sqr, objects, node->m_neighbours[index == 2 ? 0 : 1],
 					        next_center.set(center.x - distance, center.y, center.z + (index == 2 ? -1 : 1) * distance),
 					        distance, depth + 1);
 			}
 			else if (index < 2)
-				nearest(position, radius, objects, node->m_neighbours[!index ? 2 : 3],
+				nearest(position, radius, radius_sqr, objects, node->m_neighbours[!index ? 2 : 3],
 				        next_center.set(center.x + distance, center.y, center.z + (!index ? -1 : 1) * distance),
 				        distance, depth + 1);
 
@@ -225,17 +241,17 @@ IC void CSQuadTree::nearest(const Fvector& position, float radius, xr_vector<_ob
 		}
 		else
 		{
-			nearest(position, radius, objects, node->m_neighbours[index], next_center, distance, depth + 1);
+			nearest(position, radius, radius_sqr, objects, node->m_neighbours[index], next_center, distance, depth + 1);
 
 			if (position.z > center.z)
 			{
 				if (index & 1)
-					nearest(position, radius, objects, node->m_neighbours[index == 1 ? 0 : 2],
+					nearest(position, radius, radius_sqr, objects, node->m_neighbours[index == 1 ? 0 : 2],
 					        next_center.set(center.x + (index == 1 ? -1 : 1) * distance, center.y, center.z - distance),
 					        distance, depth + 1);
 			}
 			else if (!(index & 1))
-				nearest(position, radius, objects, node->m_neighbours[!index ? 1 : 3],
+				nearest(position, radius, radius_sqr, objects, node->m_neighbours[!index ? 1 : 3],
 				        next_center.set(center.x + (!index ? -1 : 1) * distance, center.y, center.z + distance),
 				        distance, depth + 1);
 
@@ -244,18 +260,18 @@ IC void CSQuadTree::nearest(const Fvector& position, float radius, xr_vector<_ob
 	}
 	else
 	{
-		nearest(position, radius, objects, node->m_neighbours[index], next_center, distance, depth + 1);
+		nearest(position, radius, radius_sqr, objects, node->m_neighbours[index], next_center, distance, depth + 1);
 
 		if (_abs(position.x - center.x) < radius)
 			if (position.x > center.x)
 			{
 				if (index > 1)
-					nearest(position, radius, objects, node->m_neighbours[index == 2 ? 0 : 1],
+					nearest(position, radius, radius_sqr, objects, node->m_neighbours[index == 2 ? 0 : 1],
 					        next_center.set(center.x - distance, center.y, center.z + (index == 2 ? -1 : 1) * distance),
 					        distance, depth + 1);
 			}
 			else if (index < 2)
-				nearest(position, radius, objects, node->m_neighbours[!index ? 2 : 3],
+				nearest(position, radius, radius_sqr, objects, node->m_neighbours[!index ? 2 : 3],
 				        next_center.set(center.x + distance, center.y, center.z + (!index ? -1 : 1) * distance),
 				        distance, depth + 1);
 	}
@@ -265,6 +281,9 @@ TEMPLATE_SPECIALIZATION
 IC _object_type*CSQuadTree::remove(const _object_type* object)
 {
 	START_PROFILE("Covers/remove")
+		if (!object || !m_root)
+			return (0);
+
 		_object_type* _object = remove(object, m_root, m_center, m_radius, 0);
 		return (_object);
 	STOP_PROFILE
@@ -274,7 +293,12 @@ TEMPLATE_SPECIALIZATION
 IC _object_type*CSQuadTree::remove(const _object_type* object, CQuadNode*& node, Fvector center, float distance,
                                    int depth)
 {
-	VERIFY(node);
+	// Removal is also used from deferred object destruction.  Registration may
+	// already have been undone by an earlier lifecycle callback, so a missing
+	// branch is a valid "not found" result rather than a dereference contract.
+	if (!node || !object)
+		return (0);
+
 	if (depth == m_max_depth)
 	{
 		CListItem*& node_leaf = ((CListItem*&)((void*&)(node)));
@@ -292,13 +316,17 @@ IC _object_type*CSQuadTree::remove(const _object_type* object, CQuadNode*& node,
 				--m_leaf_count;
 				return (_object);
 			}
-		NODEFAULT;
+
+		return (0);
 	}
 
 	distance *= .5f;
 	u32 index = neighbour_index(object->position(), center, distance);
 	VERIFY(index < 4);
 	_object_type* _object = remove(object, node->m_neighbours[index], center, distance, depth + 1);
+	if (!_object)
+		return (0);
+
 	if (node->m_neighbours[index] || node->m_neighbours[0] || node->m_neighbours[1] || node->m_neighbours[2] || node->
 		m_neighbours[3])
 		return (_object);

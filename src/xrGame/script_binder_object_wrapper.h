@@ -13,9 +13,19 @@
 
 class CScriptGameObject;
 
+extern BOOL psLua_Profile;
+extern int psLua_ProfileThresholdUS;
+// emit == nullptr prints to the log; otherwise every line goes to emit(ctx, line).
+void lua_profile_dump_callbacks(u32 limit, void (*emit)(void*, const char*) = nullptr, void* ctx = nullptr);
+void lua_profile_reset_callbacks();
+
 class CScriptBinderObjectWrapper : public CScriptBinderObject, public ::luabind::wrap_base
 {
 public:
+	// binder.object: the game object's own userdata, so a binder kept by a script after net_destroy
+	// hands out the handle ~CScriptGameObject invalidates instead of the freed native pointer
+	::luabind::object m_lua_object;
+
 	CScriptBinderObjectWrapper(CScriptGameObject* object);
 	virtual ~CScriptBinderObjectWrapper();
 	virtual void reinit();

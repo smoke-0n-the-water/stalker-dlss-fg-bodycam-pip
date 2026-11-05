@@ -33,13 +33,16 @@ private:
 	void ObjectShift(float static_shift, const SCalculateData cd[max_size]);
 	void LimbUpdate(CIKLimb& L);
 	void LimbSetup();
+	void ValidateLegsBlend(IKinematicsAnimated* skeleton);
 
 private:
 	static void __stdcall IKVisualCallback(IKinematics* K);
 
 private:
 	CBlend* m_legs_blend;
+	u32 m_legs_motion_id;
 	CGameObject* m_object;
+	IKinematicsAnimated* m_skeleton;
 	xr_vector<CIKLimb> _bone_chains;
 	object_shift _object_shift;
 	extrapolation::points _pose_extrapolation;

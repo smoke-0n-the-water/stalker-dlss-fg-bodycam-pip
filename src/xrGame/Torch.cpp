@@ -24,6 +24,8 @@ static const float TORCH_INERTION_SPEED_MIN = 0.5f;
 static Fvector TORCH_OFFSET = {-0.2f, +0.1f, -0.3f};
 static const Fvector OMNI_OFFSET = {-0.2f, +0.1f, -0.1f};
 static const float OPTIMIZATION_DISTANCE = 100.f;
+static const float NPC_SHADOW_REENABLE_DISTANCE = OPTIMIZATION_DISTANCE * .85f;
+static const float NPC_BEAM_TURN_COS = 0.999998f; // cos(0.002 rad), the on-screen step of the position eps
 
 static bool stalker_use_dynamic_lights = false;
 
@@ -34,6 +36,8 @@ CTorch::CTorch(void)
 	light_render = ::Render->light_create();
 	light_render->set_type(IRender_Light::SPOT);
 	light_render->set_shadow(true);
+	m_shadow_enabled = true;
+	m_npc_beam_dir.set(0, 0, 0);
 	light_omni = ::Render->light_create();
 	light_omni->set_type(IRender_Light::POINT);
 	light_omni->set_shadow(false);
@@ -313,6 +317,27 @@ void CTorch::Update()
     PROF_EVENT("CTorch::Update")
 	if (!m_switched_on) return;
 
+	// A distant NPC torch can still intersect the camera frustum even when its
+	// owner occupies no visible pixels. Rendering the light is useful, but its
+	// shadow-map walks and draws the light subspace every frame. Beyond the same
+	// distance at which the legacy code already stops evaluating the exact owner
+	// skeleton, retain the light and only downgrade its imperceptible shadows.
+	// Player lights and multiplayer keep the exact legacy path. Hysteresis avoids
+	// shadow-mode oscillation when an NPC moves around the cutoff.
+	bool shadow_enabled = true;
+	if (r_optimize_torch && GameID() == eGameIDSingle && H_Parent() &&
+		!smart_cast<CActor*>(H_Parent()))
+	{
+		const float distance_sqr = H_Parent()->XFORM().c.distance_to_sqr(Device.vCameraPosition);
+		const float threshold = m_shadow_enabled ? OPTIMIZATION_DISTANCE : NPC_SHADOW_REENABLE_DISTANCE;
+		shadow_enabled = distance_sqr < threshold * threshold;
+	}
+	if (shadow_enabled != m_shadow_enabled)
+	{
+		light_render->set_shadow(shadow_enabled);
+		m_shadow_enabled = shadow_enabled;
+	}
+
 	if (isFlickering)
 	{
 		float tg = Device.fTimeGlobal;
@@ -359,6 +384,7 @@ void CTorch::Update()
 
 		if (actor)
 		{
+			m_npc_beam_dir.set(0, 0, 0); // the beam set below is not the NPC one
             float eps = 0.001f;
 			if (actor->active_cam() == eacLookAt)
 			{
@@ -415,14 +441,22 @@ void CTorch::Update()
 			if (can_use_dynamic_lights())
 			{
 				light_render->set_position(M.c, eps);
+				// Idle animation turns the beam a little every frame, and any turn
+				// re-renders the whole shadow map; a still beam reuses its cached statics.
+				Fvector beam_dir;
+				beam_dir.normalize_safe(M.k);
+				if (!r_optimize_torch || m_npc_beam_dir.dotproduct(beam_dir) < NPC_BEAM_TURN_COS)
+				{
+					m_npc_beam_dir = beam_dir;
 				light_render->set_rotation(M.k, M.i, d_eps);
+					light_omni->set_rotation(M.k, M.i, d_eps);
+				}
 
 				Fvector offset = M.c;
 				offset.mad(M.i, m_omni_offset.x);
 				offset.mad(M.j, m_omni_offset.y);
 				offset.mad(M.k, m_omni_offset.z);
 				light_omni->set_position(M.c, eps);
-				light_omni->set_rotation(M.k, M.i, d_eps);
 			} 
 
 			glow_render->set_position(M.c, eps);

@@ -71,6 +71,7 @@ protected:
 	float m_sqr_distance_xz;
 	float m_distance_xz;
 	_Graph::CVertex* best_node;
+	const xr_unordered_flat_set<_index_type>* m_blocked_vertices;
 
 public:
 	virtual ~CPathManager();

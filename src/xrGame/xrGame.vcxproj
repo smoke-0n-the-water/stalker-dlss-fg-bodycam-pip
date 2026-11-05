@@ -397,7 +397,7 @@
     <ClCompile>
       <AdditionalIncludeDirectories>.\;$(SolutionDir);$(SolutionDir)xrCore;$(SolutionDir)xrServerEntities;$(SolutionDir)3rd party\luajit-2\src\;$(SolutionDir)3rd party\luabind\;$(xrSdkDir)include;$(XRAY_16X_LIBS)OpenAutomate\inc;$(SolutionDir)3rd party\CxImage;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>$(XrProfilerDefines);WIN32;NDEBUG;_WINDOWS;_USRDLL;XRGAME_EXPORTS;dSINGLE;MSVC;_SECURE_SCL=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <BrowseInformation>
@@ -408,7 +408,7 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <OmitFramePointers>true</OmitFramePointers>
-      <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <StringPooling>true</StringPooling>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -416,6 +416,9 @@
       <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
       <InlineFunctionExpansion>Default</InlineFunctionExpansion>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <LanguageStandard_C>Default</LanguageStandard_C>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -1093,7 +1096,6 @@
     <ClInclude Include="console_registrator.h" />
     <ClInclude Include="shader_bus_script.h" />
     <ClInclude Include="svp_optic_config_script.h" />
-    <ClInclude Include="shader_bus_script.h" />
     <ClInclude Include="controller_state_panic_inline.h" />
     <ClInclude Include="control_action.h" />
     <ClInclude Include="control_action_inline.h" />
@@ -1560,7 +1562,6 @@
     <ClInclude Include="pp_effector_distance.h" />
     <ClInclude Include="problem_solver.h" />
     <ClInclude Include="problem_solver_inline.h" />
-    <ClInclude Include="profiler_inline.h" />
     <ClInclude Include="profile_data_types.h" />
     <ClInclude Include="profile_store.h" />
     <ClInclude Include="property_evaluator.h" />
@@ -2100,6 +2101,9 @@
     <ClInclude Include="ZoneVisual.h" />
     <ClInclude Include="zone_effector.h" />
     <ClInclude Include="ZudaArtifact.h" />
+    <ClInclude Include="HudMaterialState.h" />
+    <ClInclude Include="script_game_object_identity.h" />
+    <ClInclude Include="ui\UIWindowScriptOwnership.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\xrServerEntities\alife_human_brain.cpp" />
@@ -2847,6 +2851,7 @@
     </ClCompile>
     <ClCompile Include="first_person_transform.cpp">
       <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName)_script.pch</PrecompiledHeaderOutputFile>
     </ClCompile>
     <ClCompile Include="bodycam_hud_arms.cpp" />
     <ClCompile Include="bodycam_console.cpp" />
@@ -2872,6 +2877,7 @@
     </ClCompile>
     <ClCompile Include="bodycam_script.cpp">
       <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName)_script.pch</PrecompiledHeaderOutputFile>
     </ClCompile>
     <ClCompile Include="bodycam_viewmodel_profile.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -3383,10 +3389,6 @@
     </ClCompile>
     <ClCompile Include="svp_optic_config_script.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="shader_bus_script.cpp">
-      <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName)_script.pch</PrecompiledHeaderOutputFile>
     </ClCompile>
     <ClCompile Include="cover_evaluators.cpp" />
     <ClCompile Include="cover_manager.cpp" />
@@ -4007,14 +4009,6 @@
     <ClCompile Include="PostprocessAnimator.cpp" />
     <ClCompile Include="pp_effector_custom.cpp" />
     <ClCompile Include="pp_effector_distance.cpp" />
-    <ClCompile Include="profiler.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='ProfiledDX11|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='VerifiedDX11|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Verified|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='VerifiedDX11ASAN|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release-AVX|x64'">true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="profile_data_types.cpp" />
     <ClCompile Include="profile_data_types_script.cpp" />
     <ClCompile Include="profile_store.cpp" />

@@ -24,6 +24,12 @@ void IInputReceiver::IR_GetLastMouseDelta(Ivector2& p)
 
 void IInputReceiver::IR_OnDeactivate(void)
 {
+	// A fatal MessageBox/ShowWindow emits WM_ACTIVATE and reaches this method.
+	// Synthesizing releases at that point used to re-enter CLevel callbacks and
+	// Lua while LuaJIT was already handling OOM, producing a second exception.
+	if (Debug.is_fatal_in_progress())
+		return;
+
 	int i;
 	for (i = 0; i < CInput::COUNT_KB_BUTTONS; i++)
 		if (IR_GetKeyState(i))

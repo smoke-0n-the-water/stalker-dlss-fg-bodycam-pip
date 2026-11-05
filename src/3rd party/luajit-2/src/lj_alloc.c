@@ -6,7 +6,7 @@
 **
 **   This is a version (aka dlmalloc) of malloc/free/realloc written by
 **   Doug Lea and released to the public domain, as explained at
-**   http://creativecommons.org/licenses/publicdomain.
+**   https://creativecommons.org/licenses/publicdomain.
 **
 **   * Version pre-2.8.4 Wed Mar 29 19:46:29 2006    (dl at gee)
 **
@@ -16,8 +16,8 @@
 ** If you want to use dlmalloc in another project, you should get
 ** the original from: ftp://gee.cs.oswego.edu/pub/misc/
 ** For thread-safe derivatives, take a look at:
-** - ptmalloc: http://www.malloc.de/
-** - nedmalloc: http://www.nedprod.com/programs/portable/nedmalloc/
+** - ptmalloc: https://www.malloc.de/
+** - nedmalloc: https://www.nedprod.com/programs/portable/nedmalloc/
 */
 
 #define lj_alloc_c
@@ -81,7 +81,7 @@
 #if LJ_64
 
 /* Undocumented, but hey, that's what we all love so much about Windows. */
-typedef long (*PNTAVM)(HANDLE handle, void **addr, ULONG zbits,
+typedef long (*PNTAVM)(HANDLE handle, void **addr, ULONG_PTR zbits,
 		       size_t *size, ULONG alloctype, ULONG prot);
 PNTAVM ntavm;
 
@@ -101,27 +101,18 @@ static void INIT_MMAP(void)
 static LJ_AINLINE void *CALL_MMAP(size_t size)
 {
   DWORD olderr = GetLastError();
-  void* ptr = XR_MMAP(size);
+  void *ptr = XR_MMAP(size);
   SetLastError(olderr);
   return ptr;
 }
 
-/* For direct MMAP, use MEM_TOP_DOWN to minimize interference */
+/* Large/direct mappings use the same low-address pool and fallback path. */
 static LJ_AINLINE void *DIRECT_MMAP(size_t size)
 {
   DWORD olderr = GetLastError();
-  void* ptr = XR_MMAP(size);
+  void *ptr = XR_MMAP(size);
   SetLastError(olderr);
   return ptr;
-}
-
-/* This function supports releasing coalesed segments */
-static LJ_AINLINE int CALL_MUNMAP(void *ptr, size_t size)
-{
-  DWORD olderr = GetLastError();
-  XR_DESTROY(ptr, size);  
-  SetLastError(olderr);
-  return 0;  
 }
 
 #else
@@ -147,9 +138,17 @@ static LJ_AINLINE void *DIRECT_MMAP(size_t size)
   return ptr ? ptr : MFAIL;
 }
 
+#endif
+
 /* This function supports releasing coalesed segments */
 static LJ_AINLINE int CALL_MUNMAP(void *ptr, size_t size)
 {
+#if LJ_64
+  DWORD olderr = GetLastError();
+  int result = XR_DESTROY(ptr, size);
+  SetLastError(olderr);
+  return result;
+#else
   DWORD olderr = GetLastError();
   MEMORY_BASIC_INFORMATION minfo;
   char *cptr = (char *)ptr;
@@ -166,9 +165,8 @@ static LJ_AINLINE int CALL_MUNMAP(void *ptr, size_t size)
   }
   SetLastError(olderr);
   return 0;
-}
-
 #endif
+}
 
 #else
 
@@ -201,7 +199,7 @@ static LJ_AINLINE void *CALL_MMAP(size_t size)
   return ptr;
 }
 
-#elif LJ_TARGET_OSX || LJ_TARGET_PS4 || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || defined(__sun__)
+#elif LJ_TARGET_OSX || LJ_TARGET_PS4 || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || defined(__sun__) || LJ_TARGET_CYGWIN
 
 /* OSX and FreeBSD mmap() use a naive first-fit linear search.
 ** That's perfect for us. Except that -pagezero_size must be set for OSX,
@@ -982,7 +980,7 @@ static size_t release_unused_segments(mstate m)
       mchunkptr p = align_as_chunk(base);
       size_t psize = chunksize(p);
       /* Can unmap if first chunk holds entire segment and not pinned */
-      if (!cinuse(p) && (char *)p + psize >= base + size - TOP_FOOT_SIZE) {
+      if (!cinuse(p) && (char *)p + psize == (char *)mem2chunk(sp)) {
 	tchunkptr tp = (tchunkptr)p;
 	if (p == m->dv) {
 	  m->dv = 0;

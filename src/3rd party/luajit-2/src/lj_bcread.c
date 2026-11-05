@@ -1,6 +1,6 @@
 /*
 ** Bytecode reader.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #define lj_bcread_c
@@ -80,6 +80,7 @@ static LJ_NOINLINE void bcread_fill(LexState *ls, MSize len, int need)
       ls->current = -1;  /* Only bad if we get called again. */
       break;
     }
+    if (size >= LJ_MAX_MEM - ls->sb.n) lj_err_mem(ls->L);
     if (ls->sb.n) {  /* Append to buffer. */
       MSize n = ls->sb.n + (MSize)size;
       bcread_resize(ls, n < len ? len : n);
@@ -442,7 +443,7 @@ static int bcread_header(LexState *ls)
 #endif
   }
   if ((flags & BCDUMP_F_STRIP)) {
-    ls->chunkname = lj_str_newz(ls->L, ls->chunkarg);
+    ls->chunkname = lj_str_newz(ls->L, *ls->chunkarg == BCDUMP_HEAD1 ? "=?" : ls->chunkarg);
   } else {
     MSize len = bcread_uleb128(ls);
     bcread_need(ls, len);
@@ -467,7 +468,7 @@ GCproto *lj_bcread(LexState *ls)
     setprotoV(L, L->top, pt);
     incr_top(L);
   }
-  if ((int32_t)ls->n > 0 || L->top-1 != bcread_oldtop(L, ls))
+  if ((ls->n && !ls->endmark) || L->top-1 != bcread_oldtop(L, ls))
     bcread_error(ls, LJ_ERR_BCBAD);
   /* Pop off last prototype. */
   L->top--;

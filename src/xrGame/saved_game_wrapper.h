@@ -23,9 +23,14 @@ private:
 	_LEVEL_ID m_level_id;
 	shared_str m_level_name;
 	float m_actor_health;
+	bool m_valid;
+	void initialize();
+	void load_from_file(LPCSTR saved_game_name);
+	void load_from_payload(LPCSTR saved_game_name, const void* payload, u32 payload_size);
 
 public:
 	CSavedGameWrapper(LPCSTR saved_game_name);
+	CSavedGameWrapper(LPCSTR saved_game_name, const void* prepared_payload, u32 prepared_payload_size);
 	static LPCSTR saved_game_full_name(LPCSTR saved_game_name, string_path& result);
 	static bool saved_game_exist(LPCSTR saved_game_name);
 	static bool valid_saved_game(IReader& stream);
@@ -34,6 +39,7 @@ public:
 	inline const _LEVEL_ID& level_id() const;
 	inline LPCSTR level_name() const;
 	inline const float& actor_health() const;
+	inline bool valid() const;
 DECLARE_SCRIPT_REGISTER_FUNCTION
 };
 

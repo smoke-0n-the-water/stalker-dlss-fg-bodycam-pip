@@ -44,6 +44,13 @@
 void CUIActorMenu::SetActor(CInventoryOwner* io)
 {
 	R_ASSERT(!IsShown());
+	if (m_cached_inventory_owner != io)
+	{
+		// A cached cell owns a raw inventory-item pointer.  It is safe only for
+		// the owner that constructed it; discard it before a view-entity switch.
+		m_inventory_cache_valid = false;
+		ClearAllLists();
+	}
 	m_last_time = Device.dwTimeGlobal;
 	m_pActorInvOwner = io;
 
@@ -125,7 +132,7 @@ void CUIActorMenu::SetMenuMode(EMenuMode mode)
 #ifdef DEBUG
 			Msg("* now is Undefined mode");
 #endif // #ifdef DEBUG
-			ResetMode();
+			ResetMode(true);
 			break;
 		case mmInventory:
 			InitInventoryMode();
@@ -816,6 +823,14 @@ void CUIActorMenu::highlight_weapons_for_addon(PIItem addon_item, CUIDragDropLis
 
 void CUIActorMenu::ClearAllLists()
 {
+	// Cached cells store raw inventory-item pointers. Invalidate the cache before
+	// any destructive clear so no owner/revision state survives a disconnect or
+	// an inventory rebuild.
+	m_inventory_cache_valid = false;
+	m_cached_inventory_owner = NULL;
+	m_cached_inventory_revision = 0;
+	CUICellItem::m_mouse_selected_item = NULL;
+
 	m_pInventoryBagList->ClearAll(true);
 	m_pInventoryBeltList->ClearAll(true);
 
@@ -848,9 +863,13 @@ void CUIActorMenu::CallMessageBoxOK(LPCSTR text)
 	m_message_box_ok->ShowDialog(false);
 }
 
-void CUIActorMenu::ResetMode()
+void CUIActorMenu::ResetMode(bool clear_lists)
 {
+	if (clear_lists)
+	{
 	ClearAllLists();
+		m_inventory_cache_valid = false;
+	}
 	m_UIPropertiesBox->Hide();
 	SetCurrentItem(NULL);
 }

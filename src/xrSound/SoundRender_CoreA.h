@@ -57,8 +57,8 @@ class CSoundRender_CoreA : public CSoundRender_Core
 	LPALEFFECTFV alEffectfv{};
 	LPALGETEFFECTI alGetEffecti{};
 	LPALGETEFFECTIV alGetEffectiv{};
-	LPALGETEFFECTF alGetEffectf;
-	LPALGETEFFECTFV alGetEffectfv;
+	LPALGETEFFECTF alGetEffectf{};
+	LPALGETEFFECTFV alGetEffectfv{};
 	/* Auxiliary Effect Slot object functions */
 	LPALGENAUXILIARYEFFECTSLOTS alGenAuxiliaryEffectSlots{};
 	LPALDELETEAUXILIARYEFFECTSLOTS alDeleteAuxiliaryEffectSlots{};

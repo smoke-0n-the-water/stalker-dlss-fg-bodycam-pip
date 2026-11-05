@@ -52,6 +52,12 @@ IC void CALifeGraphRegistry::set_process_time(const float& process_time)
 		level().set_process_time(m_process_time);
 }
 
+IC void CALifeGraphRegistry::set_process_deadline(u64 deadline)
+{
+	if (m_level)
+		level().set_process_deadline(deadline);
+}
+
 IC CSE_ALifeCreatureActor* CALifeGraphRegistry::actor() const
 {
 	return (m_actor);

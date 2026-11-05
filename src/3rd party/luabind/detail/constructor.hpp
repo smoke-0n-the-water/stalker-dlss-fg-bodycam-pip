@@ -42,9 +42,9 @@ namespace luabind { namespace detail
         {
             using converter_policy = typename find_conversion_policy<Index + 1, Policies...>::type;
             using c_t = typename converter_policy::template generate_converter<U, Direction::lua_to_cpp>::type;
-            typename converter_policy::template generate_converter<U, Direction::lua_to_cpp>::type c;
+            c_t c;
 
-            return c.c_t::apply(L, decorated_type<U>::get(), Index + 2);
+            return c.apply(L, decorated_type<U>::get(), Index + 2);
         }
 
         template <typename... ConstructorArgs, size_t... Indices>
@@ -72,9 +72,9 @@ namespace luabind { namespace detail
         {
             using converter_policy = typename find_conversion_policy<Index + 1, Policies...>::type;
             using c_t = typename converter_policy::template generate_converter<U, Direction::lua_to_cpp>::type;
-            typename converter_policy::template generate_converter<U, Direction::lua_to_cpp>::type c;
+            c_t c;
 
-            return c.c_t::apply(L, decorated_type<U>::get(), Index + 2);
+            return c.apply(L, decorated_type<U>::get(), Index + 2);
         }
 
         template <typename... ConstructorArgs, size_t... Indices>

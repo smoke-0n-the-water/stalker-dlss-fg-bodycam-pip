@@ -22,6 +22,8 @@ public:
     enum class Support { Unknown, Supported, Unsupported, RestartRequired };
     static Support FrameGenerationSupport();
     static bool CanInitialize(); // False once slInit has been reached in this process.
+    // Last DLSSGState::numFramesToGenerateMax (1 = 2x only, 3 = up to 4x); 0 = unknown.
+    static UINT MaxFramesToGenerate();
     ~StreamlineIntegration();
     bool Initialize(const wchar_t* directory, Logger logger);
     bool CheckAdapter(const LUID& luid);
@@ -29,7 +31,10 @@ public:
     bool Upgrade(void** object);
     bool BeginFrame(UINT frameLimitUs);
     void Marker(sl::PCLMarker marker);
-    bool SetEnabled(bool enabled);
+    // framesToGenerate: 1 = 2x, 2 = 3x, 3 = 4x; clamped to the runtime's maximum.
+    bool SetEnabled(bool enabled, UINT framesToGenerate = 1);
+    // Generated frames per rendered frame currently requested (0 when off).
+    UINT FramesToGenerate() const { return m_enabled ? m_framesSet : 0; }
     bool Tag(const sl::Constants& constants, ID3D12Resource* depth, ID3D12Resource* motion,
         ID3D12Resource* hudless);
     bool ClearTags();
@@ -46,23 +51,28 @@ public:
     UINT PresentedFrames() const { return m_presentedFrames; }
     bool CanGenerate(UINT width, UINT height) const { return !m_failed && width >= m_minDimension && height >= m_minDimension; }
     // After DisableAfterFailure: allow DLSS-G again and resend options on the next switch.
-    void ClearFailure() { m_failed = false; m_optionsSet = false; }
+    void ClearFailure() { m_failed = false; m_optionsSet = false; m_outOfVram = false; }
+    // Streamline reported eWarnOutOfVRAM since the last ClearFailure.
+    bool OutOfVram() const { return m_outOfVram; }
     bool SupportsVSync() const { return m_supportsVSync; }
     const char* FailureStage() const { return m_failureStage; }
 
 private:
     bool Check(sl::Result result, const char* stage);
+    void NoteOutOfVram(const char* stage);
     void Log(const char* message) const;
     HMODULE m_module{};
     Logger m_logger{};
     bool m_initialized{}, m_deviceReady{}, m_enabled{}, m_optionsSet{};
     bool m_failed{}, m_supportsVSync{};
-    bool m_vramWarningLogged{};
+    bool m_vramWarningLogged{}, m_outOfVram{};
     UINT m_minDimension{};
+    UINT m_framesSet{1}, m_framesMax{};
+    bool m_framesRefused{};
+    void NoteFramesMax(UINT reported);
     sl::FrameToken* m_frame{};
     UINT m_frameLimitUs{~0u}, m_presentedFrames{};
     UINT m_markerMask{}, m_frameNumber{}, m_tagFrame{}, m_presentNumber{};
-    bool m_vramWarned{}; // log the out-of-VRAM warning once, not every frame
     UINT m_diagnosticPresents{}; // Bounded snapshots of existing GetState results after mode changes.
     UINT m_missingFenceWarnings{}, m_markerGaps{};
     std::wstring m_directory;

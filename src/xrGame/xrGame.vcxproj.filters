@@ -5106,6 +5106,9 @@
     <ClInclude Include="script_game_object.h">
       <Filter>AI\AScript\ScriptClasses\ScriptGameObject</Filter>
     </ClInclude>
+    <ClInclude Include="script_game_object_identity.h">
+      <Filter>AI\AScript\ScriptClasses\ScriptGameObject</Filter>
+    </ClInclude>
     <ClInclude Include="script_game_object_impl.h">
       <Filter>AI\AScript\ScriptClasses\ScriptGameObject</Filter>
     </ClInclude>
@@ -6022,6 +6025,9 @@
     <ClInclude Include="HudItem.h">
       <Filter>Core\Client\Objects\items &amp; weapons\HudItem</Filter>
     </ClInclude>
+    <ClInclude Include="HudMaterialState.h">
+      <Filter>Core\Client\Objects\items &amp; weapons\HudItem</Filter>
+    </ClInclude>
     <ClInclude Include="HudSound.h">
       <Filter>Core\Client\Objects\items &amp; weapons\HudItem</Filter>
     </ClInclude>
@@ -6105,9 +6111,6 @@
     </ClInclude>
     <ClInclude Include="CarLights.h">
       <Filter>Core\Client\Objects\vehicles\Car</Filter>
-    </ClInclude>
-    <ClInclude Include="CarDrone.h">
-      <Filter>Core\Client\Objects\vehicles\Car\CarDrone</Filter>
     </ClInclude>
     <ClInclude Include="CarWeapon.h">
       <Filter>Core\Client\Objects\vehicles\Car\CarWeapon</Filter>
@@ -6213,9 +6216,6 @@
     </ClInclude>
     <ClInclude Include="..\xrServerEntities\object_item_single_inline.h">
       <Filter>Core\Common\ObjectFactory\object_item_single</Filter>
-    </ClInclude>
-    <ClInclude Include="profiler_inline.h">
-      <Filter>Core\Common\Profiler</Filter>
     </ClInclude>
     <ClInclude Include="quadtree.h">
       <Filter>Core\Common\QuadTree</Filter>
@@ -6892,6 +6892,9 @@
     <ClInclude Include="ui\UIWindow.h">
       <Filter>UI\UIWindows\Windows</Filter>
     </ClInclude>
+    <ClInclude Include="ui\UIWindowScriptOwnership.h">
+      <Filter>UI\UIWindows\Windows</Filter>
+    </ClInclude>
     <ClInclude Include="ui\UIDoubleProgressBar.h">
       <Filter>UI\UIWindows\ProgressBar</Filter>
     </ClInclude>
@@ -7447,6 +7450,7 @@
     <ClInclude Include="player_hud_legs.h">
       <Filter>Core\Client\Objects\items &amp; weapons\HudItem</Filter>
     </ClInclude>
+    <ClInclude Include="CarDrone.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="damage_manager.cpp">
@@ -9844,9 +9848,6 @@
     <ClCompile Include="DBG_Car.cpp">
       <Filter>Core\Client\Objects\vehicles\Car</Filter>
     </ClCompile>
-    <ClCompile Include="CarDrone.cpp">
-      <Filter>Core\Client\Objects\vehicles\Car\CarDrone</Filter>
-    </ClCompile>
     <ClCompile Include="CarWeapon.cpp">
       <Filter>Core\Client\Objects\vehicles\Car\CarWeapon</Filter>
     </ClCompile>
@@ -9918,9 +9919,6 @@
     </ClCompile>
     <ClCompile Include="..\xrServerEntities\object_item_script.cpp">
       <Filter>Core\Common\ObjectFactory\object_item_script</Filter>
-    </ClCompile>
-    <ClCompile Include="profiler.cpp">
-      <Filter>Core\Common\Profiler</Filter>
     </ClCompile>
     <ClCompile Include="ai\weighted_random.cpp">
       <Filter>Core\Common\Random\weighted</Filter>
@@ -11253,6 +11251,9 @@
     <ClCompile Include="player_hud_legs.cpp">
       <Filter>Core\Client\Objects\items &amp; weapons\HudItem</Filter>
     </ClCompile>
+    <ClCompile Include="CarDrone.cpp" />
+    <ClCompile Include="searchlight_script.cpp" />
+    <ClCompile Include="searchlight_struct.cpp" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="Explosive.h">

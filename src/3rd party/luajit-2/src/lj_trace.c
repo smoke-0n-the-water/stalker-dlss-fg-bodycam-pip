@@ -1,6 +1,6 @@
 /*
 ** Trace management.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #define lj_trace_c
@@ -117,15 +117,22 @@ static void perftools_addtrace(GCtrace *T)
 }
 #endif
 
-/* Save current trace by copying and compacting it. */
-static void trace_save(jit_State *J)
+/* Allocate space for copy of trace. */
+static GCtrace *trace_save_alloc(jit_State *J)
 {
   size_t sztr = ((sizeof(GCtrace)+7)&~7);
   size_t szins = (J->cur.nins-J->cur.nk)*sizeof(IRIns);
   size_t sz = sztr + szins +
 	      J->cur.nsnap*sizeof(SnapShot) +
 	      J->cur.nsnapmap*sizeof(SnapEntry);
-  GCtrace *T = lj_mem_newt(J->L, (MSize)sz, GCtrace);
+  return lj_mem_newt(J->L, (MSize)sz, GCtrace);
+}
+
+/* Save current trace by copying and compacting it. */
+static void trace_save(jit_State *J, GCtrace *T)
+{
+  size_t sztr = ((sizeof(GCtrace)+7)&~7);
+  size_t szins = (J->cur.nins-J->cur.nk)*sizeof(IRIns);
   char *p = (char *)T + sztr;
   memcpy(T, &J->cur, sizeof(GCtrace));
   setgcrefr(T->nextgc, J2G(J)->gc.root);
@@ -198,14 +205,6 @@ static void trace_unpatch(jit_State *J, GCtrace *T)
     lua_assert(op == BC_ITERL || op == BC_LOOP || bc_isret(op));
     *pc = T->startins;
     break;
-  case BC_JMP:
-    lua_assert(op == BC_ITERL);
-    pc += bc_j(*pc)+2;
-    if (bc_op(*pc) == BC_JITERL) {
-      lua_assert(traceref(J, bc_d(*pc)) == T);
-      *pc = T->startins;
-    }
-    break;
   case BC_JFUNCF:
     lua_assert(op == BC_FUNCF);
     *pc = T->startins;
@@ -220,18 +219,19 @@ static void trace_flushroot(jit_State *J, GCtrace *T)
 {
   GCproto *pt = &gcref(T->startpt)->pt;
   lua_assert(T->root == 0 && pt != NULL);
-  /* First unpatch any modified bytecode. */
-  trace_unpatch(J, T);
   /* Unlink root trace from chain anchored in prototype. */
   if (pt->trace == T->traceno) {  /* Trace is first in chain. Easy. */
     pt->trace = T->nextroot;
+unpatch:
+    /* Unpatch modified bytecode only if the trace has not been flushed. */
+    trace_unpatch(J, T);
   } else if (pt->trace) {  /* Otherwise search in chain of root traces. */
     GCtrace *T2 = traceref(J, pt->trace);
     if (T2) {
       for (; T2->nextroot; T2 = traceref(J, T2->nextroot))
 	if (T2->nextroot == T->traceno) {
 	  T2->nextroot = T->nextroot;  /* Unlink from chain. */
-	  break;
+	  goto unpatch;
 	}
     }
   }
@@ -250,8 +250,17 @@ void lj_trace_flush(jit_State *J, TraceNo traceno)
 /* Flush all traces associated with a prototype. */
 void lj_trace_flushproto(global_State *g, GCproto *pt)
 {
+  jit_State *J = G2J(g);
+  uint32_t i;
   while (pt->trace != 0)
-    trace_flushroot(G2J(g), traceref(G2J(g), pt->trace));
+    trace_flushroot(J, traceref(J, pt->trace));
+  /* Explicit per-prototype JIT mode changes must also remove finite NYI
+  ** cooldowns, so re-enabled or runtime-replaced mod code gets a clean retry. */
+  for (i = 0; i < JIT_ROOT_NYI_SLOTS; i++) {
+    JitRootNyiPenalty *penalty = &J->root_nyi_penalty[i];
+    if (penalty->used && mref(penalty->pt, GCproto) == pt)
+      memset(penalty, 0, sizeof(*penalty));
+  }
 }
 
 /* Flush all traces. */
@@ -261,6 +270,7 @@ int lj_trace_flushall(lua_State *L)
   ptrdiff_t i;
   if ((J2G(J)->hookmask & HOOK_GC))
     return 1;
+  J->stats_trace_flushes++;
   for (i = (ptrdiff_t)J->sizetrace-1; i > 0; i--) {
     GCtrace *T = traceref(J, i);
     if (T) {
@@ -273,8 +283,12 @@ int lj_trace_flushall(lua_State *L)
   }
   J->cur.traceno = 0;
   J->freetrace = 0;
-  /* Clear penalty cache. */
+  /* Clear penalty caches tied to trace numbers/exits. */
   memset(J->penalty, 0, sizeof(J->penalty));
+  memset(J->side_nyi_penalty, 0, sizeof(J->side_nyi_penalty));
+  J->side_nyi_penalty_slot = 0;
+  memset(J->root_nyi_penalty, 0, sizeof(J->root_nyi_penalty));
+  J->root_nyi_penalty_slot = 0;
   /* Free the whole machine code and invalidate all exit stub groups. */
   lj_mcode_free(J);
   memset(J->exitstubgroup, 0, sizeof(J->exitstubgroup));
@@ -320,10 +334,11 @@ void lj_trace_freestate(global_State *g)
 /* -- Penalties and blacklisting ------------------------------------------ */
 
 /* Blacklist a bytecode instruction. */
-static void blacklist_pc(GCproto *pt, BCIns *pc)
+static void blacklist_pc(jit_State *J, GCproto *pt, BCIns *pc)
 {
   setbc_op(pc, (int)bc_op(*pc)+(int)BC_ILOOP-(int)BC_LOOP);
   pt->flags |= PROTO_ILOOP;
+  J->stats_blacklisted_sites++;
 }
 
 /* Penalize a bytecode instruction. */
@@ -336,7 +351,7 @@ static void penalty_pc(jit_State *J, GCproto *pt, BCIns *pc, TraceError e)
       val = ((uint32_t)J->penalty[i].val << 1) +
 	    LJ_PRNG_BITS(J, PENALTY_RNDBITS);
       if (val > PENALTY_MAX) {
-	blacklist_pc(pt, pc);  /* Blacklist it, if that didn't help. */
+	blacklist_pc(J, pt, pc);  /* Blacklist it, if that didn't help. */
 	return;
       }
       goto setpenalty;
@@ -350,6 +365,8 @@ setpenalty:
   J->penalty[i].reason = e;
   hotcount_set(J2GG(J), pc+1, val);
 }
+
+static void trace_clear_root_nyi(jit_State *J, GCproto *pt, const BCIns *pc);
 
 /* -- Trace compiler state machine ---------------------------------------- */
 
@@ -372,9 +389,15 @@ static void trace_start(jit_State *J)
   }
 
   /* Get a new trace number. */
+  J->stats_trace_starts++;
+  if (J->parent)
+    J->stats_side_trace_starts++;
+  else
+    J->stats_root_trace_starts++;
   traceno = trace_findfree(J);
   if (LJ_UNLIKELY(traceno == 0)) {  /* No free trace? */
     lua_assert((J2G(J)->hookmask & HOOK_GC) == 0);
+    J->stats_maxtrace_flushes++;
     lj_trace_flushall(J->L);
     J->state = LJ_TRACE_IDLE;  /* Silently ignored. */
     return;
@@ -417,6 +440,7 @@ static void trace_stop(jit_State *J)
   BCOp op = bc_op(J->cur.startins);
   GCproto *pt = &gcref(J->cur.startpt)->pt;
   TraceNo traceno = J->cur.traceno;
+  GCtrace *T = trace_save_alloc(J);  /* Do this first. May throw OOM. */
   lua_State *L;
 
   switch (op) {
@@ -444,7 +468,11 @@ static void trace_stop(jit_State *J)
     lua_assert(J->parent != 0 && J->cur.root != 0);
     lj_asm_patchexit(J, traceref(J, J->parent), J->exitno, J->cur.mcode);
     /* Avoid compiling a side trace twice (stack resizing uses parent exit). */
-    traceref(J, J->parent)->snap[J->exitno].count = SNAPCOUNT_DONE;
+    {
+      SnapShot *snap = &traceref(J, J->parent)->snap[J->exitno];
+      snap->count = SNAPCOUNT_DONE;
+      if (J->cur.topslot > snap->topslot) snap->topslot = J->cur.topslot;
+    }
     /* Add to side trace chain in root trace. */
     {
       GCtrace *root = traceref(J, J->cur.root);
@@ -461,7 +489,10 @@ static void trace_stop(jit_State *J)
   /* Commit new mcode only after all patching is done. */
   lj_mcode_commit(J, J->cur.mcode);
   J->postproc = LJ_POST_NONE;
-  trace_save(J);
+  if (J->parent == 0)
+    trace_clear_root_nyi(J, &gcref(J->cur.startpt)->pt, mref(J->cur.startpc, const BCIns));
+  trace_save(J, T);
+  J->stats_trace_compiled++;
 
   L = J->L;
   lj_vmevent_send(L, TRACE,
@@ -485,6 +516,221 @@ static int trace_downrec(jit_State *J)
   return 1;
 }
 
+static int trace_error_is_nyi(TraceError e)
+{
+  switch (e) {
+  case LJ_TRERR_NYIBC:
+  case LJ_TRERR_NYICF:
+  case LJ_TRERR_NYIFF:
+  case LJ_TRERR_NYIFFU:
+  case LJ_TRERR_NYIRETL:
+  case LJ_TRERR_NYITMIX:
+  case LJ_TRERR_NYICONV:
+  case LJ_TRERR_NYICALL:
+  case LJ_TRERR_NYIIR:
+  case LJ_TRERR_NYIPHI:
+  case LJ_TRERR_NYICOAL:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+static void trace_record_abort_site(jit_State *J, TraceError e)
+{
+  GCproto *pt;
+  const BCIns *pc;
+  const char *source;
+  size_t source_len;
+  BCLine line;
+  uint32_t i, slot = JIT_ABORT_SITE_SLOTS, minslot = 0;
+  uint64_t mincount = ~(uint64_t)0;
+  JitAbortSiteStat *site;
+
+  /* Prefer the instruction that actually raised the NYI. Fall back to the
+  ** trace start only when the recorder no longer has a valid current PC. */
+  pt = J->pt;
+  pc = J->pc;
+  if (pt == NULL || pc == NULL || pc < proto_bc(pt) || pc >= proto_bc(pt) + pt->sizebc) {
+    if (!gcref(J->cur.startpt) || !mref(J->cur.startpc, BCIns))
+      return;
+    pt = &gcref(J->cur.startpt)->pt;
+    pc = mref(J->cur.startpc, const BCIns);
+    if (pc < proto_bc(pt) || pc >= proto_bc(pt) + pt->sizebc)
+      return;
+  }
+  source = proto_chunknamestr(pt);
+  line = lj_debug_line(pt, proto_bcpos(pt, pc));
+  if (source[0] == '@' || source[0] == '=')
+    source++;
+  source_len = strlen(source);
+  if (source_len >= JIT_ABORT_SOURCE_LEN)
+    source_len = JIT_ABORT_SOURCE_LEN - 1;
+
+  for (i = 0; i < JIT_ABORT_SITE_SLOTS; i++) {
+    site = &J->stats_abort_sites[i];
+    if (site->used && site->line == (uint32_t)line &&
+        site->reason == (uint16_t)e && site->side_trace == (uint8_t)(J->parent != 0) &&
+        strncmp(site->source, source, source_len) == 0 && site->source[source_len] == '\0') {
+      site->count++;
+      return;
+    }
+    if (!site->used && slot == JIT_ABORT_SITE_SLOTS)
+      slot = i;
+    if (site->used && site->count < mincount) {
+      mincount = site->count;
+      minslot = i;
+    }
+  }
+
+  /* Fixed-size Space-Saving table: no Lua/allocator activity in an abort path. */
+  if (slot == JIT_ABORT_SITE_SLOTS)
+    slot = minslot;
+  site = &J->stats_abort_sites[slot];
+  {
+    uint64_t inherited = site->used ? site->count : 0;
+    memset(site, 0, sizeof(*site));
+    memcpy(site->source, source, source_len);
+    site->source[source_len] = '\0';
+    site->count = inherited + 1;
+    site->line = (uint32_t)line;
+    site->reason = (uint16_t)e;
+    site->side_trace = (uint8_t)(J->parent != 0);
+    site->used = 1;
+  }
+}
+
+static void trace_penalize_side_nyi(jit_State *J)
+{
+  uint32_t i, slot = JIT_SIDE_NYI_SLOTS;
+  JitSideNyiPenalty *penalty;
+  GCtrace *parent;
+  SnapShot *snap;
+
+  if (!J->parent || J->parent >= J->sizetrace)
+    return;
+  parent = traceref(J, J->parent);
+  if (!parent || J->exitno >= parent->nsnap)
+    return;
+  snap = &parent->snap[J->exitno];
+
+  for (i = 0; i < JIT_SIDE_NYI_SLOTS; i++) {
+    penalty = &J->side_nyi_penalty[i];
+    if (penalty->used && penalty->parent == J->parent && penalty->exitno == J->exitno) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot == JIT_SIDE_NYI_SLOTS) {
+    slot = J->side_nyi_penalty_slot++ & (JIT_SIDE_NYI_SLOTS-1);
+    penalty = &J->side_nyi_penalty[slot];
+    memset(penalty, 0, sizeof(*penalty));
+    penalty->parent = J->parent;
+    penalty->exitno = J->exitno;
+    penalty->used = 1;
+  } else {
+    penalty = &J->side_nyi_penalty[slot];
+  }
+
+  if (penalty->failures < 0xffffu)
+    penalty->failures++;
+  if (penalty->failures >= 4u) {
+    if (snap->count != SNAPCOUNT_DONE) {
+      snap->count = SNAPCOUNT_DONE;
+      J->stats_side_nyi_disabled++;
+    }
+  } else {
+    /* Do not retry at every occurrence after an NYI side-trace abort. Re-arm the
+    ** ordinary hotexit threshold; correctness stays in the interpreter. */
+    snap->count = 0;
+  }
+}
+
+/* Adaptive cooldown for root traces which repeatedly abort at a structural NYI.
+** Unlike the stock bytecode penalty/blacklist this is finite and does not alter
+** bytecode. Runtime-dependent mod code therefore gets periodic retry chances. */
+static uint32_t trace_root_nyi_signature(GCproto *pt)
+{
+  const BCIns *bc = proto_bc(pt);
+  uint32_t signature = (uint32_t)pt->sizebc * 16777619u;
+  signature ^= (uint32_t)pt->sizekgc * 2246822519u;
+  signature ^= (uint32_t)pt->firstline * 3266489917u;
+  signature ^= (uint32_t)pt->numline * 668265263u;
+  signature ^= ((uint32_t)pt->framesize << 24) ^ ((uint32_t)pt->numparams << 16);
+  if (pt->sizebc) {
+    signature ^= (uint32_t)bc[0] * 374761393u;
+    signature ^= (uint32_t)bc[pt->sizebc-1] * 1274126177u;
+  }
+  return signature;
+}
+
+static JitRootNyiPenalty *trace_root_nyi_penalty(jit_State *J, GCproto *pt,
+                                                 const BCIns *pc, int create)
+{
+  /* Four-way set associative table. GAMMA can have hundreds of concurrently hot
+  ** NYI sites; a linear 64/128-entry penalty cache thrashes on that workload.
+  ** This keeps lookup constant-time while staying allocation-free. The signature
+  ** prevents allocator address reuse from inheriting a stale prototype's cooldown;
+  ** the stored MRefs are compared only as addresses and are never dereferenced. */
+  enum { ROOT_NYI_WAYS = 4, ROOT_NYI_BUCKETS = JIT_ROOT_NYI_SLOTS / ROOT_NYI_WAYS };
+  uint32_t signature = trace_root_nyi_signature(pt);
+  uint32_t hash = (u32ptr(pt) >> 4) ^ ((u32ptr(pc) >> 2) * 2654435761u) ^ signature;
+  uint32_t base = (hash & (ROOT_NYI_BUCKETS-1)) * ROOT_NYI_WAYS;
+  uint32_t i, empty = JIT_ROOT_NYI_SLOTS;
+  JitRootNyiPenalty *slot;
+  for (i = 0; i < ROOT_NYI_WAYS; i++) {
+    slot = &J->root_nyi_penalty[base+i];
+    if (slot->used) {
+      if (slot->signature == signature && mref(slot->pt, GCproto) == pt &&
+          mref(slot->pc, const BCIns) == pc)
+        return slot;
+    } else if (empty == JIT_ROOT_NYI_SLOTS) {
+      empty = base+i;
+    }
+  }
+  if (!create) return NULL;
+  i = empty != JIT_ROOT_NYI_SLOTS ? empty :
+      base + (J->root_nyi_penalty_slot++ & (ROOT_NYI_WAYS-1));
+  slot = &J->root_nyi_penalty[i];
+  memset(slot, 0, sizeof(*slot));
+  setmref(slot->pt, pt);
+  setmref(slot->pc, pc);
+  slot->signature = signature;
+  slot->used = 1;
+  return slot;
+}
+
+static void trace_penalize_root_nyi(jit_State *J)
+{
+  GCproto *pt = &gcref(J->cur.startpt)->pt;
+  const BCIns *pc = mref(J->cur.startpc, const BCIns);
+  JitRootNyiPenalty *penalty = trace_root_nyi_penalty(J, pt, pc, 1);
+  uint32_t shift;
+  if (penalty->failures < 0xffffu)
+    penalty->failures++;
+  shift = penalty->failures > 15u ? 15u : penalty->failures;
+  penalty->cooldown = (uint16_t)(1u << shift);  /* 2, 4, ... 32768 hot events. */
+  J->stats_root_nyi_backoffs++;
+}
+
+static int trace_defer_root_nyi(jit_State *J, GCproto *pt, const BCIns *pc)
+{
+  JitRootNyiPenalty *penalty = trace_root_nyi_penalty(J, pt, pc, 0);
+  if (penalty && penalty->cooldown) {
+    penalty->cooldown--;
+    J->stats_root_nyi_suppressed++;
+    return 1;
+  }
+  return 0;
+}
+
+static void trace_clear_root_nyi(jit_State *J, GCproto *pt, const BCIns *pc)
+{
+  JitRootNyiPenalty *penalty = trace_root_nyi_penalty(J, pt, pc, 0);
+  if (penalty)
+    memset(penalty, 0, sizeof(*penalty));
+}
+
 /* Abort tracing. */
 static int trace_abort(jit_State *J)
 {
@@ -497,12 +743,36 @@ static int trace_abort(jit_State *J)
   if (tvisnumber(L->top-1))
     e = (TraceError)numberVint(L->top-1);
   if (e == LJ_TRERR_MCODELM) {
+    J->stats_mcode_retries++;
     L->top--;  /* Remove error object */
     J->state = LJ_TRACE_ASM;
     return 1;  /* Retry ASM with new MCode area. */
   }
-  /* Penalize or blacklist starting bytecode instruction. */
-  if (J->parent == 0 && !bc_isret(bc_op(J->cur.startins)))
+
+  J->stats_trace_aborts++;
+  if (J->parent)
+    J->stats_side_trace_aborts++;
+  else
+    J->stats_root_trace_aborts++;
+  if (e == LJ_TRERR_MCODEAL || e == LJ_TRERR_MCODEOV)
+    J->stats_abort_mcode++;
+  if (e == LJ_TRERR_BLACKL)
+    J->stats_abort_blacklist++;
+  if (trace_error_is_nyi(e)) {
+    J->stats_abort_nyi++;
+    trace_record_abort_site(J, e);
+    if (J->parent)
+      trace_penalize_side_nyi(J);
+    else
+      trace_penalize_root_nyi(J);
+  }
+
+  /* Penalize or blacklist starting bytecode instruction. Structural NYI roots
+  ** use the finite engine-side cooldown above instead: GAMMA has far more than
+  ** PENALTY_SLOTS simultaneously hot NYI sites, which made the stock cache thrash,
+  ** while permanent bytecode blacklisting is undesirable for runtime-patched mod
+  ** code. Non-NYI aborts retain LuaJIT's original penalty policy. */
+  if (J->parent == 0 && !trace_error_is_nyi(e) && !bc_isret(bc_op(J->cur.startins)))
     penalty_pc(J, &gcref(J->cur.startpt)->pt, mref(J->cur.startpc, BCIns), e);
 
   /* Is there anything to abort? */
@@ -512,21 +782,27 @@ static int trace_abort(jit_State *J)
     J->cur.link = 0;
     J->cur.linktype = LJ_TRLINK_NONE;
     lj_vmevent_send(L, TRACE,
-      TValue *frame;
+      cTValue *bot = tvref(L->stack);
+      cTValue *frame;
       const BCIns *pc;
-      GCfunc *fn;
+      BCPos pos = 0;
       setstrV(L, L->top++, lj_str_newlit(L, "abort"));
       setintV(L->top++, traceno);
       /* Find original Lua function call to generate a better error message. */
-      frame = J->L->base-1;
-      pc = J->pc;
-      while (!isluafunc(frame_func(frame))) {
-	pc = (frame_iscont(frame) ? frame_contpc(frame) : frame_pc(frame)) - 1;
-	frame = frame_prev(frame);
+      for (frame = J->L->base-1, pc = J->pc; ; frame = frame_prev(frame)) {
+	if (isluafunc(frame_func(frame))) {
+	  pos = proto_bcpos(funcproto(frame_func(frame)), pc);
+	  break;
+	} else if (frame_prev(frame) <= bot) {
+	  break;
+	} else if (frame_iscont(frame)) {
+	  pc = frame_contpc(frame) - 1;
+	} else {
+	  pc = frame_pc(frame) - 1;
+	}
       }
-      fn = frame_func(frame);
-      setfuncV(L, L->top++, fn);
-      setintV(L->top++, proto_bcpos(funcproto(fn), pc));
+      setfuncV(L, L->top++, frame_func(frame));
+      setintV(L->top++, pos);
       copyTV(L, L->top++, restorestack(L, errobj));
       copyTV(L, L->top++, &J->errinfo);
     );
@@ -575,9 +851,11 @@ static TValue *trace_state(lua_State *L, lua_CFunction dummy, void *ud)
       trace_pendpatch(J, 0);
       setvmstate(J2G(J), RECORD);
       lj_vmevent_send_(L, RECORD,
-	/* Save/restore tmptv state for trace recorder. */
+	/* Save/restore state for trace recorder. */
 	TValue savetv = J2G(J)->tmptv;
 	TValue savetv2 = J2G(J)->tmptv2;
+	TraceNo parent = J->parent;
+	ExitNo exitno = J->exitno;
 	setintV(L->top++, J->cur.traceno);
 	setfuncV(L, L->top++, J->fn);
 	setintV(L->top++, J->pt ? (int32_t)proto_bcpos(J->pt, J->pc) : -1);
@@ -585,6 +863,8 @@ static TValue *trace_state(lua_State *L, lua_CFunction dummy, void *ud)
       ,
 	J2G(J)->tmptv = savetv;
 	J2G(J)->tmptv2 = savetv2;
+	J->parent = parent;
+	J->exitno = exitno;
       );
       lj_record_ins(J);
       break;
@@ -659,6 +939,12 @@ void LJ_FASTCALL lj_trace_hot(jit_State *J, const BCIns *pc)
   /* No new trace while recording, in __gc, in vmevent, or with a profiler hook armed (its drain bypasses lj_trace_ins). */
   if (J->state == LJ_TRACE_IDLE &&
       !(J2G(J)->hookmask & (HOOK_GC|HOOK_VMEVENT|HOOK_PROFILE))) {
+    GCfunc *fn = curr_func(J->L);
+    GCproto *pt = isluafunc(fn) ? funcproto(fn) : NULL;
+    if (pt && trace_defer_root_nyi(J, pt, pc-1)) {
+      ERRNO_RESTORE
+      return;
+    }
     J->parent = 0;  /* Root trace. */
     J->exitno = 0;
     J->state = LJ_TRACE_START;
@@ -692,7 +978,9 @@ typedef struct ExitDataCP {
 static TValue *trace_exit_cp(lua_State *L, lua_CFunction dummy, void *ud)
 {
   ExitDataCP *exd = (ExitDataCP *)ud;
-  cframe_errfunc(L->cframe) = -1;  /* Inherit error function. */
+  /* Always catch error here and don't call error function. */
+  cframe_errfunc(L->cframe) = 0;
+  cframe_nres(L->cframe) = -2*LUAI_MAXSTACK*(int)sizeof(TValue);
   exd->pc = lj_snap_restore(exd->J, exd->exptr);
   UNUSED(dummy);
   return NULL;
@@ -780,7 +1068,7 @@ int LJ_FASTCALL lj_trace_exit(jit_State *J, void *exptr)
   if (G(L)->gc.state == GCSatomic || G(L)->gc.state == GCSfinalize) {
     if (!(G(L)->hookmask & HOOK_GC))
       lj_gc_step(L);  /* Exited because of GC: drive GC forward. */
-  } else {
+  } else if ((J->flags & JIT_F_ON)) {
     trace_hotside(J, pc);
   }
   if (bc_op(*pc) == BC_JLOOP) {

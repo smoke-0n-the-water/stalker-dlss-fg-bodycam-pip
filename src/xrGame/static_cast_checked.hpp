@@ -33,17 +33,11 @@ struct value {
 
 template <typename source_type, typename destination_type>
 struct helper {
-	template <bool is_polymrphic>
-	inline static void check		(source_type source)
+	template <bool is_polymorphic_type>
+	inline static void check(source_type source)
 	{
-		value<
-			destination_type
-		>::check	(source);
-	}
-
-	template <>
-	inline static void check<false>	(source_type source)
-	{
+		if constexpr (is_polymorphic_type)
+			value<destination_type>::check(source);
 	}
 };
 

@@ -4,6 +4,7 @@
 class UIHint;
 class CScriptXmlInit;
 class CUIWindow;
+class CDialogHolder;
 
 class CUIStatic;
 class CUICellItem;
@@ -124,6 +125,8 @@ inline bool operator!=(const uialloc<_Ty>&, const uialloc<_Other>&) { return (fa
 
 class CUIWindow : public CUISimpleWindow
 {
+    friend class CDialogHolder;
+
 public:
 	CUIWindow();
 	virtual ~CUIWindow();
@@ -391,6 +394,9 @@ protected:
 
 	//указатель на родительское окно
 	CUIWindow* m_pParentWnd;
+	// Non-owning backlink used only to unregister this window before its
+	// storage is released. CDialogHolder owns neither the window nor its lifetime.
+	CDialogHolder* m_pDialogHolder;
 
 	//дочернее окно которое, захватило ввод клавиатуры
 	CUIWindow* m_pKeyboardCapturer;

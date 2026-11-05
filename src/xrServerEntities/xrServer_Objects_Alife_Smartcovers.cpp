@@ -85,6 +85,7 @@ CSE_SmartCover::CSE_SmartCover(LPCSTR section) : CSE_ALifeDynamicObject(section)
 CSE_SmartCover::~CSE_SmartCover()
 {
 #ifdef XRSE_FACTORY_EXPORTS
+	clear_visuals();
 	fp_data.dec					();
 #endif // XRSE_FACTORY_EXPORTS
 }
@@ -348,9 +349,16 @@ public:
 	}
 }; // class CSE_SmartVisual
 
+void CSE_SmartCover::clear_visuals()
+{
+	for (visual_data& data : m_visuals)
+		xr_delete(data.visual);
+	m_visuals.clear();
+}
+
 void CSE_SmartCover::fill_visuals()
 {
-	delete_data(m_visuals);
+	clear_visuals();
 
 	xr_vector<SSCDrawHelper>::iterator I = m_draw_data.begin();
 	xr_vector<SSCDrawHelper>::iterator E = m_draw_data.end();
@@ -358,14 +366,13 @@ void CSE_SmartCover::fill_visuals()
 		if (!I->is_enterable)
 			return;
 
-		CSE_Visual *visual			= xr_new<CSE_SmartVisual>();
-		visual->set_visual			("actors\\stalker_neutral\\stalker_neutral_1");
-
 		if (I->animation_id.size() == 0) {
 			Msg						("cover [%s] doesn't have idle_2_fire animation", I->string_identifier.c_str());
 			return;
 		}
 
+		CSE_Visual *visual			= xr_new<CSE_SmartVisual>();
+		visual->set_visual			("actors\\stalker_neutral\\stalker_neutral_1");
 		visual->startup_animation	= I->animation_id;
 
 		visual_data					tmp;

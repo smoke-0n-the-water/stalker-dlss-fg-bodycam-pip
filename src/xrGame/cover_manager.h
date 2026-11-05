@@ -49,7 +49,6 @@ private:
 	mutable SmartCovers m_smart_covers;
 	mutable bool m_smart_covers_actual;
 
-
 protected:
 	IC bool edge_vertex(u32 index) const;
 	IC bool cover(LevelGraph::CVertex* v, u32 index0, u32 index1) const;
@@ -75,7 +74,7 @@ public:
 	void clear();
 	template <typename _evaluator_type, typename _restrictor_type>
 	IC const CCoverPoint* best_cover(const Fvector& position, float radius, _evaluator_type& evaluator,
-	                                 const _restrictor_type& restrictor) const;
+	                                 const _restrictor_type& restrictor, float min_radius = 0.f, bool* search_performed = nullptr) const;
 	template <typename _evaluator_type>
 	IC const CCoverPoint* best_cover(const Fvector& position, float radius, _evaluator_type& evaluator) const;
 	IC bool operator()(const CCoverPoint*) const;

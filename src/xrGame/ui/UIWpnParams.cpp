@@ -136,7 +136,8 @@ void CUIWpnParams::InitFromXml(CUIXml& xml_doc)
 			bAmmoTypeExistInXML = xml_doc.NavigateToNode(str, 0) != nullptr;
 			if (bAmmoTypeExistInXML)
 			{
-				CUIStatic* pStAmmoType = new CUIStatic();
+				CUIStatic* pStAmmoType = xr_new<CUIStatic>();
+				pStAmmoType->SetAutoDelete(true);
 				AttachChild(pStAmmoType);
 				CUIXmlInit::InitStatic(xml_doc, str, 0, pStAmmoType);
 
@@ -266,18 +267,12 @@ void CUIWpnParams::SetInfo(CInventoryItem* slot_wpn, CInventoryItem& cur_wpn)
 			}
 			else
 			{
-				if (pSettings->line_exist(good_ammo[i].c_str(), "icons_texture"))
-				{
-					LPCSTR icons_texture = pSettings->r_string(good_ammo[i].c_str(), "icons_texture");
-					StAmmoType.SetShader(InventoryUtilities::GetCustomIconTextureShader(icons_texture));
-				}
+				const InventoryUtilities::InventoryIconDesc icon_desc = InventoryUtilities::GetInventoryIconDesc(good_ammo[i]);
+				if (icon_desc.texture.size())
+					StAmmoType.SetShader(InventoryUtilities::GetCustomIconTextureShader(icon_desc.texture.c_str()));
 
 				//--> Иначе отрисовываем её
-				tex_rect.x1 = float(pSettings->r_u32(good_ammo[i].c_str(), "inv_grid_x") * INV_GRID_WIDTH);
-				tex_rect.y1 = float(pSettings->r_u32(good_ammo[i].c_str(), "inv_grid_y") * INV_GRID_HEIGHT);
-				tex_rect.x2 = float(pSettings->r_u32(good_ammo[i].c_str(), "inv_grid_width") * INV_GRID_WIDTH);
-				tex_rect.y2 = float(pSettings->r_u32(good_ammo[i].c_str(), "inv_grid_height") * INV_GRID_HEIGHT);
-				tex_rect.rb.add(tex_rect.lt);
+				tex_rect = icon_desc.texture_rect;
 			}
 
 			StAmmoType.SetTextureRect(tex_rect);

@@ -33,11 +33,11 @@ void CMonsterCorpseManager::update()
 	}
 	else
 	{
-		corpse = monster->CorpseMemory.get_corpse();
+		SMonsterCorpse corpse_info;
+		corpse = monster->CorpseMemory.get_corpse(corpse_info);
 
 		if (corpse)
 		{
-			SMonsterCorpse corpse_info = monster->CorpseMemory.get_corpse_info();
 			position = corpse_info.position;
 			vertex = corpse_info.vertex;
 			time_last_seen = corpse_info.time;
@@ -57,11 +57,11 @@ void CMonsterCorpseManager::force_corpse(const CEntityAlive* corpse)
 
 void CMonsterCorpseManager::unforce_corpse()
 {
-	corpse = monster->CorpseMemory.get_corpse();
+	SMonsterCorpse corpse_info;
+	corpse = monster->CorpseMemory.get_corpse(corpse_info);
 
 	if (corpse)
 	{
-		SMonsterCorpse corpse_info = monster->CorpseMemory.get_corpse_info();
 		position = corpse_info.position;
 		vertex = corpse_info.vertex;
 		time_last_seen = corpse_info.time;
@@ -82,5 +82,8 @@ void CMonsterCorpseManager::remove_links(CObject* O)
 	if (corpse == O)
 	{
 		corpse = NULL;
+		// A forced corpse cannot remain forced after its object is destroyed.
+		// CMonsterCorpseManager::update() dereferences forced corpses directly.
+		forced = false;
 	}
 }

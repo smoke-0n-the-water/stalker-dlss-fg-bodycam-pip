@@ -72,6 +72,30 @@ CMapLocation::~CMapLocation()
 {
 }
 
+void CMapLocation::NotifyChanged()
+{
+	if (g_pGameLevel)
+		Level().MapManager().MarkLocationsDirty();
+}
+
+void CMapLocation::EnableSpot()
+{
+	if (!m_flags.test(eSpotEnabled))
+	{
+		m_flags.set(eSpotEnabled, TRUE);
+		NotifyChanged();
+	}
+}
+
+void CMapLocation::DisableSpot()
+{
+	if (m_flags.test(eSpotEnabled))
+	{
+		m_flags.set(eSpotEnabled, FALSE);
+		NotifyChanged();
+	}
+}
+
 void CMapLocation::destroy()
 {
 	delete_data(m_level_spot);

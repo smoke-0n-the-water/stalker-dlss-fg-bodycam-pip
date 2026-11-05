@@ -83,22 +83,19 @@ bool CStateGroupAttackMoveToHomePointAbstract::enemy_inaccessible()
 {
 	CEntityAlive const* enemy = object->EnemyMan.get_enemy();
 	Fvector const enemy_pos = enemy->Position();
-	Fvector const enemy_vert_pos = ai().level_graph().vertex_position(enemy->ai_location().level_vertex_id());
-	if (enemy_vert_pos.distance_to(enemy_pos) > 1.f)
+	u32 const enemy_vertex = enemy->ai_location().level_vertex_id();
+	if (!ai().level_graph().valid_vertex_id(enemy_vertex) ||
+		!ai().level_graph().valid_vertex_position(enemy_pos))
+	{
+		return true;
+	}
+
+	Fvector const enemy_vert_pos = ai().level_graph().vertex_position(enemy_vertex);
+	if (enemy_vert_pos.distance_to_sqr(enemy_pos) > _sqr(1.f))
 	{
 		return true;
 	}
 	if (!object->Home->at_home(enemy_pos))
-	{
-		return true;
-	}
-
-	if (!ai().level_graph().valid_vertex_position(enemy_pos))
-	{
-		return true;
-	}
-
-	if (!ai().level_graph().valid_vertex_id(enemy->ai_location().level_vertex_id()))
 	{
 		return true;
 	}

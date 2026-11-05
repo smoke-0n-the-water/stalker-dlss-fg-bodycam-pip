@@ -4,7 +4,6 @@
 #include "fs_internal.h"
 
 #include <functional>
-#include <regex>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -108,25 +107,102 @@ BOOL CInifile::Sect::line_exist(LPCSTR L, LPCSTR* val)
 
 // Initialize the static cache member
 BOOL dltx_use_cache = TRUE;
-xr_unordered_flat_map<xr_string, CInifile::Root> CInifile::CachedData;
+xr_unordered_flat_map<xr_string, CInifile::CachedIniData> CInifile::CachedData;
+size_t CInifile::CachedDataBytes = 0;
+u64 CInifile::CachedDataClock = 0;
 xrCriticalSection CInifile::CacheCS;
+
+namespace
+{
+constexpr size_t dltx_cache_budget_bytes = 32u * 1024u * 1024u;
+constexpr size_t dltx_cache_max_entry_bytes = 8u * 1024u * 1024u;
+
+size_t estimate_ini_root_bytes(const CInifile::Root& root)
+{
+	// This intentionally overestimates shared_str payloads instead of building a
+	// temporary uniqueness set: cache admission must not create another large
+	// allocation at the exact point where DLTX loading is at its memory peak.
+	size_t bytes = root.capacity() * sizeof(CInifile::Sect);
+	for (const CInifile::Sect& section : root)
+	{
+		bytes += section.Data.capacity() * sizeof(CInifile::Item);
+		bytes += section.Name.size() + 1u;
+		for (const CInifile::Item& item : section.Data)
+			bytes += item.first.size() + item.second.size() + item.filename.size() + 3u;
+	}
+	return bytes;
+}
+}
+
+namespace
+{
+constexpr u32 kIniSectionLookupThreshold = 8;
+constexpr u32 kIniLineLookupThreshold = 8;
+}
+
+// Same crc32 as str_container::dock, so a view hashes like the interned name.
+CInifile::name_view::name_view(LPCSTR s) : str(s), length(s ? xr_strlen(s) : 0), crc(s ? xr_hash<std::string_view>()(std::string_view(s, length)) : 0)
+{
+}
+
+void CInifile::RebuildLineLookup(u32 section_index)
+{
+	VERIFY(section_index < DATA.size());
+	if (m_LineLookup.size() != DATA.size())
+		m_LineLookup.resize(DATA.size());
+
+	auto& line_lookup = m_LineLookup[section_index];
+	line_lookup.clear();
+	const Sect& section = DATA[section_index];
+	if (section.Data.size() < kIniLineLookupThreshold)
+		return;
+
+	line_lookup.reserve(section.Data.size());
+	for (u32 line_index = 0; line_index < section.Data.size(); ++line_index)
+	{
+		const Item& item = section.Data[line_index];
+		if (*item.first)
+			line_lookup.emplace(item.first, line_index);
+	}
+}
+
+void CInifile::RebuildLookupCaches()
+{
+	m_SectionLookup.clear();
+	m_LineLookup.clear();
+	m_LineLookup.resize(DATA.size());
+
+	if (DATA.size() >= kIniSectionLookupThreshold)
+	{
+		m_SectionLookup.reserve(DATA.size());
+		for (u32 section_index = 0; section_index < DATA.size(); ++section_index)
+			m_SectionLookup.emplace(DATA[section_index].Name, section_index);
+	}
+
+	for (u32 section_index = 0; section_index < DATA.size(); ++section_index)
+		RebuildLineLookup(section_index);
+}
+
 void CInifile::InvalidateCache(LPCSTR path) {
 	if (path && path[0])
 	{
 		xr_string FileName(path);
 		toLowerCase(FileName);
 		xrCriticalSectionGuard g(CacheCS);
-		CachedData.erase(FileName);
+			auto it = CachedData.find(FileName);
+			if (it != CachedData.end())
+			{
+				CachedDataBytes -= _min(CachedDataBytes, it->second.approx_bytes);
+				CachedData.erase(it);
+			}
 	}
 	else
 	{
 		xrCriticalSectionGuard g(CacheCS);
-		for (auto& p : CachedData)
-		{
-			p.second.clear();
-		}
 		CachedData.clear();
 		CachedData.rehash(0);
+		CachedDataBytes = 0;
+		CachedDataClock = 0;
 	}
 };
 
@@ -135,7 +211,10 @@ void CInifile::InsertIntoDATA(xr_unordered_flat_map<shared_str, Items>& FinalDat
 	DATA.reserve(FinalData.size());
 	for (auto& SectPair : FinalData)
 	{
-        DATA.push_back({ SectPair.first, SectPair.second });
+		Sect section;
+		section.Name = SectPair.first;
+		section.Data = std::move(SectPair.second);
+		DATA.push_back(std::move(section));
 	}
 	std::sort(DATA.begin(), DATA.end(), [](const Sect& a, const Sect& b)
 	{
@@ -199,7 +278,9 @@ CInifile::CInifile(LPCSTR szFileName,
 			{
 				if (print_dltx_warnings)
 					Msg("[DLTX] [%s] Found data in cache", m_file_name);
-                DATA = CachedDataIt->second;
+				CachedDataIt->second.last_use = ++CachedDataClock;
+				DATA = CachedDataIt->second.data;
+				RebuildLookupCaches();
 				return;
 			}
 		}
@@ -263,19 +344,6 @@ IC BOOL is_empty_line_now(IReader* F)
 
 	return (*a0 == 13) && (*a1 == 10) && (*a2 == 13) && (*a3 == 10);
 };
-
-// Regex pattern cache (added before Load function)
-static const std::regex& GetCachedRegex(const xr_string& pattern)
-{
-	static xr_unordered_flat_map<xr_string, std::regex> g_RegexCache;
-	auto it = g_RegexCache.find(pattern);
-	if (it == g_RegexCache.end())
-	{
-		auto result = g_RegexCache.emplace(pattern, std::regex(pattern.c_str()));
-		return result.first->second;
-	}
-	return it->second;
-}
 
 // Helper function for efficient single-pass string trimming during read
 static inline void TrimStringInPlace(xr_string& str)
@@ -499,31 +567,6 @@ void CInifile::LTXLoad (
 		return ParentSet;
 	};
 
-	// Optimized regex match with caching
-	static auto GetRegexMatch = [](const xr_string& InputString, const xr_string& PatternString)
-	{
-		const std::regex& Pattern = GetCachedRegex(PatternString);
-		std::smatch MatchResult;
-		xr_string input = InputString.c_str();
-
-		std::regex_search(input, MatchResult, Pattern);
-
-		if (MatchResult.begin() == MatchResult.end())
-		{
-			return xr_string();
-		}
-
-		xr_string result = MatchResult.begin()->str().c_str();
-		return result;
-	};
-
-	// Optimized regex full match with caching
-	static auto IsFullRegexMatch = [](const xr_string& InputString, const xr_string& PatternString)
-	{
-		const std::regex& Pattern = GetCachedRegex(PatternString);
-		return std::regex_match(InputString.c_str(), Pattern);
-	};
-
 	xr_unordered_flat_set<shared_str> sectionsMarkedForCreate;
 
 	while (!F->eof() || (bIsRootFile && !bHasLoadedModFiles))
@@ -561,6 +604,20 @@ void CInifile::LTXLoad (
 			FS_FileSet AmbiguousFiles;
 			FS.file_list(AmbiguousFiles, FilePath.c_str(), FS_ListFiles, (FileName + "_*.ltx").c_str());
 
+			// Build the disambiguation prefixes once. The old path copied the complete
+			// FS_FileSet for every mod file and compiled/cached dynamic regular expressions.
+			xr_vector<xr_string> AmbiguousModPrefixes;
+			AmbiguousModPrefixes.reserve(AmbiguousFiles.size());
+			for (const auto& ambiguousFile : AmbiguousFiles)
+			{
+				xr_string name = ambiguousFile.name.c_str();
+				if (name.size() <= 4 || name.compare(name.size() - 4, 4, ".ltx") != 0)
+					continue;
+
+				name.resize(name.size() - 4);
+				AmbiguousModPrefixes.emplace_back(xr_string("mod_") + name + "_");
+			}
+
 			// Collect all matching mod files
 			FS_FileSet ModFiles;
 			FS.file_list(ModFiles, FilePath.c_str(), FS_ListFiles, ("mod_" + FileName + "_*.ltx").c_str());
@@ -572,24 +629,21 @@ void CInifile::LTXLoad (
 			{
 				xr_string ModFileName = It->name.c_str();
 
-				// Determine if we should load this mod file, or if it's meant for a different root file
-				static auto bIsModfileMeantForMeFunc = [](FS_FileSet AmbiguousFiles, xr_string ModFileName)
+				// A foreign root has the exact shape mod_<other_root>_<non-empty>.ltx.
+				// Prefix/suffix checks preserve that rule without regex state or heap churn.
+				bool bIsModfileMeantForMe = true;
+				for (const xr_string& prefix : AmbiguousModPrefixes)
 				{
-					for (auto It2 = AmbiguousFiles.begin(); It2 != AmbiguousFiles.end(); ++It2)
+					if (ModFileName.size() <= prefix.size() + 4)
+						continue;
+					if (ModFileName.compare(0, prefix.size(), prefix) != 0)
+						continue;
+					if (ModFileName.compare(ModFileName.size() - 4, 4, ".ltx") == 0)
 					{
-						xr_string name = It2->name.c_str();
-						xr_string AmbiguousFileName = xr_string(GetRegexMatch(name, "^.+(?=.ltx$)").c_str());
-						xr_string AmbiguousFileMatchPattern = xr_string("mod_") + AmbiguousFileName + xr_string("_.+.ltx");
-
-						if (IsFullRegexMatch(ModFileName, AmbiguousFileMatchPattern.c_str()))
-						{
-							return false;
+						bIsModfileMeantForMe = false;
+						break;
 						}
 					}
-
-					return true;
-				};
-				bool bIsModfileMeantForMe = bIsModfileMeantForMeFunc(AmbiguousFiles, ModFileName);
 
 				if (!bIsModfileMeantForMe)
 				{
@@ -1000,7 +1054,7 @@ CInifile::Items CInifile::MergeSections(
 	return Result;
 }
 
-CInifile::Items CInifile::EvaluateSection(
+const CInifile::Items& CInifile::EvaluateSection(
 	shared_str SectionName,
 	EvaluationsContext& Evaluations,
 	string_path currentFileName
@@ -1082,19 +1136,26 @@ CInifile::Items CInifile::EvaluateSection(
 					BaseData[parent].Name = parent;
 				}
 			}
-			Items ParentData = EvaluateSection(parent, Evaluations, currentFileName);
+			const Items& ParentData = EvaluateSection(parent, Evaluations, currentFileName);
 			ResolvedParents = MergeSections(ResolvedParents, ParentData, DeletedItems, false);
 		}
 	}
 
-	Items ResolvedBaseAndMods = BaseData[SectionName].Data;
+	// Most sections do not have a DLTX override. Keep their base Items in-place
+	// instead of copying the whole vector only to copy it again into CurrentResult.
+	// A temporary merged vector is materialized only for sections that actually
+	// have override data.
+	const Items& BaseItems = BaseData[SectionName].Data;
+	const Items* BaseAndMods = &BaseItems;
+	Items ResolvedBaseAndMods;
 	auto o_it = OverrideData.find(SectionName);
 	if (o_it != OverrideData.end())
 	{
-		ResolvedBaseAndMods = MergeSections(ResolvedBaseAndMods, o_it->second.Data, DeletedItems, true);
+		ResolvedBaseAndMods = MergeSections(BaseItems, o_it->second.Data, DeletedItems, true);
+		BaseAndMods = &ResolvedBaseAndMods;
 		OverrideData.erase(o_it);
 	}
-	Items CurrentResult = MergeSections(ResolvedParents, ResolvedBaseAndMods, DeletedItems, false);
+	Items CurrentResult = MergeSections(ResolvedParents, *BaseAndMods, DeletedItems, false);
 
 	// Optimized list splitting and joining with reduced allocations
 	static auto split_list = [](shared_str items, char delimiter = ',')
@@ -1289,8 +1350,11 @@ CInifile::Items CInifile::EvaluateSection(
 	}
 
 	Evaluations.RecursionStack.pop_back();
+	if (CurrentResult.capacity() > CurrentResult.size() * 2u + 32u)
 	CurrentResult.shrink_to_fit();
-	return Evaluations.ResolvedCache[SectionName] = std::move(CurrentResult);
+	auto inserted = Evaluations.ResolvedCache.emplace(SectionName, std::move(CurrentResult));
+	R_ASSERT(inserted.second);
+	return inserted.first->second;
 };
 
 void CInifile::Load(IReader* F, LPCSTR path
@@ -1338,16 +1402,28 @@ void CInifile::Load(IReader* F, LPCSTR path
 	// Merge base and override data together
 	EvaluationsContext Evaluations;
 	Evaluations.ResolvedCache.reserve(BaseData.size() + OverrideData.size());
+	{
 	RStringVec BaseDataSectionNames;
 	BaseDataSectionNames.reserve(BaseData.size());
 	for (const auto& SectPair : BaseData)
-	{
 		BaseDataSectionNames.push_back(SectPair.first);
-	}
 	for (const auto& SectName : BaseDataSectionNames)
-	{
 		EvaluateSection(SectName, Evaluations, currentFileName);
 	}
+
+	// Evaluation is complete. These tables are construction-only and can be
+	// returned before DATA and its optional persistent cache coexist in memory.
+	BaseParentDataMap.clear();
+	BaseParentDataMap.rehash(0);
+	BaseData.clear();
+	BaseData.rehash(0);
+	OverrideParentDataMap.clear();
+	OverrideParentDataMap.rehash(0);
+	OverrideModifyListData.clear();
+	OverrideModifyListData.rehash(0);
+	SectionToFilename.clear();
+	SectionToFilename.rehash(0);
+	Evaluations.RecursionStack.clear_and_free();
 
 	auto& ResolvedData = Evaluations.ResolvedCache;
 	// Handle marked-for-delete sections
@@ -1368,18 +1444,7 @@ void CInifile::Load(IReader* F, LPCSTR path
 		}
 	}
 
-	// Insert all finalized sections into final container
-	InsertIntoDATA(ResolvedData);
-
-    if (dltx_use_cache && IsValidFileNameForCache())
-    {
-        xr_string FileName(m_file_name);
-        toLowerCase(FileName);
-        xrCriticalSectionGuard g(CacheCS);
-        CachedData.emplace(std::move(FileName), DATA);
-    }
-
-	// Handle override warnings
+	// Report unresolved overrides before dropping the remaining DLTX build maps.
 	if (OverrideData.size())
 	{
 		if (print_dltx_warnings)
@@ -1398,24 +1463,60 @@ void CInifile::Load(IReader* F, LPCSTR path
 		}
 	}
 
-	// Cleanup
-	OverrideToFilename.clear();
-	SectionToFilename.clear();
-	SectionsToDelete.clear();
-	BaseParentDataMap.clear();
-	BaseData.clear();
-	OverrideParentDataMap.clear();
-	OverrideData.clear();
-	OverrideModifyListData.clear();
 
+	OverrideToFilename.clear();
 	OverrideToFilename.rehash(0);
-	SectionToFilename.rehash(0);
+	SectionsToDelete.clear();
 	SectionsToDelete.rehash(0);
-	BaseParentDataMap.rehash(0);
-	BaseData.rehash(0);
-	OverrideParentDataMap.rehash(0);
+	OverrideData.clear();
 	OverrideData.rehash(0);
-	OverrideModifyListData.rehash(0);
+
+	// Move finalized section vectors into the public sorted representation.
+	// ResolvedData is only a construction cache at this point, so release its
+	// hash table before making an optional persistent cache copy. This lowers
+	// peak RAM during large DLTX merges.
+	InsertIntoDATA(ResolvedData);
+	ResolvedData.clear();
+	ResolvedData.rehash(0);
+
+	if (dltx_use_cache && IsValidFileNameForCache())
+	{
+		const size_t approx_bytes = estimate_ini_root_bytes(DATA);
+		if (approx_bytes <= dltx_cache_max_entry_bytes)
+		{
+			Root cached_copy = DATA;
+			xr_string FileName(m_file_name);
+			toLowerCase(FileName);
+			xrCriticalSectionGuard g(CacheCS);
+
+			auto existing = CachedData.find(FileName);
+			if (existing == CachedData.end())
+			{
+				while (!CachedData.empty() && CachedDataBytes + approx_bytes > dltx_cache_budget_bytes)
+				{
+					auto oldest = CachedData.begin();
+					for (auto it = CachedData.begin(); it != CachedData.end(); ++it)
+						if (it->second.last_use < oldest->second.last_use)
+							oldest = it;
+					CachedDataBytes -= _min(CachedDataBytes, oldest->second.approx_bytes);
+					CachedData.erase(oldest);
+				}
+
+				CachedIniData entry;
+				entry.data = std::move(cached_copy);
+				entry.approx_bytes = approx_bytes;
+				entry.last_use = ++CachedDataClock;
+				CachedData.emplace(std::move(FileName), std::move(entry));
+				CachedDataBytes += approx_bytes;
+			}
+			else
+			{
+				existing->second.last_use = ++CachedDataClock;
+			}
+		}
+	}
+
+	RebuildLookupCaches();
 }
 
 // demonized: print DLTX override info
@@ -1562,14 +1663,53 @@ bool CInifile::save_as(LPCSTR new_fname)
 
 BOOL CInifile::section_exist(LPCSTR S) const
 {
+	if (!S || !S[0])
+		return FALSE;
+	const auto cached = m_SectionLookup.find(name_view(S));
+	if (cached != m_SectionLookup.end() && cached->second < DATA.size())
+	{
+		const Sect& section = DATA[cached->second];
+		if (*section.Name && xr_strcmp(*section.Name, S) == 0)
+			return TRUE;
+	}
+
+	// Writable INIs can be modified between lookups. Preserve the original sorted
+	// fallback so callers remain correct even before the post-write index rebuild.
 	RootCIt I = std::lower_bound(DATA.begin(), DATA.end(), S, sect_pred);
 	return (I != DATA.end() && xr_strcmp(*(*I).Name, S) == 0);
 }
 
 BOOL CInifile::line_exist(LPCSTR S, LPCSTR L) const
 {
-	if (!section_exist(S)) return FALSE;
+	if (!S || !L || !S[0] || !L[0])
+		return FALSE;
 
+	const auto section_it = m_SectionLookup.find(name_view(S));
+	if (section_it != m_SectionLookup.end())
+	{
+		const u32 section_index = section_it->second;
+		if (section_index < DATA.size() && section_index < m_LineLookup.size())
+		{
+			const Sect& section = DATA[section_index];
+			if (*section.Name && xr_strcmp(*section.Name, S) == 0)
+			{
+				const auto line_it = m_LineLookup[section_index].find(name_view(L));
+				if (line_it != m_LineLookup[section_index].end() && line_it->second < section.Data.size())
+				{
+					const Item& item = section.Data[line_it->second];
+					if (*item.first && xr_strcmp(*item.first, L) == 0)
+						return TRUE;
+				}
+
+				// Small sections have no line index, and misses are common: search the
+				// section found above instead of looking it up twice more.
+				auto A = std::lower_bound(section.Data.begin(), section.Data.end(), L, item_comparator());
+				return A != section.Data.end() && xr_strcmp(*A->first, L) == 0;
+			}
+		}
+	}
+
+	if (!section_exist(S)) return FALSE;
 	Sect& I = r_section(S);
 	auto A = std::lower_bound(I.Data.begin(), I.Data.end(), L, item_comparator());
 	return A != I.Data.end() && xr_strcmp(*A->first, L) == 0;
@@ -1621,6 +1761,15 @@ CInifile::Sect& CInifile::r_section(LPCSTR S) const
 	char section[256];
 	xr_strcpy(section, sizeof(section), S);
 	strlwr(section);
+
+	const auto cached = m_SectionLookup.find(name_view(section));
+	if (cached != m_SectionLookup.end() && cached->second < DATA.size())
+	{
+		const Sect& cached_section = DATA[cached->second];
+		if (*cached_section.Name && xr_strcmp(*cached_section.Name, section) == 0)
+			return const_cast<CInifile::Sect&>(cached_section);
+	}
+
 	RootCIt I = std::lower_bound(DATA.begin(), DATA.end(), section, sect_pred);
 	if (!(I != DATA.end() && xr_strcmp(*(*I).Name, section) == 0))
 	{
@@ -1638,6 +1787,20 @@ LPCSTR CInifile::r_string(LPCSTR S, LPCSTR L) const
 	}
 
 	Sect const& I = r_section(S);
+	// r_section returns an element of DATA; a stale line index is caught by the name check below.
+	const size_t section_index = &I - DATA.data();
+	if (section_index < m_LineLookup.size())
+	{
+		const auto& line_lookup = m_LineLookup[section_index];
+		const auto line_it = line_lookup.find(name_view(L));
+		if (line_it != line_lookup.end() && line_it->second < I.Data.size())
+		{
+			const Item& item = I.Data[line_it->second];
+			if (*item.first && xr_strcmp(*item.first, L) == 0)
+				return *item.second;
+		}
+	}
+
 	auto A = std::lower_bound(I.Data.begin(), I.Data.end(), L, item_comparator());
 	if (A != I.Data.end() && xr_strcmp(*A->first, L) == 0)
 	{
@@ -1857,6 +2020,7 @@ void CInifile::w_string(LPCSTR S, LPCSTR L, LPCSTR V, LPCSTR comment)
 		// create _new_ section
 		RootIt I = std::lower_bound(DATA.begin(), DATA.end(), sect, sect_pred);
 		DATA.insert(I, Sect{ sect });
+		RebuildLookupCaches();
 	}
 
 	// parse line/value
@@ -1895,6 +2059,7 @@ void CInifile::w_string(LPCSTR S, LPCSTR L, LPCSTR V, LPCSTR comment)
 	{
 		data.Data.insert(it, I);
 	}
+	RebuildLineLookup(u32(&data - DATA.data()));
 }
 
 void CInifile::w_u8(LPCSTR S, LPCSTR L, u8 V, LPCSTR comment)
@@ -2038,7 +2203,10 @@ void CInifile::remove_line(LPCSTR S, LPCSTR L)
 		Sect& data = r_section(S);
 		auto A = std::lower_bound(data.Data.begin(), data.Data.end(), L, item_comparator());
 		if (A != data.Data.end() && xr_strcmp(*A->first, L) == 0)
+		{
 			data.Data.erase(A);
+			RebuildLineLookup(u32(&data - DATA.data()));
+		}
 	}
 }
 

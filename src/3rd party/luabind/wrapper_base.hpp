@@ -71,6 +71,109 @@ namespace luabind
 			return proxy_type(L, std::make_tuple(&args...));
 		}
 
+		// A wrapper may be owned by C++ and outlive the Lua VM that created it.
+		// Derived engine wrappers can use this before attempting virtual dispatch
+		// and fall back to their native lifetime/cleanup path.
+		bool is_lua_instance_valid() const
+		{
+			return !m_self.empty();
+		}
+
+
+        bool call_bool_noargs(char const* name) const
+        {
+            detail::default_policy::generate_converter<bool, detail::Direction::lua_to_cpp>::type converter;
+            lua_State* L = m_self.state();
+            const int top = lua_gettop(L);
+
+            m_self.get(L);
+            assert(!lua_isnil(L, -1));
+            detail::do_call_member_selection(L, name);
+            m_self.get(L);
+
+            if (detail::pcall(L, 1, 1))
+            {
+                assert(lua_gettop(L) == top + 1);
+#ifndef LUABIND_NO_EXCEPTIONS
+                throw luabind::error(L);
+#else
+                error_callback_fun e = get_error_callback();
+                if (e) e(L);
+                else
+                    assert(0 && "the lua function threw an error and exceptions are disabled");
+#endif
+            }
+
+            detail::stack_pop pop(L, lua_gettop(L) - top);
+#ifndef LUABIND_NO_ERROR_CHECKING
+            if (converter.match(L, LUABIND_DECORATE_TYPE(bool), -1) < 0)
+            {
+                assert(lua_gettop(L) == top + 1);
+#ifndef LUABIND_NO_EXCEPTIONS
+                throw luabind::cast_failed(L, LUABIND_TYPEID(bool));
+#else
+                cast_failed_callback_fun e = get_cast_failed_callback();
+                if (e) e(L, LUABIND_TYPEID(bool));
+                assert(0 && "the lua function's return value could not be converted");
+#endif
+            }
+#endif
+            return converter.apply(L, LUABIND_DECORATE_TYPE(bool), -1);
+        }
+
+        void call_void_noargs(char const* name) const
+        {
+            lua_State* L = m_self.state();
+            const int top = lua_gettop(L);
+
+            m_self.get(L);
+            assert(!lua_isnil(L, -1));
+            detail::do_call_member_selection(L, name);
+            m_self.get(L);
+
+            if (detail::pcall(L, 1, 0))
+            {
+                assert(lua_gettop(L) == top + 1);
+#ifndef LUABIND_NO_EXCEPTIONS
+                throw luabind::error(L);
+#else
+                error_callback_fun e = get_error_callback();
+                if (e) e(L);
+                else
+                    assert(0 && "the lua function threw an error and exceptions are disabled");
+#endif
+            }
+
+            detail::stack_pop pop(L, lua_gettop(L) - top);
+        }
+
+        void call_void_unsigned(char const* name, unsigned int value) const
+        {
+            lua_State* L = m_self.state();
+            const int top = lua_gettop(L);
+
+            m_self.get(L);
+            assert(!lua_isnil(L, -1));
+            detail::do_call_member_selection(L, name);
+            m_self.get(L);
+            lua_pushinteger(L, static_cast<lua_Integer>(value));
+
+            if (detail::pcall(L, 2, 0))
+            {
+                assert(lua_gettop(L) == top + 1);
+#ifndef LUABIND_NO_EXCEPTIONS
+                throw luabind::error(L);
+#else
+                error_callback_fun e = get_error_callback();
+                if (e) e(L);
+                else
+                    assert(0 && "the lua function threw an error and exceptions are disabled");
+#endif
+            }
+
+            detail::stack_pop pop(L, lua_gettop(L) - top);
+        }
+
 	private:
 		wrapped_self_t m_self;
 	};

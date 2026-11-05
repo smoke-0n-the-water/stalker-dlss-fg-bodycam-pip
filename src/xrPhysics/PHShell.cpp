@@ -1,6 +1,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #include "StdAfx.h"
+#include "AVX2Math.h"
 #include "PHDynamicData.h"
 #include "Physics.h"
 #include "tri-colliderknoopc/dTriList.h"
@@ -701,8 +702,10 @@ void CPHShell::SmoothElementsInertia(float k)
 		dMassAdd(&m_avrg, (*i)->getMassTensor());
 	}
 	int n = (int)elements.size();
-	m_avrg.mass *= k / float(n);
-	for (int j = 0; j < 4 * 3; ++j) m_avrg.I[j] *= k / float(n);
+	const float average_factor = k / float(n);
+	m_avrg.mass *= average_factor;
+	static_assert(sizeof(dReal) == sizeof(float), "xrPhysics AVX2 path requires ODE dSINGLE");
+	xr_physics_simd::scale_12(reinterpret_cast<float*>(m_avrg.I), average_factor);
 
 	for (i = elements.begin(); elements.end() != i; ++i)
 	{
@@ -711,7 +714,7 @@ void CPHShell::SmoothElementsInertia(float k)
 		dVectorSet(tmp, m->c);
 
 		m->mass *= krc;
-		for (int j = 0; j < 4 * 3; ++j) m->I[j] *= krc;
+		xr_physics_simd::scale_12(reinterpret_cast<float*>(m->I), krc);
 		dMassAdd(m, &m_avrg);
 
 		dVectorSet(m->c, tmp);

@@ -184,10 +184,9 @@ void CLevelSoundManager::Load()
 {
 	// static level sounds
 	VERIFY(m_StaticSounds.empty());
-	string_path fn;
-	if (FS.exist(fn, "$level$", "level.snd_static"))
+	IReader* F = FS.r_open("$level$", "level.snd_static");
+	if (F)
 	{
-		IReader* F = FS.r_open(fn);
 		u32 chunk = 0;
 		for (IReader* OBJ = F->open_chunk_iterator(chunk); OBJ; OBJ = F->open_chunk_iterator(chunk, OBJ))
 		{
@@ -216,15 +215,21 @@ void CLevelSoundManager::Load()
 				std::random_device rd;
 				std::mt19937 g(rd());
 
-				// copy data and shuffle
-				CInifile::Items items = S.Data;
+				// Shuffle lightweight pointers instead of copying complete INI items.
+				// Item carries three shared_str handles plus metadata, so copying the
+				// section only to randomize iteration creates needless refcount traffic
+				// and temporary RAM during level load.
+				xr_vector<const CInifile::Item*> items;
+				items.reserve(S.Data.size());
+				for (const CInifile::Item& entry : S.Data)
+					items.push_back(&entry);
 				std::shuffle(items.begin(), items.end(), g);
 
 				m_MusicTracks.reserve(items.size());
-				for (const auto& entry : items)
+				for (const CInifile::Item* entry : items)
 				{
 					m_MusicTracks.emplace_back();
-					m_MusicTracks.back().Load(*entry.first, *entry.second);
+					m_MusicTracks.back().Load(*entry->first, *entry->second);
 				}
 			}
 		}
@@ -234,10 +239,10 @@ void CLevelSoundManager::Load()
 void CLevelSoundManager::Unload()
 {
 	// static sounds
-	m_StaticSounds.clear();
+	m_StaticSounds.clear_and_free();
 	// music
-	m_MusicTracks.clear();
-	m_PlayedMusicIndices.clear();
+	m_MusicTracks.clear_and_free();
+	m_PlayedMusicIndices.clear_and_free();
 }
 
 void CLevelSoundManager::Update()

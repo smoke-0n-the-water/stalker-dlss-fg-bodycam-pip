@@ -42,7 +42,7 @@ namespace luabind
 		{
 			lua_pushstring(L, name);
 			lua_gettable(L, LUA_GLOBALSINDEX);
-			ref_.set(L_);
+			ref_.set(L_, true);
 		}
 
 		functor()
@@ -73,9 +73,9 @@ namespace luabind
 
 		bool operator==(const functor<Ret>& rhs) const
 		{
-			if (!ref_.is_valid() || !rhs.ref_.is_valid()) return false;
+			if (!ref_.same_vm(rhs.ref_)) return false;
 			pushvalue();
-			rhs.pushvalue();
+			rhs.ref_.get(L_);
 			const bool result = lua_equal(L_, -1, -2) != 0;
 			lua_pop(L_, 2);
 			return result;
@@ -83,12 +83,7 @@ namespace luabind
 
 		bool operator!=(const functor<Ret>& rhs) const
 		{
-			if (!ref_.is_valid() || !rhs.ref_.is_valid()) return true;
-			pushvalue();
-			rhs.pushvalue();
-			const bool result = lua_equal(L_, -1, -2) == 0;
-			lua_pop(L_, 2);
-			return result;
+			return !(*this == rhs);
 		}
 
 		bool is_valid() const { return ref_.is_valid(); }
@@ -109,6 +104,7 @@ namespace luabind
 			: L_(L)
 			, ref_(ref)
 		{
+			ref_.retain_state(L);
 		}
 
 	private:
@@ -316,20 +312,20 @@ namespace luabind
 			};
 
 		// if the proxy_member_caller returns void
-			template<typename... Ts>
+			template<typename Functor, typename... Ts>
 			class proxy_functor_void_caller
 			{
                 using tuple_t = std::tuple<Ts...>;
 			public:
 
-				proxy_functor_void_caller(luabind::functor<void>* o, const tuple_t& args)
+				proxy_functor_void_caller(Functor* o, const tuple_t& args)
 					: m_func(o)
 					, m_args(args)
 					, m_called(false)
 				{
 				}
 
-                proxy_functor_void_caller(luabind::functor<void>* o, tuple_t&& args)
+                proxy_functor_void_caller(Functor* o, tuple_t&& args)
                     : m_func(o)
                     , m_args(std::move(args))
                     , m_called(false)
@@ -433,7 +429,7 @@ namespace luabind
 
 			private:
 
-				luabind::functor<void>* m_func;
+				Functor* m_func;
 				tuple_t m_args;
 				mutable bool m_called;
 			};
@@ -446,7 +442,7 @@ namespace luabind
     {
         using proxy_type = std::conditional_t<
             std::is_void_v<Ret>,
-            luabind::detail::proxy_functor_void_caller<const Args*...>,
+                luabind::detail::proxy_functor_void_caller<luabind::functor<Ret>, const Args*...>,
             luabind::detail::proxy_functor_caller<Ret, const Args*...>
         >;
 

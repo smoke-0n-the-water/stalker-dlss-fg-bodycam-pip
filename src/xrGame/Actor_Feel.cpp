@@ -18,6 +18,22 @@
 #include "clsid_game.h"
 #include "hudmanager.h"
 #include "ui\UIPdaWnd.h"
+#include "script_engine.h"
+
+namespace
+{
+const ::luabind::functor<bool>* actor_before_pickup_callback()
+{
+	static cached_script_functor<bool> callback_cache("bind_stalker_ext.actor_on_item_before_pickup");
+	return callback_cache.get(ai().script_engine());
+}
+
+const ::luabind::functor<void>* pickup_mode_update_callback()
+{
+	static cached_script_functor<void> callback_cache("_G.CPickupModeUpdate_COD");
+	return callback_cache.get(ai().script_engine());
+}
+}
 
 #define PICKUP_INFO_COLOR 0xFFDDDDDD
 
@@ -131,11 +147,10 @@ CActor::pickup_result_t CActor::PickupModeUpdate()
 		m_pUsableObject->nonscript_usable() && !Level().m_feel_deny.is_object_denied(m_pObjectWeLookingAt))
 	{
 		//Tronex: ability to prevent item picking up if the export returns false
-		::luabind::functor<bool> func;
-		if (ai().script_engine().functor("bind_stalker_ext.actor_on_item_before_pickup", func))
+		if (const auto* func = actor_before_pickup_callback())
 		{
 			callback_handled = true;
-			bool allow_pickup = func(m_pObjectWeLookingAt->lua_game_object());
+			bool allow_pickup = (*func)(m_pObjectWeLookingAt->lua_game_object());
 			if (!allow_pickup)
 				return {false, callback_handled};
 		}
@@ -240,11 +255,8 @@ void CActor::PickupModeUpdate_COD(pickup_result_t pickup_result)
 	CurrentGameUI()->UIMainIngameWnd->SetPickUpItem(pNearestItem);
 
 	{
-		::luabind::functor<void> func;
-		if (ai().script_engine().functor("_G.CPickupModeUpdate_COD", func))
-		{
-			func(pNearestItem && pNearestItem->cast_game_object() ? pNearestItem->cast_game_object()->lua_game_object() : nullptr);
-		}
+		if (const auto* func = pickup_mode_update_callback())
+			(*func)(pNearestItem && pNearestItem->cast_game_object() ? pNearestItem->cast_game_object()->lua_game_object() : nullptr);
 	}
 	
 	if (pNearestItem && m_bPickupMode)
@@ -252,10 +264,9 @@ void CActor::PickupModeUpdate_COD(pickup_result_t pickup_result)
 		//Tronex: ability to prevent item picking up if the export returns false
 		if (!pickup_result.callback_handled)
 		{
-			::luabind::functor<bool> func;
-			if (ai().script_engine().functor("bind_stalker_ext.actor_on_item_before_pickup", func))
+			if (const auto* func = actor_before_pickup_callback())
 			{
-				bool allow_pickup = func(pNearestItem->cast_game_object()->lua_game_object());
+				bool allow_pickup = (*func)(pNearestItem->cast_game_object()->lua_game_object());
 				pickup_result = { allow_pickup, true };
 			}
 		}

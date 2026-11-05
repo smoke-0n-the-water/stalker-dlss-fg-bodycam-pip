@@ -75,7 +75,7 @@ void CControlJump::activate()
 		u32 mask = m_script_flags_mask & (SControlJumpData::eUseAutoAim | SControlJumpData::eGroundSkip);
 		if ((m_script_flags_mask & SControlJumpData::ePrepareInMove) && m_data.state_prepare_in_move.motion.valid())
 			mask |= SControlJumpData::ePrepareInMove;
-		m_data.flags.or(mask);
+		m_data.flags.bit_or(mask);
 	}
 
 	m_man->capture_pure(this);

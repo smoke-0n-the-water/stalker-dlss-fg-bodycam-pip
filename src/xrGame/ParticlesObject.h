@@ -24,6 +24,7 @@ public:
 	CParticlesObject(LPCSTR p_name, BOOL bAutoRemove, bool destroy_on_game_load);
 
 	virtual bool shedule_Needed() { return true; };
+	virtual bool shedule_AllowDeferred() const { return false; }
 	virtual float shedule_Scale();
 	virtual void Update(u32 dt) override;
 	virtual void renderable_Render(IDSGraphManager* DM);

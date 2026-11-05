@@ -45,6 +45,9 @@ CUICellItem::CUICellItem()
 
 CUICellItem::~CUICellItem()
 {
+	if (m_mouse_selected_item == this)
+		m_mouse_selected_item = NULL;
+
 	if (m_b_destroy_childs)
 		delete_data(m_childs);
 
@@ -306,6 +309,17 @@ CUICellItem* CUICellItem::PopChild(CUICellItem* needed)
 	R_ASSERT(itm->ChildsCount()==0);
 	itm->SetOwnerList(NULL);
 	return itm;
+}
+
+void CUICellItem::DestroyChildsForClear()
+{
+	for (CUICellItem* child : m_childs)
+	{
+		if (child)
+			child->SetOwnerList(NULL);
+	}
+
+	delete_data(m_childs);
 }
 
 bool CUICellItem::HasChild(CUICellItem* item)

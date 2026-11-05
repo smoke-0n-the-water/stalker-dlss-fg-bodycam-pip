@@ -24,7 +24,7 @@ void CScriptActionWrapper::setup_static(CScriptActionBase* action, CScriptGameOb
 
 void CScriptActionWrapper::initialize()
 {
-	::luabind::call_member<void>(this, "initialize");
+	call_void_noargs("initialize");
 }
 
 void CScriptActionWrapper::initialize_static(CScriptActionBase* action)
@@ -34,7 +34,7 @@ void CScriptActionWrapper::initialize_static(CScriptActionBase* action)
 
 void CScriptActionWrapper::execute()
 {
-	::luabind::call_member<void>(this, "execute");
+	call_void_noargs("execute");
 }
 
 void CScriptActionWrapper::execute_static(CScriptActionBase* action)
@@ -44,7 +44,7 @@ void CScriptActionWrapper::execute_static(CScriptActionBase* action)
 
 void CScriptActionWrapper::finalize()
 {
-	::luabind::call_member<void>(this, "finalize");
+	call_void_noargs("finalize");
 }
 
 void CScriptActionWrapper::finalize_static(CScriptActionBase* action)

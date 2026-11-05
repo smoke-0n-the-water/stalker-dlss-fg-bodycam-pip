@@ -64,6 +64,8 @@ private:
 
 	// xr_stack<IInputReceiver*> cbStack;
 	xr_vector<IInputReceiver*> cbStack;
+	xr_vector<DIDEVICEOBJECTDATA> m_keyboard_events;
+	xr_vector<DIDEVICEOBJECTDATA> m_mouse_events;
 
 	void MouseUpdate();
 	void KeyUpdate();

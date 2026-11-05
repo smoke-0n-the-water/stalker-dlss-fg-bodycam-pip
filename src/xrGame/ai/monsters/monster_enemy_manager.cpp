@@ -54,18 +54,19 @@ void CMonsterEnemyManager::update()
 	}
 	else
 	{
+		SMonsterEnemy enemy_info;
 		if (m_script_enemy)
 		{
 			enemy = m_script_enemy;
+			enemy_info = monster->EnemyMemory.get_enemy_info();
 		}
 		else
 		{
-			enemy = monster->EnemyMemory.get_enemy();
+			enemy = monster->EnemyMemory.get_enemy(enemy_info);
 		}
 
 		if (enemy)
 		{
-			SMonsterEnemy enemy_info = monster->EnemyMemory.get_enemy_info();
 			position = enemy_info.position;
 			vertex = enemy_info.vertex;
 			time_last_seen = enemy_info.time;
@@ -113,33 +114,34 @@ void CMonsterEnemyManager::update()
 	// обновить флаги
 	flags.zero();
 
-	if ((prev_enemy == enemy) && (time_last_seen != Device.dwTimeGlobal)) flags.or(FLAG_ENEMY_LOST_SIGHT);
-	if (prev_enemy && !prev_enemy->g_Alive()) flags.or(FLAG_ENEMY_DIE);
-	if (!enemy_see_me) flags.or(FLAG_ENEMY_DOESNT_SEE_ME);
+	if ((prev_enemy == enemy) && (time_last_seen != Device.dwTimeGlobal)) flags.bit_or(FLAG_ENEMY_LOST_SIGHT);
+	if (prev_enemy && !prev_enemy->g_Alive()) flags.bit_or(FLAG_ENEMY_DIE);
+	if (!enemy_see_me) flags.bit_or(FLAG_ENEMY_DOESNT_SEE_ME);
 
 	float dist_now, dist_prev;
 	if (prev_enemy == enemy)
 	{
 		dist_now = position.distance_to(monster->Position());
 		dist_prev = prev_enemy_position.distance_to(monster->Position());
+		const float distance_delta_abs = _abs(dist_now - dist_prev);
 
-		if (_abs(dist_now - dist_prev) < 0.2f) flags.or(FLAG_ENEMY_STANDING);
+		if (distance_delta_abs < 0.2f) flags.bit_or(FLAG_ENEMY_STANDING);
 		else
 		{
-			if (dist_now < dist_prev) flags.or(FLAG_ENEMY_GO_CLOSER);
-			else flags.or(FLAG_ENEMY_GO_FARTHER);
+			if (dist_now < dist_prev) flags.bit_or(FLAG_ENEMY_GO_CLOSER);
+			else flags.bit_or(FLAG_ENEMY_GO_FARTHER);
 
-			if (_abs(dist_now - dist_prev) < 1.2f)
+			if (distance_delta_abs < 1.2f)
 			{
-				if (dist_now < dist_prev) flags.or(FLAG_ENEMY_GO_CLOSER_FAST);
-				else flags.or(FLAG_ENEMY_GO_FARTHER_FAST);
+				if (dist_now < dist_prev) flags.bit_or(FLAG_ENEMY_GO_CLOSER_FAST);
+				else flags.bit_or(FLAG_ENEMY_GO_FARTHER_FAST);
 			}
 		}
 
-		if (flags.is(FLAG_ENEMY_STANDING) && flags.is(FLAG_ENEMY_DOESNT_SEE_ME)) flags.or(
+		if (flags.is(FLAG_ENEMY_STANDING) && flags.is(FLAG_ENEMY_DOESNT_SEE_ME)) flags.bit_or(
 			FLAG_ENEMY_DOESNT_KNOW_ABOUT_ME);
 	}
-	else flags.or(FLAG_ENEMY_STATS_NOT_READY);
+	else flags.bit_or(FLAG_ENEMY_STATS_NOT_READY);
 
 	// сохранить текущего врага
 	prev_enemy = enemy;
@@ -174,11 +176,11 @@ void CMonsterEnemyManager::force_enemy(const CEntityAlive* enemy)
 
 void CMonsterEnemyManager::unforce_enemy()
 {
-	enemy = monster->EnemyMemory.get_enemy();
+	SMonsterEnemy enemy_info;
+	enemy = monster->EnemyMemory.get_enemy(enemy_info);
 
 	if (enemy)
 	{
-		SMonsterEnemy enemy_info = monster->EnemyMemory.get_enemy_info();
 		position = enemy_info.position;
 		vertex = enemy_info.vertex;
 		time_last_seen = enemy_info.time;
@@ -260,21 +262,22 @@ bool CMonsterEnemyManager::enemy_see_me_now()
 
 bool CMonsterEnemyManager::is_faced(const CEntityAlive* object0, const CEntityAlive* object1)
 {
-	if (object0->Position().distance_to(object1->Position()) > object0->ffGetRange())
+	const float object_range = object0->ffGetRange();
+	const float object_distance_sqr = object0->Position().distance_to_sqr(object1->Position());
+	if (object_range < 0.f || object_distance_sqr > _sqr(object_range))
 	{
 		return false;
 	}
+	const float object_distance = _sqrt(object_distance_sqr);
 
-	float yaw1, pitch1, yaw2, pitch2, fYawFov, fPitchFov, fRange;
+	float yaw1, pitch1, yaw2, pitch2, fYawFov, fPitchFov;
 	Fvector tPosition = object0->Position();
 
 	yaw1 = object0->Orientation().yaw;
 	pitch1 = object0->Orientation().pitch;
 	fYawFov = angle_normalize_signed(object0->ffGetFov() * PI / 180.f);
-	fRange = object0->ffGetRange();
-
 	fYawFov = angle_normalize_signed(
-		(_abs(fYawFov) + _abs(atanf(1.f / tPosition.distance_to(object1->Position())))) / 2.f);
+		(_abs(fYawFov) + _abs(atanf(1.f / object_distance))) / 2.f);
 	fPitchFov = angle_normalize_signed(fYawFov * 1.f);
 	tPosition.sub(object1->Position());
 	tPosition.mul(-1);

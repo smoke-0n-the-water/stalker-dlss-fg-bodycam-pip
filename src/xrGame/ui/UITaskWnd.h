@@ -1,4 +1,6 @@
 #pragma once
+
+extern int g_ui_pda_task_cache;
 #include "UIWindow.h"
 #include "UIWndCallback.h"
 #include "../../xrServerEntities/associative_vector.h"
@@ -34,6 +36,7 @@ private:
 	CUI3tButton* m_BtnTaskListWnd;
 	CUIStatic* m_devider;
 	u32 m_actual_frame;
+	u32 m_map_locations_version;
 
 	CUI3tButton* m_btn_focus;
 
@@ -65,7 +68,7 @@ public:
 	virtual void Show(bool status);
 	virtual void Reset();
 
-	void ReloadTaskInfo();
+	void ReloadTaskInfo(bool force = false);
 	void ShowMapLegend(bool status);
 	void Switch_ShowMapLegend();
 

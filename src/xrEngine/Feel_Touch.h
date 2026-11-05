@@ -18,6 +18,11 @@ namespace Feel
 	protected:
 		xr_vector<DenyTouch> feel_touch_disable;
 
+		// Reused lookup/scratch storage for feel_touch_update().
+		// The public feel_touch vector remains the authoritative ordered list.
+		xr_unordered_flat_map<CObject*, u8> feel_touch_lookup;
+		xr_vector<CObject*> feel_touch_removed;
+
 	public:
 		xr_vector<CObject*> feel_touch;
 		xr_vector<CObject*> q_nearest;

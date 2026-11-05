@@ -264,6 +264,9 @@ void CWeaponKnife::UpdateCL()
 
 	dwUpdateSounds_Frame = Device.dwFrame;
 
+	if (!m_sounds.HasActive3DSounds())
+		return;
+
 	auto& P = get_LastFP();
 	m_sounds.UpdateAllSoundsPositions(P);
 }

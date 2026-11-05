@@ -71,8 +71,10 @@ protected:
 	// ref-counting
 	void _dec()
 	{
-		if (0 == p_) return;
-		if (p_->dwReference.fetch_sub(1, std::memory_order_acq_rel) == 1) p_ = 0;
+		smem_value* value = p_;
+		if (!value) return;
+		p_ = nullptr;
+		value->dwReference.fetch_sub(1, std::memory_order_release);
 	}
 
 public:
@@ -99,8 +101,8 @@ public:
 
 	void create(u32 dwCRC, u32 dwLength, T* ptr)
 	{
+		// dock() returns an entry with one reference already acquired.
 		smem_value* v = g_pSharedMemoryContainer->dock(dwCRC, dwLength * sizeof(T), ptr);
-		if (0 != v) v->dwReference.fetch_add(1, std::memory_order_relaxed);
 		_dec();
 		p_ = v;
 	}
@@ -117,7 +119,7 @@ public:
 	T& operator[](size_t id) { return ((T*)(p_->value))[id]; }
 	const T& operator[](size_t id) const { return ((T*)(p_->value))[id]; }
 	// misc func
-	u32 size()
+	u32 size() const
 	{
 		if (0 == p_) return 0;
 		else return p_->dwLength / sizeof(T);

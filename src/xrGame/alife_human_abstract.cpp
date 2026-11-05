@@ -13,6 +13,7 @@
 #include "ai_space.h"
 #include "alife_simulator.h"
 #include "relation_registry.h"
+#include "../xrServerEntities/script_engine.h"
 
 void CSE_ALifeHumanAbstract::update()
 {
@@ -65,9 +66,22 @@ CSE_ALifeItemWeapon* CSE_ALifeHumanAbstract::tpfGetBestWeapon(ALife::EHitType& t
 
 void CSE_ALifeHumanAbstract::on_register()
 {
-	inherited2::on_register();
+	const bool record = ai().script_engine().lua_recording() && CPU::qpc_freq;
+	LPCSTR record_name = name();
+	const u32 record_id = static_cast<u32>(ID);
+	CScopedLuaRecordPhase total_phase(ai().script_engine(), "alife_register", "human.total",
+		record_name, record_id, 0, record);
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "alife_register", "human.inherited_monster",
+			record_name, record_id, 0, record);
+		inherited2::on_register();
+	}
 	// because we need to load profile to setup graph vertex masks
-	specific_character();
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "alife_register", "human.specific_character",
+			record_name, record_id, 0, record);
+		specific_character();
+	}
 }
 
 void CSE_ALifeHumanAbstract::on_unregister()

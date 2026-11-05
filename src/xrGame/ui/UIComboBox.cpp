@@ -25,6 +25,9 @@ CUIComboBox::CUIComboBox()
 
 CUIComboBox::~CUIComboBox()
 {
+	// Update() registers the expanded list for the following render pass.
+	// The window can be destroyed before that pass (menu/dialog teardown), so
+	// always remove the callback while the concrete object is still alive.
 	Device.seqRender.Remove(this);
 }
 

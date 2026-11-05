@@ -431,6 +431,12 @@ u32 xrServer::OnDelayedMessage(NET_Packet& P, ClientID sender) // Non-Zero means
 					P_answ.w_stringZ(_tmp_log[i]);
 					SendTo(sender, P_answ, net_flags(TRUE,TRUE));
 				}
+				// Remote-admin output is one-shot. Do not let an unusually verbose
+				// command pin its pointer-vector high-water for the server lifetime.
+				if (_tmp_log.capacity() > 256)
+					_tmp_log.clear_and_free();
+				else
+					_tmp_log.clear();
 			}
 			else
 			{

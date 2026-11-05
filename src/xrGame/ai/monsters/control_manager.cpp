@@ -45,6 +45,7 @@ char* make_xrstr(ControlCom::EControlType e)
 CControl_Manager::CControl_Manager(CBaseMonster* obj)
 {
 	m_object = obj;
+	m_active_elems_dirty = false;
 
 	m_animation = xr_new<CControlAnimation>();
 	m_movement = xr_new<CControlMovement>();
@@ -100,6 +101,7 @@ void CControl_Manager::reinit()
 
 	// fill active elems
 	m_active_elems.clear();
+	m_active_elems_dirty = false;
 	m_active_elems.reserve(ControlCom::eControllersCount);
 	for (it = m_control_elems.begin(); it != m_control_elems.end(); ++it)
 	{
@@ -128,14 +130,7 @@ void CControl_Manager::update_frame()
 		if ((*it)) (*it)->update_frame();
 	}
 
-	m_active_elems.erase(
-		std::remove_if(
-			m_active_elems.begin(),
-			m_active_elems.end(),
-			predicate_remove()
-		),
-		m_active_elems.end()
-	);
+	cleanup_active_coms();
 }
 
 void CControl_Manager::update_schedule()
@@ -148,14 +143,7 @@ void CControl_Manager::update_schedule()
 		if ((*it)) (*it)->update_schedule();
 	}
 
-	m_active_elems.erase(
-		std::remove_if(
-			m_active_elems.begin(),
-			m_active_elems.end(),
-			predicate_remove()
-		),
-		m_active_elems.end()
-	);
+	cleanup_active_coms();
 }
 
 ControlCom::EControlType CControl_Manager::com_type(CControl_Com* com)
@@ -461,8 +449,28 @@ void CControl_Manager::check_active_com(CControl_Com* com, bool b_add)
 	else
 	{
 		COM_VEC_IT it = std::find(m_active_elems.begin(), m_active_elems.end(), com);
-		if (it != m_active_elems.end()) (*it) = 0; // do not remove just mark
+		if (it != m_active_elems.end())
+		{
+			(*it) = 0; // do not remove while an update may be iterating
+			m_active_elems_dirty = true;
+		}
 	}
+}
+
+void CControl_Manager::cleanup_active_coms()
+{
+	if (!m_active_elems_dirty)
+		return;
+
+	m_active_elems.erase(
+		std::remove_if(
+			m_active_elems.begin(),
+			m_active_elems.end(),
+			predicate_remove()
+		),
+		m_active_elems.end()
+	);
+	m_active_elems_dirty = false;
 }
 
 // Lain: made secure

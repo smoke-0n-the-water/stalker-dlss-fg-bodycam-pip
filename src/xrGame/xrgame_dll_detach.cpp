@@ -97,6 +97,7 @@ void clean_game_globals()
 	CCharacterInfo::DeleteSharedData();
 	CCharacterInfo::DeleteIdToIndexData();
 
+	CSpecificCharacter::ClearSelectionCache();
 	CSpecificCharacter::DeleteSharedData();
 	CSpecificCharacter::DeleteIdToIndexData();
 

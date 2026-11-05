@@ -13,6 +13,8 @@ IC CHitMemoryManager::CHitMemoryManager(CCustomMonster* object, CAI_Stalker* sta
 	VERIFY(object);
 	m_object = object;
 	m_stalker = stalker;
+	m_hits = 0;
+	m_object_indices.reserve(16);
 #ifdef USE_SELECTED_HIT
 	m_selected_hit	= 0;
 #endif
@@ -33,6 +35,8 @@ IC	const CHitMemoryManager::CHitObject *CHitMemoryManager::hit		() const
 
 IC void CHitMemoryManager::set_squad_objects(xr_vector<CHitObject>* squad_objects)
 {
+	if (m_hits != squad_objects)
+		m_object_indices.clear();
 	m_hits = squad_objects;
 }
 

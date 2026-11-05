@@ -8,7 +8,12 @@ These overrides have new engine constants and must not be used with stock bins.
 
 Audited enabled loose-file providers in G.A.M.M.A. Co-op, 2026-10-07:
   190- Screen Space Shaders 23 - Ascii1457:
-    screenspace_mvectors.h, deffer_grass.vs
+    screenspace_mvectors.h, deffer_grass.vs, combine_volumetric.ps (beam noise
+    moves every frame while upscaling before reconstruction; after it, the buffer
+    is sampled unjittered and the noise stays fixed; else unchanged),
+    vert.vs (upscaler jitter for blended alpha surfaces)
+  Base game:
+    particle.vs, particle-clip.vs (upscaler jitter)
   Atmospherics 2.69 RC7.5:
     deffer_impl_flat.ps
   (Since 0.63 no ssfx_* shader is overridden; SSS / Atmospherics use their own.)
@@ -19,6 +24,8 @@ Audited enabled loose-file providers in G.A.M.M.A. Co-op, 2026-10-07:
   New integration files:
     dlss_contract.h, dlss_copy.ps, dlss_cas.h, dlss_sharpen.ps, dlss_ui_depth.ps,
     upscaler_camera_mv.ps (camera-only motion-vector fallback for the upscaler),
+    dlss_display_copy.ps, dlss_sunshaft_mask.ps, dlss_hdr.h, dlss_hdr_encode.ps,
+    dlss_hdr_decode.ps, dlss_debug_mv.ps,
     scripts/modxml_dlss_options.script
     configs/text/eng/st_monolith_dlss.xml
 

@@ -1,11 +1,95 @@
 #include "stdafx.h"
 #pragma hdrstop
 
+#include <cstdint>
+#include <immintrin.h>
+
+namespace
+{
+constexpr u32 kAvx2Fill32Minimum = 1024;
+constexpr u32 kAvx2Fill32Maximum = 32 * 1024;
+constexpr u32 kFill32BlockCount = 64;
+
+__forceinline void fill32_scalar(u32* destination, const u32 value, u32 count)
+{
+    for (u32 i = 0; i < count; ++i)
+        destination[i] = value;
+}
+
+__forceinline void fill32_block_avx2(u32* destination, const __m256i value)
+{
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 0), value);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 8), value);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 16), value);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 24), value);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 32), value);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 40), value);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 48), value);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(destination + 56), value);
+}
+} // namespace
+
 void __stdcall xrMemFill32_x86(LPVOID dest, u32 value, u32 count)
 {
-	u32* ptr = (u32*)dest;
-	u32* end = ptr + count;
-	for (; ptr != end;) *ptr++ = value;
+    fill32_scalar(static_cast<u32*>(dest), value, count);
+}
+
+void __stdcall xrMemFill32_AVX2(LPVOID dest, u32 value, u32 count)
+{
+    if (count < kAvx2Fill32Minimum || count > kAvx2Fill32Maximum)
+    {
+        fill32_scalar(static_cast<u32*>(dest), value, count);
+        return;
+    }
+
+    u32* destination = static_cast<u32*>(dest);
+    u32 remaining = count;
+    const std::uintptr_t destinationAddress = reinterpret_cast<std::uintptr_t>(destination);
+    const bool dwordAligned = (destinationAddress & 3u) == 0;
+
+    if (dwordAligned)
+    {
+        const u32 alignmentDwords =
+            ((32u - (static_cast<u32>(destinationAddress) & 31u)) & 31u) / sizeof(u32);
+        if (alignmentDwords != 0)
+        {
+            fill32_scalar(destination, value, alignmentDwords);
+            destination += alignmentDwords;
+            remaining -= alignmentDwords;
+        }
+    }
+
+    const __m256i fillValue = _mm256_set1_epi32(static_cast<int>(value));
+    const bool aligned = (reinterpret_cast<std::uintptr_t>(destination) & 31u) == 0;
+
+    if (aligned)
+    {
+        while (remaining >= kFill32BlockCount)
+        {
+            fill32_block_avx2(destination, fillValue);
+            destination += kFill32BlockCount;
+            remaining -= kFill32BlockCount;
+        }
+
+        while (remaining >= 8)
+        {
+            _mm256_store_si256(reinterpret_cast<__m256i*>(destination), fillValue);
+            destination += 8;
+            remaining -= 8;
+        }
+    }
+    else
+    {
+        while (remaining >= 8)
+        {
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(destination), fillValue);
+            destination += 8;
+            remaining -= 8;
+        }
+    }
+
+    _mm256_zeroupper();
+    fill32_scalar(destination, value, remaining);
 }
 
 #if defined(M_BORLAND) || defined(_M_AMD64)

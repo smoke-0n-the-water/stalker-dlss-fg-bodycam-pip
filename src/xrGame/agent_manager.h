@@ -33,6 +33,11 @@ private:
 	CAgentMemberManager* m_member;
 	CAgentMemoryManager* m_memory;
 	CAgentManagerPlanner* m_brain;
+	// Every stalker in a group references this same manager and receives the
+	// same object relcase broadcast. Process each destroyed object once per
+	// frame; repeated member calls are idempotent scans of these shared stores.
+	u32 m_relcase_frame = u32(-1);
+	xr_vector<u16> m_relcase_object_ids;
 
 #ifndef USE_SCHEDULER_IN_AGENT_MANAGER
 private:

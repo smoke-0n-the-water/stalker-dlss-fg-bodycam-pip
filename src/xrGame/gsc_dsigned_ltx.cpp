@@ -103,6 +103,7 @@ bool gsc_dsigned_ltx_reader::load_and_verify(u8* buffer, u32 const size)
 	}
 	*dsign_section = 0;
 	IReader tmp_reader(buffer, size);
+	xr_delete(m_ltx);
 	m_ltx = xr_new<CInifile>(&tmp_reader);
 	return true;
 }

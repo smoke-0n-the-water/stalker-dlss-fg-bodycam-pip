@@ -17,6 +17,7 @@ class CUIInventoryCellItem : public CUICellItem
 	typedef CUICellItem inherited;
 public:
 	CUIInventoryCellItem(CInventoryItem* itm);
+	virtual ~CUIInventoryCellItem();
 	virtual bool EqualTo(CUICellItem* itm);
 	virtual void UpdateItemText();
 	CUIDragItem* CreateDragItem();

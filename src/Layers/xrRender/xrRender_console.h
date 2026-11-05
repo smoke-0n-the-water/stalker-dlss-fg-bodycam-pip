@@ -14,6 +14,17 @@ extern ECORE_API int ps_r_upscaler_jitter;
 // 1 (default) fills zero vectors, 2 forces camera-only, 0 keeps the pack buffer.
 extern ECORE_API int ps_r__upscaler_camera_mv;
 extern ECORE_API int ps_r_upscaler_debug;
+extern ECORE_API int ps_r_upscaler_post_after;
+extern ECORE_API int ps_r_upscaler_particles_after;
+extern ECORE_API int ps_r_upscaler_scope_after;
+enum
+{
+	UPSCALER_SUNSHAFTS_UPSCALED,
+	UPSCALER_SUNSHAFTS_SMOOTHED,
+	UPSCALER_SUNSHAFTS_RAW,
+};
+extern ECORE_API u32 ps_r_upscaler_sunshafts;
+extern ECORE_API int ps_r_dlss_hdr_input;
 extern ECORE_API float ps_ssfx_fog_scattering;
 extern ECORE_API Fvector4 ps_ssfx_motionblur;
 extern ECORE_API Fvector4 ps_ssfx_taa;

@@ -286,6 +286,9 @@ void CMissile::UpdateCL()
 
 	dwUpdateSounds_Frame = Device.dwFrame;
 
+	if (!m_sounds.HasActive3DSounds())
+		return;
+
 	Fvector P;
 	Center(P);
 

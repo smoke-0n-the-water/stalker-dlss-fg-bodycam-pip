@@ -129,6 +129,7 @@ void save_stack_trace ()
             continue;
 
         ++((*I).second.second);
+        free(string);
         return;
     }
 

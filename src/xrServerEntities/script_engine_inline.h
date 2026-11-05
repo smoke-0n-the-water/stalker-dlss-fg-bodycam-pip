@@ -89,6 +89,7 @@ IC bool CScriptEngine::functor(LPCSTR function_to_call, ::luabind::functor<_resu
 		return (false);
 
 	lua_function = ::luabind::object_cast<::luabind::functor<_result_type>>(object);
+	register_profiled_functor(function_to_call, lua_function);
 
 #ifdef USE_LUA_FUNCTOR_CACHE
 	// Store in cache
@@ -100,6 +101,19 @@ IC bool CScriptEngine::functor(LPCSTR function_to_call, ::luabind::functor<_resu
 #endif
 
 	return (true);
+}
+
+template <typename _result_type>
+void CScriptEngine::register_profiled_functor(
+	LPCSTR function_name, const ::luabind::functor<_result_type>& lua_function)
+{
+	if (!lua_hotspot_profiler_enabled() || !lua_function.is_valid())
+		return;
+
+	lua_function.pushvalue();
+	const void* function_identity = lua_topointer(lua(), -1);
+	lua_pop(lua(), 1);
+	register_profiled_function(function_name, function_identity);
 }
 
 #ifdef USE_DEBUGGER

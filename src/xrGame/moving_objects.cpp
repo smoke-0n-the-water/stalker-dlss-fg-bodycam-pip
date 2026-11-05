@@ -67,8 +67,12 @@ void moving_objects::on_object_move(moving_object* moving_object)
 		make_string("moving object %s is not yet registered",*moving_object->id())
 	);
 #endif
-#pragma todo("this place can be optimized in case of slowdowns")
 	VERIFY(m_tree);
+	if (m_tree->same_leaf(moving_object->position(), moving_object->object().Position()))
+	{
+		moving_object->update_position();
+		return;
+	}
 
 	m_tree->remove(moving_object);
 
@@ -80,4 +84,5 @@ void moving_objects::on_object_move(moving_object* moving_object)
 void moving_objects::clear()
 {
 	m_previous_collisions.clear_not_free();
+	m_previous_collision_pairs.clear_not_free();
 }

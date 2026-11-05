@@ -67,3 +67,8 @@
 #	define PROF_EVENT(Name)
 #	define PROF_EVENT_DYNAMIC(...) {};
 #endif
+
+// Quark's Tracy zone-text hook; Optick has no equivalent, so it is a no-op here.
+#ifndef PROF_TEXT
+#	define PROF_TEXT(Text)
+#endif

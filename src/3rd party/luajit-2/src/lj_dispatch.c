@@ -1,12 +1,13 @@
 /*
 ** Instruction dispatch handling.
-** Copyright (C) 2005-2015 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #define lj_dispatch_c
 #define LUA_CORE
 
 #include "lj_obj.h"
+#include "lj_gc.h"
 #include "lj_err.h"
 #include "lj_func.h"
 #include "lj_str.h"
@@ -14,6 +15,7 @@
 #include "lj_meta.h"
 #include "lj_debug.h"
 #include "lj_state.h"
+#include "lj_udata.h"
 #include "lj_frame.h"
 #include "lj_bc.h"
 #include "lj_ff.h"
@@ -233,6 +235,236 @@ static void setptmode_all(global_State *g, GCproto *pt, int mode)
 }
 #endif
 
+/* Engine-specific public API function: query the current GC state. */
+void luaJIT_getgcstate(lua_State *L, luaJIT_GCStateInfo *info)
+{
+  global_State *g;
+  if (info == NULL) return;
+  g = G(L);
+  info->total = (size_t)g->gc.total;
+  info->threshold = (size_t)g->gc.threshold;
+  info->debt = (size_t)g->gc.debt;
+  info->state = (int)g->gc.state;
+  info->active = g->gc.state != GCSpause;
+}
+
+void luaJIT_getgcatomicinfo(lua_State *L, luaJIT_GCAtomicInfo *info)
+{
+  global_State *g;
+  if (info == NULL) return;
+  g = G(L);
+  info->total_cycles = (unsigned long long)g->gc.atomic_total_cycles;
+  info->mark_cycles = (unsigned long long)g->gc.atomic_mark_cycles;
+  info->finalize_cycles = (unsigned long long)g->gc.atomic_finalize_cycles;
+  info->weak_cycles = (unsigned long long)g->gc.atomic_weak_cycles;
+  info->udata_visited = (size_t)g->gc.atomic_udata_visited;
+  info->weak_tables = (size_t)g->gc.atomic_weak_tables;
+  info->weak_slots = (size_t)g->gc.atomic_weak_slots;
+}
+
+void luaJIT_getgcatomicinfo_v2(lua_State *L, luaJIT_GCAtomicInfoV2 *info)
+{
+  global_State *g;
+  if (info == NULL) return;
+  g = G(L);
+  info->total_cycles = (unsigned long long)g->gc.atomic_total_cycles;
+  info->mark_cycles = (unsigned long long)g->gc.atomic_mark_cycles;
+  info->finalize_cycles = (unsigned long long)g->gc.atomic_finalize_cycles;
+  info->weak_cycles = (unsigned long long)g->gc.atomic_weak_cycles;
+  info->udata_visited = (size_t)g->gc.atomic_udata_visited;
+  info->udata_finalizable = (size_t)g->gc.atomic_udata_finalizable;
+  info->udata_pages = (size_t)g->gc.atomic_udata_pages;
+  info->weak_tables = (size_t)g->gc.atomic_weak_tables;
+  info->weak_slots = (size_t)g->gc.atomic_weak_slots;
+}
+
+void luaJIT_getgcpressureinfo(lua_State *L, luaJIT_GCPressureInfo *info)
+{
+  global_State *g;
+  if (info == NULL) return;
+  g = G(L);
+  info->udata_alloc_serial = (unsigned long long)g->gc.udata_alloc_serial;
+}
+
+/* Select host scheduling for automatic-GC atomic/finalizer phases.
+** This does not alter explicit lua_gc()/collectgarbage() calls. */
+void luaJIT_setgchostmanaged(lua_State *L, int enabled)
+{
+  global_State *g = G(L);
+  g->gc.hostmanaged = (uint8_t)(enabled != 0);
+  if (!enabled)
+    g->gc.stepheadroom = 0;
+}
+
+void luaJIT_setudatafinalizer(lua_State *L, int idx, int enabled)
+{
+  if (lua_type(L, idx) == LUA_TUSERDATA) {
+    void *payload = lua_touserdata(L, idx);
+    if (payload != NULL)
+      lj_udata_setfinalizerrequired(((GCudata *)payload) - 1, enabled);
+  }
+}
+
+/* Engine-specific public API function: perform one genuinely bounded
+** incremental quantum. lua_gc(LUA_GCSTEP, n) cannot serve as a work budget:
+** n is a memory target, so a mostly-live heap may make one call traverse the
+** remainder of a complete cycle before returning. */
+int luaJIT_gcstep(lua_State *L, size_t work_bytes,
+		  size_t allocation_headroom)
+{
+  global_State *g = G(L);
+  MSize bounded_work;
+  /* Keep a single call reasonably fine grained even if a bad host value reaches
+  ** this private API. The device checks its time budget between calls. */
+  if (work_bytes < 1024u)
+    bounded_work = 1024u;
+  else if (work_bytes > 1024u * 1024u)
+    bounded_work = 1024u * 1024u;
+  else
+    bounded_work = (MSize)work_bytes;
+  g->gc.stepheadroom = allocation_headroom < (size_t)LJ_MAX_MEM ?
+    (MSize)allocation_headroom : (MSize)LJ_MAX_MEM;
+  return lj_gc_step_sized(L, bounded_work, g->gc.stepheadroom);
+}
+
+int luaJIT_gcpreatomic(lua_State *L, size_t work_bytes)
+{
+  MSize bounded_work;
+  if (work_bytes < 1024u)
+    bounded_work = 1024u;
+  else if (work_bytes > 256u * 1024u)
+    bounded_work = 256u * 1024u;
+  else
+    bounded_work = (MSize)work_bytes;
+  return lj_gc_preatomic(L, bounded_work);
+}
+
+/* Engine-specific public API: inspect the JIT cache directly, avoiding
+** jit.util allocations while profiling frame-time-sensitive workloads. */
+void luaJIT_getjitstats(lua_State *L, luaJIT_JITStats *stats)
+{
+  if (stats == NULL) return;
+  memset(stats, 0, sizeof(*stats));
+#if LJ_HASJIT
+  {
+    jit_State *J = G2J(G(L));
+    size_t trace_mcode = 0;
+    unsigned int active_traces = 0;
+    MSize i;
+    for (i = 1; i < J->sizetrace; i++) {
+      GCtrace *T = traceref(J, (TraceNo)i);
+      if (T != NULL && T != &J->cur && T->traceno != 0) {
+        active_traces++;
+        trace_mcode += (size_t)T->szmcode;
+      }
+    }
+    stats->mcode_reserved_bytes = J->szallmcarea;
+    stats->trace_mcode_bytes = trace_mcode;
+    stats->mcode_limit_bytes = (size_t)J->param[JIT_P_maxmcode] << 10;
+    stats->active_traces = active_traces;
+    stats->max_traces = (unsigned int)J->param[JIT_P_maxtrace];
+    stats->mcode_area_kb = (unsigned int)J->param[JIT_P_sizemcode];
+    stats->trace_starts = (unsigned long long)J->stats_trace_starts;
+    stats->root_trace_starts = (unsigned long long)J->stats_root_trace_starts;
+    stats->side_trace_starts = (unsigned long long)J->stats_side_trace_starts;
+    stats->trace_compiled = (unsigned long long)J->stats_trace_compiled;
+    stats->trace_aborts = (unsigned long long)J->stats_trace_aborts;
+    stats->root_trace_aborts = (unsigned long long)J->stats_root_trace_aborts;
+    stats->side_trace_aborts = (unsigned long long)J->stats_side_trace_aborts;
+    stats->mcode_retries = (unsigned long long)J->stats_mcode_retries;
+    stats->trace_flushes = (unsigned long long)J->stats_trace_flushes;
+    stats->maxtrace_flushes = (unsigned long long)J->stats_maxtrace_flushes;
+    stats->mcode_limit_hits = (unsigned long long)J->stats_mcode_limit_hits;
+    stats->mcode_alloc_failures = (unsigned long long)J->stats_mcode_alloc_failures;
+    stats->abort_mcode = (unsigned long long)J->stats_abort_mcode;
+    stats->abort_nyi = (unsigned long long)J->stats_abort_nyi;
+    stats->abort_blacklist = (unsigned long long)J->stats_abort_blacklist;
+    stats->blacklisted_sites = (unsigned long long)J->stats_blacklisted_sites;
+    stats->side_nyi_disabled = (unsigned long long)J->stats_side_nyi_disabled;
+    stats->root_nyi_backoffs = (unsigned long long)J->stats_root_nyi_backoffs;
+    stats->root_nyi_suppressed = (unsigned long long)J->stats_root_nyi_suppressed;
+  }
+#else
+  UNUSED(L);
+#endif
+}
+
+unsigned int luaJIT_getjitabortsites(lua_State *L, luaJIT_JITAbortSite *sites,
+                                      unsigned int capacity)
+{
+  unsigned int written = 0;
+  if (sites == NULL || capacity == 0) return 0;
+#if LJ_HASJIT
+  {
+    jit_State *J = G2J(G(L));
+    unsigned int i;
+    for (i = 0; i < JIT_ABORT_SITE_SLOTS && written < capacity; i++) {
+      const JitAbortSiteStat *src = &J->stats_abort_sites[i];
+      luaJIT_JITAbortSite *dst;
+      if (!src->used || src->count == 0) continue;
+      dst = &sites[written++];
+      memset(dst, 0, sizeof(*dst));
+      dst->count = (unsigned long long)src->count;
+      dst->line = (unsigned int)src->line;
+      dst->reason = (unsigned int)src->reason;
+      dst->side_trace = (unsigned int)src->side_trace;
+      memcpy(dst->source, src->source, LUAJIT_JIT_ABORT_SOURCE_LEN);
+      dst->source[LUAJIT_JIT_ABORT_SOURCE_LEN-1] = '\0';
+    }
+  }
+#else
+  UNUSED(L);
+#endif
+  return written;
+}
+
+void luaJIT_setjitcache(lua_State *L, unsigned int max_traces,
+                          unsigned int mcode_area_kb,
+                          unsigned int max_mcode_kb)
+{
+#if LJ_HASJIT
+  jit_State *J = G2J(G(L));
+  if (max_traces < 2u) max_traces = 2u;
+  if (max_traces > 65534u) max_traces = 65534u;
+  if (mcode_area_kb < 32u) mcode_area_kb = 32u;
+  if (max_mcode_kb < mcode_area_kb) max_mcode_kb = mcode_area_kb;
+  J->param[JIT_P_maxtrace] = (int32_t)max_traces;
+  J->param[JIT_P_sizemcode] = (int32_t)mcode_area_kb;
+  J->param[JIT_P_maxmcode] = (int32_t)max_mcode_kb;
+#else
+  UNUSED(L); UNUSED(max_traces); UNUSED(mcode_area_kb); UNUSED(max_mcode_kb);
+#endif
+}
+
+void luaJIT_resetjitstats(lua_State *L)
+{
+#if LJ_HASJIT
+  jit_State *J = G2J(G(L));
+  J->stats_trace_starts = 0;
+  J->stats_root_trace_starts = 0;
+  J->stats_side_trace_starts = 0;
+  J->stats_trace_compiled = 0;
+  J->stats_trace_aborts = 0;
+  J->stats_root_trace_aborts = 0;
+  J->stats_side_trace_aborts = 0;
+  J->stats_mcode_retries = 0;
+  J->stats_trace_flushes = 0;
+  J->stats_maxtrace_flushes = 0;
+  J->stats_mcode_limit_hits = 0;
+  J->stats_mcode_alloc_failures = 0;
+  J->stats_abort_mcode = 0;
+  J->stats_abort_nyi = 0;
+  J->stats_abort_blacklist = 0;
+  J->stats_blacklisted_sites = 0;
+  J->stats_side_nyi_disabled = 0;
+  J->stats_root_nyi_backoffs = 0;
+  J->stats_root_nyi_suppressed = 0;
+  memset(J->stats_abort_sites, 0, sizeof(J->stats_abort_sites));
+#else
+  UNUSED(L);
+#endif
+}
+
 /* Public API function: control the JIT engine. */
 int luaJIT_setmode(lua_State *L, int idx, int mode)
 {
@@ -306,9 +538,9 @@ int luaJIT_setmode(lua_State *L, int idx, int mode)
       } else {
 	return 0;  /* Failed. */
       }
-      g->bc_cfunc_ext = BCINS_AD(BC_FUNCCW, 0, 0);
+      setbc_op(&g->bc_cfunc_ext, BC_FUNCCW);
     } else {
-      g->bc_cfunc_ext = BCINS_AD(BC_FUNCC, 0, 0);
+      setbc_op(&g->bc_cfunc_ext, BC_FUNCC);
     }
     break;
   default:

@@ -21,12 +21,14 @@ TEMPLATE_SPECIALIZATION
 void CStateGroupSquadMoveToRadiusExAbstract::execute()
 {
 	CMonsterSquad* squad = monster_squad().get_squad(object);
-	if (squad && squad->SquadActive())
+	const u8 squad_size = squad ? squad->squad_alife_count() : u8(0);
+	if (squad_size)
 	{
-		if (squad->get_index(object) != u8(-1))
+		const u8 squad_index = squad->get_index(object);
+		if (squad_index != u8(-1))
 		{
-			float m_Angle = (PI - PI_DIV_2) / (squad->squad_alife_count() - 1) * (squad->get_index(object) - 1);
-			float m_Delta_Angle = Random.randF(PI_DIV_3 / (squad->squad_alife_count() - 1));
+			float m_Angle = (PI - PI_DIV_2) / (squad_size - 1) * (squad_index - 1);
+			float m_Delta_Angle = Random.randF(PI_DIV_3 / (squad_size - 1));
 			float m_heading, m_pitch;
 			Fvector m_enemy_position = object->EnemyMan.get_enemy()->Position();
 

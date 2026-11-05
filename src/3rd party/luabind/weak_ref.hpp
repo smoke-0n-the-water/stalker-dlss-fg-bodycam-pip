@@ -40,6 +40,14 @@ namespace luabind {
 
         void swap(weak_ref&);
 
+        bool empty() const;
+
+        // Invalidate every luabind reference owned by the Lua VM before
+        // lua_close(). References may outlive a VM (for example, engine-owned
+        // callbacks and wrapper caches), so their destructors must no longer
+        // access that VM after it is closed.
+        static void invalidate(lua_State*);
+
 		// returns a unique id that no
 		// other weak ref will return
 		int id() const;

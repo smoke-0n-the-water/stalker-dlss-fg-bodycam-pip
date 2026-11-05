@@ -5,8 +5,8 @@
 #include "SoundRender_TargetA.h"
 #include "SoundRender_Environment.h"
 
-#include "../xrEngine/pure.h"
-#include "../xrEngine/XR_IOConsole.h"
+#include "xrEngine/pure.h"
+#include "xrEngine/XR_IOConsole.h"
 
 #include <AL/efx.h>
 
@@ -71,43 +71,76 @@ CSoundRender_CoreA::~CSoundRender_CoreA()
 
 void CSoundRender_CoreA::DestroyEffect()
 {
-	if (m_is_supported)
-	{
+	if (slot && alDeleteAuxiliaryEffectSlots)
+		alDeleteAuxiliaryEffectSlots(1, &slot);
+	if (effect && alDeleteEffects)
 		alDeleteEffects(1, &effect);
-		if (alIsAuxiliaryEffectSlot(slot))
-			alDeleteAuxiliaryEffectSlots(1, &slot);
-	}
+
+	slot = 0;
+	effect = 0;
+	m_is_supported = false;
 }
 
 void CSoundRender_CoreA::LoadEffect()
 {
-	alGenEffects(1, &effect);
+	DestroyEffect();
 
-	load_reverb(effect, &reverbs[0]);
-
-	// Check if an error occured, and clean up if so.
-	ALenum err = alGetError();
-
-	if (psSoundFlags.test(ss_EFX))
-	{
-		if (err == AL_NO_ERROR)
-		{
-			Msg("SOUND: OpenAL: EFX supported");
-			m_is_supported = true;
-			alGenAuxiliaryEffectSlots(1, &slot);
-		}
-		else
-		{
-			Msg("SOUND: OpenAL: Failed to init EFX: %s", alGetString(err));
-			if (alIsEffect(effect))
-				alDeleteEffects(1, &effect);
-		}
-	}
-	else
+	if (!psSoundFlags.test(ss_EFX))
 	{
 		Msg("SOUND: OpenAL: EFX disabled");
-		m_is_supported = false;
+		return;
 	}
+
+	if (!pDevice || !alcIsExtensionPresent(pDevice, "ALC_EXT_EFX"))
+	{
+		Msg("SOUND: OpenAL: EFX extension is unavailable");
+		return;
+	}
+
+	const bool functions_ready = alGenEffects && alDeleteEffects && alEffecti && alEffectf && alEffectfv &&
+		alGetEffecti && alGetEffectf && alGetEffectfv && alGenAuxiliaryEffectSlots &&
+		alDeleteAuxiliaryEffectSlots && alAuxiliaryEffectSloti && alAuxiliaryEffectSlotf;
+	if (!functions_ready)
+	{
+		Msg("SOUND: OpenAL: EFX entry points are incomplete");
+		return;
+	}
+
+	alGetError();
+	alGenEffects(1, &effect);
+	ALenum error = alGetError();
+	if (error != AL_NO_ERROR || !effect)
+	{
+		Msg("SOUND: OpenAL: Failed to create EFX effect: %s", alGetString(error));
+		if (effect)
+			alDeleteEffects(1, &effect);
+		effect = 0;
+		return;
+	}
+
+	if (!load_reverb(effect, &reverbs[0]))
+	{
+		Msg("SOUND: OpenAL: Failed to configure EFX reverb");
+		alDeleteEffects(1, &effect);
+		effect = 0;
+		return;
+	}
+
+	alGenAuxiliaryEffectSlots(1, &slot);
+	error = alGetError();
+	if (error != AL_NO_ERROR || !slot)
+	{
+		Msg("SOUND: OpenAL: Failed to initialize EFX slot: %s", alGetString(error));
+		if (slot)
+			alDeleteAuxiliaryEffectSlots(1, &slot);
+		alDeleteEffects(1, &effect);
+		effect = 0;
+		slot = 0;
+		return;
+	}
+
+	m_is_supported = true;
+	Msg("SOUND: OpenAL: EFX supported");
 }
 
 // load_reverb loads the given initial reverb properties into the given OpenAL
@@ -235,25 +268,27 @@ void CSoundRender_CoreA::get_listener(CSoundRender_Environment& env)
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_DIFFUSION, &env.EnvironmentDiffusion));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_GAIN, &env.Room));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_GAINHF, &env.RoomHF));
-	A_CHK(alGetEffectf(effect, AL_EAXREVERB_GAINHF, &env.RoomLF));
+	A_CHK(alGetEffectf(effect, AL_EAXREVERB_GAINLF, &env.RoomLF));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_DECAY_TIME, &env.DecayTime));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_DECAY_HFRATIO, &env.DecayHFRatio));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_DECAY_LFRATIO, &env.DecayLFRatio));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_REFLECTIONS_GAIN, &env.Reflections));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_REFLECTIONS_DELAY, &env.ReflectionsDelay));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_LATE_REVERB_GAIN, &env.Reverb));
-	A_CHK(alGetEffectf(effect, AL_EAXREVERB_REFLECTIONS_PAN, env.ReflectionsPan));
+	A_CHK(alGetEffectfv(effect, AL_EAXREVERB_REFLECTIONS_PAN, env.ReflectionsPan));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_LATE_REVERB_DELAY, &env.ReverbDelay));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_ECHO_TIME, &env.EchoTime));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_ECHO_DEPTH, &env.EchoDepth));
-	A_CHK(alGetEffectf(effect, AL_EAXREVERB_LATE_REVERB_PAN, env.ReverbPan));
+	A_CHK(alGetEffectfv(effect, AL_EAXREVERB_LATE_REVERB_PAN, env.ReverbPan));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_MODULATION_TIME, &env.ModulationTime));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_MODULATION_DEPTH, &env.ModulationDepth));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, &env.AirAbsorptionHF));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_HFREFERENCE, &env.HFReference));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_LFREFERENCE, &env.LFReference));
 	A_CHK(alGetEffectf(effect, AL_EAXREVERB_ROOM_ROLLOFF_FACTOR, &env.RoomRolloffFactor));
-	A_CHK(alEffecti(effect, AL_EAXREVERB_DECAY_HFLIMIT, (ALint)env.DecayHFLimit));
+	ALint decay_hf_limit = 0;
+	A_CHK(alGetEffecti(effect, AL_EAXREVERB_DECAY_HFLIMIT, &decay_hf_limit));
+	env.DecayHFLimit = decay_hf_limit;
 }
 
 void  CSoundRender_CoreA::_restart()
@@ -285,10 +320,12 @@ void CSoundRender_CoreA::default_device_changed()
     if (!pDeviceList)
         return;
 
-    if (pDeviceList->GetNumDevices() == 0)
-        return;
+	const bool follows_default = _stricmp(snd_device_name.c_str(), pDeviceList->GetDefaultDeviceName()) == 0;
+	if (!follows_default)
+		return;
 
-    if (_stricmp(snd_device_name.c_str(), pDeviceList->GetDefaultDeviceName()) == 0)
+	pDeviceList->Enumerate();
+	if (pDeviceList->GetNumDevices() != 0)
     {
         Msg("SOUND: Default device changed, switching to new default device");
         switch_device(pDeviceList->GetDefaultDeviceName());
@@ -456,6 +493,7 @@ void CSoundRender_CoreA::_initialize(int stage)
 	LOAD_PROC(LPALGETEFFECTI, alGetEffecti);
 	LOAD_PROC(LPALGETEFFECTIV, alGetEffectiv);
 	LOAD_PROC(LPALGETEFFECTF, alGetEffectf);
+	LOAD_PROC(LPALGETEFFECTFV, alGetEffectfv);
 
 	// Auxiliary effect slot object functions
 	LOAD_PROC(LPALGENAUXILIARYEFFECTSLOTS, alGenAuxiliaryEffectSlots);
@@ -527,12 +565,16 @@ void CSoundRender_CoreA::_clear()
 		T->_destroy();
 		xr_delete(T);
 	}
+	s_targets.clear_not_free();
+	DestroyEffect();
 	// Reset the current context to NULL.
-	alcMakeContextCurrent(NULL);
+	alcMakeContextCurrent(nullptr);
 	// Release the context and the device.
-	alcDestroyContext(pContext);
+	if (pContext)
+		alcDestroyContext(pContext);
 	pContext = nullptr;
-	alcCloseDevice(pDevice);
+	if (pDevice)
+		alcCloseDevice(pDevice);
 	pDevice = nullptr;
 	xr_delete(pDeviceList);
 }
@@ -544,11 +586,14 @@ void CSoundRender_CoreA::update_listener(const Fvector& P, const Fvector& D, con
 
 	Listener.curVelocity.sub(P, Listener.position);
 
-	float a = soundSmoothingParams::getTimeDeltaSmoothing();
-	int p = soundSmoothingParams::power;
-	Listener.accVelocity.x = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.x * p / dt, Listener.accVelocity.x, a);
-	Listener.accVelocity.y = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.y * p / dt, Listener.accVelocity.y, a);
-	Listener.accVelocity.z = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.z * p / dt, Listener.accVelocity.z, a);
+	const float smoothing = soundSmoothingParams::getTimeDeltaSmoothing();
+	const float velocity_scale = dt > EPS_S ? soundSmoothingParams::power / dt : 0.f;
+	Listener.accVelocity.x = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.x * velocity_scale,
+		Listener.accVelocity.x, smoothing);
+	Listener.accVelocity.y = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.y * velocity_scale,
+		Listener.accVelocity.y, smoothing);
+	Listener.accVelocity.z = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.z * velocity_scale,
+		Listener.accVelocity.z, smoothing);
 	
 	Listener.prevVelocity.set(Listener.accVelocity);
 

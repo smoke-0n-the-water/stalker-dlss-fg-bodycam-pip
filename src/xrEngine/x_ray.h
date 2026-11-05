@@ -29,6 +29,7 @@ private:
 	FactoryPtr<IApplicationRender> m_pRender;
 
 	int max_load_stage;
+	bool m_levels_scanned;
 
 	int load_stage;
 
@@ -74,6 +75,15 @@ public:
 };
 
 extern ENGINE_API CApplication* pApp;
+extern ENGINE_API BOOL g_appLoaded;
+
+// Detailed resource diagnostics are disabled during normal loading. Pass
+// -load_diagnostics to restore the loading-stage statistics.
+ENGINE_API bool IsLoadDiagnosticsEnabled();
+
+// The filtered settings tree is required only by multiplayer integrity checks.
+// Build it lazily so single-player startup does not parse system.ltx twice.
+ENGINE_API void EnsureSettingsAuth();
 
 //Discord
 struct rpc_info
@@ -114,6 +124,10 @@ struct rpc_strings
 };
 
 extern ENGINE_API void updateDiscordPresence();
+extern ENGINE_API void Init_Discord();
+extern ENGINE_API bool DiscordPresenceReady();
+extern ENGINE_API void PumpDiscordPresence();
+extern ENGINE_API void ShutdownDiscordPresence();
 extern ENGINE_API rpc_info discord_gameinfo;
 extern ENGINE_API rpc_strings discord_strings;
 extern ENGINE_API float discord_update_rate;

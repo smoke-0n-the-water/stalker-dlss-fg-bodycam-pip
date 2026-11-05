@@ -41,6 +41,27 @@ static int g_near_cover_search_count	= 0;
 static int g_far_cover_search_count		= 0;
 #endif // _DEBUG
 
+namespace
+{
+const ::luabind::functor<float>* min_combat_distance_callback()
+{
+	static cached_script_functor<float> callback_cache("_G.CAI_Stalker__GetMinCombatDist");
+	return callback_cache.get(ai().script_engine());
+}
+
+const ::luabind::functor<float>* max_combat_distance_callback()
+{
+	static cached_script_functor<float> callback_cache("_G.CAI_Stalker__GetMaxCombatDist");
+	return callback_cache.get(ai().script_engine());
+}
+
+const ::luabind::functor<bool>* allow_cover_repick_callback()
+{
+	static cached_script_functor<bool> callback_cache("_G.CAI_Stalker__AllowCoverRepick");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 void CAI_Stalker::subscribe_on_best_cover_changed(const on_best_cover_changed_delegate& delegate)
 {
 	VERIFY(m_cover_delegates.end() == std::find(m_cover_delegates.begin(),m_cover_delegates.end(),delegate));
@@ -119,10 +140,9 @@ void CAI_Stalker::compute_enemy_distances(float& minimum_enemy_distance, float& 
 	}
 
 	{
-		::luabind::functor<float> min_funct;
-		if (ai().script_engine().functor("_G.CAI_Stalker__GetMinCombatDist", min_funct))
+		if (const auto* min_funct = min_combat_distance_callback())
 		{
-			float result = min_funct(lua_game_object(), minimum_enemy_distance);
+			float result = (*min_funct)(lua_game_object(), minimum_enemy_distance);
 			if (_valid(result) && result >= 0.f)
 				minimum_enemy_distance = result;
 			else
@@ -132,10 +152,9 @@ void CAI_Stalker::compute_enemy_distances(float& minimum_enemy_distance, float& 
 		}
 	}
 	{
-		::luabind::functor<float> max_funct;
-		if (ai().script_engine().functor("_G.CAI_Stalker__GetMaxCombatDist", max_funct))
+		if (const auto* max_funct = max_combat_distance_callback())
 		{
-			float result = max_funct(lua_game_object(), maximum_enemy_distance);
+			float result = (*max_funct)(lua_game_object(), maximum_enemy_distance);
 			if (_valid(result) && result >= 0.f)
 				maximum_enemy_distance = result;
 			else
@@ -162,10 +181,13 @@ const CCoverPoint* CAI_Stalker::find_best_cover(const Fvector& position_to_cover
 
 	CInventoryItem* best_wpn = best_weapon();
 	m_ce_best->can_use_smart_covers(best_wpn && best_wpn->cast_weapon() && best_wpn->BaseSlot() == INV_SLOT_3);
+	const Fvector& object_position = Position();
+	CStalkerMovementRestrictor near_restrictor(this, true);
+	bool near_search_performed = false;
 
 	m_ce_best->setup(position_to_cover_from, minimum_enemy_distance, maximum_enemy_distance, minimum_enemy_distance);
-	const CCoverPoint* point = ai().cover_manager().best_cover(Position(), g_ai_cover_search_near_radius, *m_ce_best,
-	                                                           CStalkerMovementRestrictor(this, true));
+	const CCoverPoint* point = ai().cover_manager().best_cover(object_position, g_ai_cover_search_near_radius, *m_ce_best,
+	                                                           near_restrictor, 0.f, &near_search_performed);
 	if (point)
 		return (point);
 
@@ -173,7 +195,9 @@ const CCoverPoint* CAI_Stalker::find_best_cover(const Fvector& position_to_cover
 	++g_far_cover_search_count;
 #endif
 	m_ce_best->setup(position_to_cover_from, minimum_enemy_distance, maximum_enemy_distance, minimum_enemy_distance);
-	point = ai().cover_manager().best_cover(Position(), g_ai_cover_search_far_radius, *m_ce_best, CStalkerMovementRestrictor(this, true));
+	point = ai().cover_manager().best_cover(object_position, g_ai_cover_search_far_radius, *m_ce_best,
+	                                       CStalkerMovementRestrictor(this, true),
+	                                       near_search_performed ? g_ai_cover_search_near_radius : 0.f);
 	return (point);
 }
 
@@ -290,9 +314,8 @@ const CCoverPoint* CAI_Stalker::best_cover(const Fvector& position_to_cover_from
 		bool allow = true;
 		if (m_best_cover)
 		{
-			luabind::functor<bool> repick_funct;
-			if (ai().script_engine().functor("_G.CAI_Stalker__AllowCoverRepick", repick_funct))
-				allow = repick_funct(lua_game_object());
+			if (const auto* repick_funct = allow_cover_repick_callback())
+				allow = (*repick_funct)(lua_game_object());
 		}
 		if (allow)
 		{

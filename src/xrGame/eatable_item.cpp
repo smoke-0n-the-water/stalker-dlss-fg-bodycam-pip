@@ -162,6 +162,7 @@ bool CEatableItem::UseBy(CEntityAlive* entity_alive)
 			m_iRemainingUses = 0;
 		}
 	}
+	InvalidateInventoryUI();
 
 	if (IsUsingCondition())
 	{

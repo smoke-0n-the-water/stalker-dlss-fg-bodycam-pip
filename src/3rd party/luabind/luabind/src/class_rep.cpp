@@ -23,10 +23,33 @@
 #include <luabind/lua_include.hpp>
 #include <luabind/detail/stack_utils.hpp>
 #include <luabind/luabind.hpp>
+#include <luabind/detail/pcall.hpp>
 #include <utility>
 #include <luabind/detail/find_best_match.hpp>
+#include <luajit.h>
 
 using namespace luabind::detail;
+namespace {
+char static_lookup_descriptors_key;
+char static_lookup_factory_key;
+const char static_lookup_factory[] = R"lua(
+return function(descriptors, fallback)
+    return function(self, key)
+        local entry = descriptors[self]
+        if entry then
+            local value = entry[1][key]
+            if value ~= nil then return value end
+            local constants = entry[2]
+            if constants then
+                value = constants[key]
+                if value ~= nil then return value end
+            end
+        end
+        return fallback(self, key)
+    end
+end
+)lua";
+}
 
 namespace luabind { namespace detail
 {
@@ -344,6 +367,10 @@ bool luabind::detail::class_rep::settable(lua_State* L)
 	{
 		// this is the first time we are trying to add
 		// a member to this instance, create the table.
+		// Borrowed C++ wrappers normally have no destructor work and may stay out
+		// of LuaJIT's finalizer queue. An instance table creates a registry
+		// reference, so restore __gc before storing it.
+		luaJIT_setudatafinalizer(L, 1, 1);
 		lua_newtable(L);
 		lua_pushvalue(L, -1);
 		tbl.set(L);
@@ -609,6 +636,7 @@ int luabind::detail::class_rep::function_dispatcher(lua_State* L)
 
 	method_rep* rep = static_cast<method_rep*>(lua_touserdata(L, lua_upvalueindex(1)));
 	int force_static_call = lua_toboolean(L, lua_upvalueindex(2));
+	lua_to_cpp_profile_scope profile_scope(L, rep && rep->crep ? rep->crep->name() : nullptr, rep ? rep->name : nullptr);
 
 	bool ambiguous = false;
 	int match_index = -1;
@@ -788,7 +816,7 @@ int luabind::detail::class_rep::function_dispatcher(lua_State* L)
 	return 0; // will never be reached
 }
 
-void luabind::detail::class_rep::add_base_class(const luabind::detail::class_rep::base_info& binfo)
+void luabind::detail::class_rep::add_base_class(const luabind::detail::class_rep::base_info& binfo, lua_State* lookup_state)
 {
 	// If you hit this assert you are deriving from a type that is not registered
 	// in lua. That is, in the class_<> you are giving a baseclass that isn't registered.
@@ -798,6 +826,18 @@ void luabind::detail::class_rep::add_base_class(const luabind::detail::class_rep
 	assert(binfo.base && "You cannot derive from an unregistered type");
 
 	class_rep* bcrep = binfo.base;
+    // A shared Lua lookup closure must also stop using this class's old image.
+    // Use the caller's live thread, never a coroutine retained in a lua_reference.
+    const int lookup_top = lua_gettop(lookup_state);
+    lua_pushlightuserdata(lookup_state, &static_lookup_descriptors_key);
+    lua_rawget(lookup_state, LUA_REGISTRYINDEX);
+    if (lua_istable(lookup_state, -1))
+    {
+        m_self_ref.get(lookup_state);
+        lua_pushnil(lookup_state);
+        lua_rawset(lookup_state, -3);
+    }
+    lua_settop(lookup_state, lookup_top);
 
 	// import all functions from the base
 	typedef list_class<detail::method_rep> methods_t;
@@ -1346,9 +1386,92 @@ int luabind::detail::class_rep::lua_class_settable(lua_State* L)
 	1: class_rep
 	2: member name
 */
+// Keep static class lookups in Lua so LuaJIT can compile repeated enum reads.
+// The shared class metatable and its __call/__newindex/__gc are preserved. The
+// live default table retains priority; unsupported/missing keys use the native
+// dispatcher. Registry keys and descriptors are private to one serialized VM.
+void class_rep::prepare_static_lookup(lua_State* L)
+{
+    const int top = lua_gettop(L);
+    lua_pushlightuserdata(L, &static_lookup_descriptors_key);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1))
+    {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_newtable(L);
+        lua_pushliteral(L, "__mode");
+        lua_pushliteral(L, "k");
+        lua_rawset(L, -3);
+        lua_setmetatable(L, -2);
+        lua_pushlightuserdata(L, &static_lookup_descriptors_key);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    const int descriptors = lua_gettop(L);
+    lua_pushvalue(L, 1);
+    lua_rawget(L, descriptors);
+    const bool have_descriptor = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (!have_descriptor)
+    {
+        lua_pushvalue(L, 1);
+        lua_createtable(L, 2, 0);
+        get_default_table(L);
+        lua_rawseti(L, -2, 1);
+        if (!m_static_constants.empty())
+        {
+            lua_createtable(L, 0, static_cast<int>(m_static_constants.size()));
+            for (const auto& constant : m_static_constants)
+            {
+                lua_pushstring(L, constant.first);
+                lua_pushnumber(L, constant.second);
+                lua_rawset(L, -3);
+            }
+            lua_rawseti(L, -2, 2);
+        }
+        lua_rawset(L, descriptors);
+    }
+    if (lua_getmetatable(L, 1))
+    {
+        const int metatable = lua_gettop(L);
+        lua_pushliteral(L, "__index");
+        lua_rawget(L, metatable);
+        const bool native_index = lua_iscfunction(L, -1) &&
+            lua_tocfunction(L, -1) == &class_rep::static_class_gettable;
+        lua_pop(L, 1);
+        // Do not replace a mod's custom index hook. Its explicit native calls
+        // continue to work; only the untouched built-in dispatch is installed.
+        if (native_index)
+        {
+            lua_pushlightuserdata(L, &static_lookup_factory_key);
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            if (!lua_isfunction(L, -1))
+            {
+                lua_pop(L, 1);
+                if (luaL_loadbuffer(L, static_lookup_factory,
+                    sizeof(static_lookup_factory) - 1, "@engine/luabind_static_lookup"))
+                    lua_error(L);
+                lua_call(L, 0, 1);
+                lua_pushlightuserdata(L, &static_lookup_factory_key);
+                lua_pushvalue(L, -2);
+                lua_rawset(L, LUA_REGISTRYINDEX);
+            }
+            lua_pushvalue(L, descriptors);
+            lua_pushcfunction(L, &class_rep::static_class_gettable);
+            lua_call(L, 2, 1);
+            lua_pushliteral(L, "__index");
+            lua_insert(L, -2);
+            lua_rawset(L, metatable);
+        }
+    }
+    lua_settop(L, top);
+}
+
 int luabind::detail::class_rep::static_class_gettable(lua_State* L)
 {
 	class_rep* crep = static_cast<class_rep*>(lua_touserdata(L, 1));
+    crep->prepare_static_lookup(L);
 
 	// look in the static function table
 	crep->get_default_table(L);
@@ -1418,7 +1541,10 @@ bool luabind::detail::is_class_rep(lua_State* L, int index)
 
 void luabind::detail::finalize(lua_State* L, class_rep* crep)
 {
-	if (crep->get_class_type() != class_rep::lua_class) return;
+	if (crep->get_class_type() != class_rep::lua_class || !crep->has_live_lua_table())
+		return;
+	// After VM invalidation only native cleanup is safe. The GC entry point
+	// still destroys object_rep and the owned C++ instance in that case.
 
 //	lua_pushvalue(L, -1); // copy the object ref
 	crep->get_table(L);
@@ -1614,4 +1740,3 @@ const class_rep::property_map& luabind::detail::class_rep::properties() const
 {
 	return m_getters;
 }
-

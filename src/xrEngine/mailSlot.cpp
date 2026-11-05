@@ -9,6 +9,12 @@ extern void msParse(LPCSTR cmd);
 
 void msCreate(LPCSTR name)
 {
+    if (hLocalSlot != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(hLocalSlot);
+        hLocalSlot = INVALID_HANDLE_VALUE;
+    }
+
     string256 fn;
     xr_sprintf(fn, sizeof(fn), "\\\\.\\mailslot\\%s", name);
     hLocalSlot = CreateMailslot(
@@ -18,6 +24,16 @@ void msCreate(LPCSTR name)
         (LPSECURITY_ATTRIBUTES)NULL); // no security attributes
     if (hLocalSlot == INVALID_HANDLE_VALUE) return;
     // Msg ("* mailSLOT successfully created.");
+}
+
+
+void msDestroy()
+{
+    if (hLocalSlot == INVALID_HANDLE_VALUE)
+        return;
+
+    CloseHandle(hLocalSlot);
+    hLocalSlot = INVALID_HANDLE_VALUE;
 }
 
 void msRead(void)

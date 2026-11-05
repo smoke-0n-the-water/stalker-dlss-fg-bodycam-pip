@@ -55,6 +55,7 @@ private:
 	bool change_from_wounded(const CEntityAlive* current, const CEntityAlive* previous) const;
 	void remove_wounded();
 	void try_change_enemy();
+	bool useful_native(const CEntityAlive* object) const;
 
 protected:
 	void on_enemy_change(const CEntityAlive* previous_enemy);
@@ -62,8 +63,10 @@ protected:
 
 public:
 	CEnemyManager(CCustomMonster* object);
+	virtual void reinit();
 	virtual void reload(LPCSTR section);
 	virtual bool useful(const CEntityAlive* object) const;
+	bool useful_cached(const CEntityAlive* object) const;
 	virtual bool is_useful(const CEntityAlive* object) const;
 	virtual float evaluate(const CEntityAlive* object) const;
 	virtual float do_evaluate(const CEntityAlive* object) const;

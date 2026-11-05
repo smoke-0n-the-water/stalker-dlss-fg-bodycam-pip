@@ -66,17 +66,21 @@ void CStalkerActionDangerInDirectionTakeCover::execute()
 		return;
 
 	Fvector position = object().memory().danger().selected()->position();
+	const Fvector& object_position = object().Position();
+	CStalkerMovementRestrictor near_restrictor(m_object, true);
+	bool near_search_performed = false;
 
 	object().sight().setup(CSightAction(SightManager::eSightTypePosition, position, true));
 
 	object().m_ce_best->setup(position, 10.f, 170.f, 10.f);
-	const CCoverPoint* point = ai().cover_manager().best_cover(object().Position(), 10.f, *object().m_ce_best,
-	                                                           CStalkerMovementRestrictor(m_object, true));
+	const CCoverPoint* point = ai().cover_manager().best_cover(object_position, 10.f, *object().m_ce_best,
+	                                                           near_restrictor, 0.f, &near_search_performed);
 	if (!point)
 	{
 		object().m_ce_best->setup(position, 10.f, 170.f, 10.f);
-		point = ai().cover_manager().best_cover(object().Position(), 30.f, *object().m_ce_best,
-		                                        CStalkerMovementRestrictor(m_object, true));
+		point = ai().cover_manager().best_cover(object_position, 30.f, *object().m_ce_best,
+		                                        CStalkerMovementRestrictor(m_object, true),
+		                                        near_search_performed ? 10.f : 0.f);
 	}
 
 	if (point)
@@ -314,15 +318,20 @@ void CStalkerActionDangerInDirectionDetour::execute()
 
 	if (object().movement().path_completed())
 	{
-		object().m_ce_angle->setup(position, 10.f, object().ffGetRange(), mem_object.m_object_params.m_level_vertex_id);
-		const CCoverPoint* point = ai().cover_manager().best_cover(object().Position(), 10.f, *object().m_ce_angle,
-		                                                           CStalkerMovementRestrictor(m_object, true));
+		const Fvector& object_position = object().Position();
+		const float fire_range = object().ffGetRange();
+		CStalkerMovementRestrictor near_restrictor(m_object, true);
+		bool near_search_performed = false;
+		object().m_ce_angle->setup(position, 10.f, fire_range, mem_object.m_object_params.m_level_vertex_id);
+		const CCoverPoint* point = ai().cover_manager().best_cover(object_position, 10.f, *object().m_ce_angle,
+		                                                           near_restrictor, 0.f, &near_search_performed);
 		if (!point)
 		{
-			object().m_ce_angle->setup(position, 10.f, object().ffGetRange(),
+			object().m_ce_angle->setup(position, 10.f, fire_range,
 			                           mem_object.m_object_params.m_level_vertex_id);
-			point = ai().cover_manager().best_cover(object().Position(), 30.f, *object().m_ce_angle,
-			                                        CStalkerMovementRestrictor(m_object, true));
+			point = ai().cover_manager().best_cover(object_position, 30.f, *object().m_ce_angle,
+			                                        CStalkerMovementRestrictor(m_object, true),
+			                                        near_search_performed ? 10.f : 0.f);
 		}
 
 		if (point)
@@ -391,13 +400,16 @@ void CStalkerActionDangerInDirectionSearch::execute()
 	if (object().movement().path_completed())
 	{
 		object().m_ce_ambush->setup(position, mem_object.m_self_params.m_position, 10.f);
+		bool near_search_performed = false;
+		CStalkerMovementRestrictor near_restrictor(m_object, true);
 		const CCoverPoint* point = ai().cover_manager().best_cover(position, 10.f, *object().m_ce_ambush,
-		                                                           CStalkerMovementRestrictor(m_object, true));
+		                                                           near_restrictor, 0.f, &near_search_performed);
 		if (!point)
 		{
 			object().m_ce_ambush->setup(position, mem_object.m_self_params.m_position, 10.f);
 			point = ai().cover_manager().best_cover(position, 30.f, *object().m_ce_ambush,
-			                                        CStalkerMovementRestrictor(m_object, true));
+			                                        CStalkerMovementRestrictor(m_object, true),
+			                                        near_search_performed ? 10.f : 0.f);
 		}
 
 		if (point)

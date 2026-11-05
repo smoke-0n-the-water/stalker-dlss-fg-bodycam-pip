@@ -16,66 +16,146 @@ class CFileWriter : public IWriter
 {
 private:
 	FILE* hf;
+	bool m_error;
+
+	void release_read_only_attribute()
+	{
+		DWORD dwAttr = GetFileAttributes(fName.c_str());
+		if ((dwAttr != u32(-1)) && (dwAttr & FILE_ATTRIBUTE_READONLY))
+		{
+			dwAttr &= ~FILE_ATTRIBUTE_READONLY;
+			SetFileAttributes(fName.c_str(), dwAttr);
+		}
+	}
+
 public:
-	CFileWriter(const char* name, bool exclusive)
+	CFileWriter(const char* name, bool exclusive) : hf(nullptr), m_error(false)
 	{
 		R_ASSERT(name && name[0]);
 		fName = name;
 		VerifyPath(fName.c_str());
 		if (exclusive)
 		{
-			int handle = _sopen(fName.c_str(),_O_WRONLY | _O_TRUNC | _O_CREAT | _O_BINARY,SH_DENYWR);
-            if (handle==-1)
-                Msg("!Can't create file: '%s'. Error: '%s'.", fName.c_str(), _sys_errlist[errno]);
+			const int handle = _sopen(fName.c_str(), _O_WRONLY | _O_TRUNC | _O_CREAT | _O_BINARY, SH_DENYWR);
+			if (handle == -1)
+			{
+				m_error = true;
+				Msg("! Can't create file: '%s'. Error: '%s'.", fName.c_str(), _sys_errlist[errno]);
+				return;
+			}
+
 			hf = _fdopen(handle, "wb");
+			if (!hf)
+			{
+				m_error = true;
+				_close(handle);
+				Msg("! Can't open file stream: '%s'. Error: '%s'.", fName.c_str(), _sys_errlist[errno]);
+			}
 		}
 		else
 		{
 			hf = fopen(fName.c_str(), "wb");
-			if (hf == 0)
-				Msg("!Can't write file: '%s'. Error: '%s'.", fName.c_str(), _sys_errlist[errno]);
+			if (!hf)
+			{
+				m_error = true;
+				Msg("! Can't write file: '%s'. Error: '%s'.", fName.c_str(), _sys_errlist[errno]);
+			}
 		}
 	}
 
 	virtual ~CFileWriter()
 	{
-		if (0 != hf)
+		if (hf)
 		{
-			fclose(hf);
-			// release RO attrib
-			DWORD dwAttr = GetFileAttributes(fName.c_str());
-			if ((dwAttr != u32(-1)) && (dwAttr & FILE_ATTRIBUTE_READONLY))
-			{
-				dwAttr &= ~FILE_ATTRIBUTE_READONLY;
-				SetFileAttributes(fName.c_str(), dwAttr);
-			}
+			if (fclose(hf) != 0)
+				m_error = true;
+			hf = nullptr;
+			release_read_only_attribute();
 		}
 	}
 
-	// kernel
 	virtual void w(const void* _ptr, u32 count)
 	{
-		if ((0 != hf) && (0 != count))
+		if (!count)
+			return;
+
+		if (!hf || m_error)
 		{
-			const u32 mb_sz = 0x1000000;
-			u8* ptr = (u8*)_ptr;
-			int req_size;
-			for (req_size = count; req_size > mb_sz; req_size -= mb_sz, ptr += mb_sz)
-			{
-				size_t W = fwrite(ptr, mb_sz, 1, hf);
-				R_ASSERT3(W == 1, "Can't write mem block to file. Disk maybe full.", _sys_errlist[errno]);
-			}
-			if (req_size)
-			{
-				size_t W = fwrite(ptr, req_size, 1, hf);
-				R_ASSERT3(W == 1, "Can't write mem block to file. Disk maybe full.", _sys_errlist[errno]);
-			}
+			m_error = true;
+			return;
 		}
-	};
-	virtual void seek(u32 pos) { if (0 != hf) fseek(hf, pos, SEEK_SET); };
-	virtual u32 tell() { return (0 != hf) ? ftell(hf) : 0; };
-	virtual bool valid() { return (0 != hf); }
-	virtual void flush() { if (hf) fflush(hf); };
+
+		constexpr u32 block_size_limit = 0x1000000;
+		const u8* ptr = static_cast<const u8*>(_ptr);
+		u32 remaining = count;
+		while (remaining)
+		{
+			const u32 block_size = remaining < block_size_limit ? remaining : block_size_limit;
+			const size_t written = fwrite(ptr, 1, block_size, hf);
+			if (written != block_size)
+			{
+				m_error = true;
+				Msg("! Can't write mem block to file '%s'. Disk may be full. Error: '%s'.",
+					fName.c_str(), _sys_errlist[errno]);
+				return;
+			}
+
+			ptr += block_size;
+			remaining -= block_size;
+		}
+	}
+
+	virtual void seek(u32 pos)
+	{
+		if (!hf || fseek(hf, pos, SEEK_SET) != 0)
+			m_error = true;
+	}
+
+	virtual u32 tell()
+	{
+		if (!hf)
+		{
+			m_error = true;
+			return 0;
+		}
+
+		const long position = ftell(hf);
+		if (position < 0)
+		{
+			m_error = true;
+			return 0;
+		}
+
+		return u32(position);
+	}
+
+	virtual bool valid() { return hf != nullptr && !m_error; }
+
+	virtual void flush()
+	{
+		if (!hf || fflush(hf) != 0)
+			m_error = true;
+	}
+
+	virtual bool finalize()
+	{
+		if (!hf)
+			return false;
+
+		if (fflush(hf) != 0)
+		{
+			m_error = true;
+			Msg("! Can't flush file '%s'. Error: '%s'.", fName.c_str(), _sys_errlist[errno]);
+		}
+		if (fclose(hf) != 0)
+		{
+			m_error = true;
+			Msg("! Can't close file '%s'. Error: '%s'.", fName.c_str(), _sys_errlist[errno]);
+		}
+		hf = nullptr;
+		release_read_only_attribute();
+		return !m_error;
+	}
 };
 
 // It automatically frees memory after destruction

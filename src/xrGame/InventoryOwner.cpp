@@ -110,6 +110,9 @@ void CInventoryOwner::reinit()
 //call this after CGameObject::net_Spawn
 BOOL CInventoryOwner::net_Spawn(CSE_Abstract* DC)
 {
+	CSE_Abstract* E = static_cast<CSE_Abstract*>(DC);
+	{
+
 	if (!m_pTrade)
 		m_pTrade = xr_new<CTrade>(this);
 
@@ -117,12 +120,12 @@ BOOL CInventoryOwner::net_Spawn(CSE_Abstract* DC)
 		xr_delete(m_trade_parameters);
 
 	m_trade_parameters = xr_new<CTradeParameters>(trade_section());
+	}
 
 	//получить указатель на объект, InventoryOwner
 	//m_inventory->setSlotsBlocked(false);
 	CGameObject* pThis = smart_cast<CGameObject*>(this);
 	if (!pThis) return FALSE;
-	CSE_Abstract* E = (CSE_Abstract*)(DC);
 
 	if (IsGameTypeSingle())
 	{
@@ -133,10 +136,17 @@ BOOL CInventoryOwner::net_Spawn(CSE_Abstract* DC)
 		R_ASSERT(pTrader->character_profile().size());
 
 		//синхронизируем параметры персонажа с серверным объектом
+		{
+
 		CharacterInfo().Init(pTrader);
+			RELATION_REGISTRY::InvalidateAttitudeCache();
+		}
 
 		//-------------------------------------
+		{
+
 		m_known_info_registry->registry().init(E->ID);
+		}
 		//-------------------------------------
 
 		CAI_PhraseDialogManager* dialog_manager = smart_cast<CAI_PhraseDialogManager*>(this);
@@ -156,6 +166,7 @@ BOOL CInventoryOwner::net_Spawn(CSE_Abstract* DC)
 	{
 		CharacterInfo().m_SpecificCharacter.Load("mp_actor");
 		CharacterInfo().InitSpecificCharacter("mp_actor");
+		RELATION_REGISTRY::InvalidateAttitudeCache();
 		CharacterInfo().m_SpecificCharacter.data()->m_sGameName = (E->name_replace()[0])
 			                                                          ? E->name_replace()
 			                                                          : *pThis->cName();
@@ -169,6 +180,7 @@ BOOL CInventoryOwner::net_Spawn(CSE_Abstract* DC)
 
 void CInventoryOwner::net_Destroy()
 {
+	RELATION_REGISTRY::InvalidateAttitudeCache();
 	CAttachmentOwner::net_Destroy();
 
 	inventory().Clear();
@@ -200,9 +212,13 @@ void CInventoryOwner::load(IReader& input_packet)
 	m_tmp_active_slot_num = active_slot;
 
 	CharacterInfo().load(input_packet);
+	RELATION_REGISTRY::InvalidateAttitudeCache();
 	load_data(m_game_name_str, input_packet);
 	load_data(m_money, input_packet);
-	if (this->object_id() != Actor()->object_id())
+	// Do not depend on the global actor spawn order while restoring inventory
+	// owners. NPCs may be loaded before g_actor is assigned, so Actor() can still
+	// be null here. Identify the owner itself instead.
+	if (!cast_game_object()->cast_actor())
 		m_game_name = TranslateName(m_game_name_str.c_str());
 }
 
@@ -328,6 +344,7 @@ bool CInventoryOwner::IsTrading()
 //==============
 void CInventoryOwner::renderable_Render		(IDSGraphManager* DM)
 {
+
 	if (inventory().ActiveItem())
 		inventory().ActiveItem()->renderable_Render(DM);
 
@@ -415,12 +432,10 @@ DIALOG_ID_VECTOR CInventoryOwner::Dialogs() const
 }
 
 void CInventoryOwner::NewPdaContact(CInventoryOwner* pInvOwner)
-{
-}
+{}
 
 void CInventoryOwner::LostPdaContact(CInventoryOwner* pInvOwner)
-{
-}
+{}
 
 //////////////////////////////////////////////////////////////////////////
 //для работы с relation system
@@ -441,6 +456,7 @@ void CInventoryOwner::SetCommunity(CHARACTER_COMMUNITY_INDEX new_community)
 	if (!e_entity) return;
 
 	CharacterInfo().SetCommunity(new_community);
+	RELATION_REGISTRY::InvalidateAttitudeCache();
 	if (EA->g_Alive())
 	{
 		EA->ChangeTeam(CharacterInfo().Community().team(), EA->g_Squad(), EA->g_Group());
@@ -465,6 +481,7 @@ void CInventoryOwner::SetRank(CHARACTER_RANK_VALUE rank)
 	if (!trader) return;
 
 	CharacterInfo().m_CurrentRank.set(rank);
+	RELATION_REGISTRY::InvalidateAttitudeCache();
 	trader->m_rank = rank;
 
 	if (EA->ID() == Actor()->ID())
@@ -487,6 +504,7 @@ void CInventoryOwner::SetReputation(CHARACTER_REPUTATION_VALUE reputation)
 	if (!trader) return;
 
 	CharacterInfo().m_CurrentReputation.set(reputation);
+	RELATION_REGISTRY::InvalidateAttitudeCache();
 	trader->m_reputation = reputation;
 
 	if (EA->ID() == Actor()->ID())
@@ -508,8 +526,7 @@ void CInventoryOwner::OnItemDrop(CInventoryItem* inventory_item, bool just_befor
 }
 
 void CInventoryOwner::OnItemDropUpdate()
-{
-}
+{}
 
 void CInventoryOwner::OnItemBelt(CInventoryItem* inventory_item, const SInvItemPlace& previous_place)
 {
@@ -554,24 +571,20 @@ CCustomOutfit* CInventoryOwner::GetOutfit() const
 }
 
 void CInventoryOwner::on_weapon_shot_start(CWeapon* weapon)
-{
-}
+{}
 
 void CInventoryOwner::on_weapon_shot_update()
-{
-}
+{}
 
 void CInventoryOwner::on_weapon_shot_stop(CWeapon*)
 {
 }
 
 void CInventoryOwner::on_weapon_shot_remove(CWeapon* weapon)
-{
-}
+{}
 
 void CInventoryOwner::on_weapon_hide(CWeapon* weapon)
-{
-}
+{}
 
 LPCSTR CInventoryOwner::trade_section() const
 {

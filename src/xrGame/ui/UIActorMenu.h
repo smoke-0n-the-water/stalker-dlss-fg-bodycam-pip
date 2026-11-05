@@ -1,5 +1,7 @@
 #pragma once
 
+extern int g_ui_inventory_cache;
+
 #include "script_export_space.h"
 
 #include "UIDialogWnd.h"
@@ -180,6 +182,13 @@ protected:
 	bool m_item_info_view;
 	bool m_highlight_clear;
 	u32 m_trade_partner_inventory_state;
+
+	// Inventory mode is opened much more often than the item layout changes.
+	// Keep the already constructed cells while the actor and inventory revision
+	// match, but never reuse them for another inventory owner.
+	CInventoryOwner* m_cached_inventory_owner;
+	u32 m_cached_inventory_revision;
+	bool m_inventory_cache_valid;
 public:
 	CUIDragDropReferenceList* m_pQuickSlot;
 
@@ -251,7 +260,7 @@ protected:
 	void xr_stdcall OnDragItemOnTrash(CUIDragItem* item, bool b_receive);
 	bool OnItemDropped(PIItem itm, CUIDragDropListEx* new_owner, CUIDragDropListEx* old_owner);
 
-	void ResetMode();
+	void ResetMode(bool clear_lists = true);
 	void InitInventoryMode();
 	void DeInitInventoryMode();
 	void InitTradeMode();

@@ -85,6 +85,7 @@ dlss::Size renderSize;
 dlss::Offset rasterJitter;
 dlss::Offset previousJitter;
 bool inScene = false, mainView = false, configured = false;
+bool hdrInput = false;
 unsigned jitterIndex = 0;
 Fvector lastPosition, lastDirection;
 float lastFov = 0;
@@ -260,7 +261,8 @@ void InitializeTargets()
                 "Select a valid display resolution and DLSS quality, then Apply again.");
             return;
         }
-        if (!backend.Create(quality, size, display, RImplementation.o.dx11_hdr10, static_cast<Preset>(ps_r_dlss_preset)))
+        hdrInput = ps_r_dlss_hdr_input && RImplementation.o.dlss_hdr_input;
+        if (!backend.Create(quality, size, display, RImplementation.o.dx11_hdr10 || hdrInput, static_cast<Preset>(ps_r_dlss_preset)))
         {
             ActivationFailed(BackendReason("DLSS feature creation failed."),
                 "Check the console/log and GPU driver/runtime. Reapply Upscaling or switch it Off.");
@@ -298,7 +300,7 @@ void InitializeTargets()
 
 void ReleaseTargets()
 {
-    inScene = mainView = configured = false;
+    inScene = mainView = configured = hdrInput = false;
     jitterIndex = 0;
     haveCamera = false;
     reportedEvaluation = false;
@@ -360,6 +362,15 @@ bool FrameGenerationSupported(unsigned id)
         }
     case 2: return HW.PresentationBridge() && HW.PresentationBridge()->FsrRuntimeAvailable() &&
         *HW.PresentationBridge()->FsrFrameGenerationVersion();
+    case 3: // DLSS 3x / 4x: DLSS-G plus a runtime maximum of 2 / 3 generated frames.
+    case 4:
+    {
+        if (!FrameGenerationSupported(1)) return false;
+        // Unknown until Streamline has started this session: offer it; the bridge
+        // clamps a request the runtime cannot do to what it reports (logged).
+        const UINT max = StreamlineIntegration::MaxFramesToGenerate();
+        return max == 0 || max >= id - 1;
+    }
     default: return false;
     }
 #else
@@ -393,6 +404,7 @@ unsigned RenderWidth() { return renderSize.Valid() ? renderSize.width : Device.d
 unsigned RenderHeight() { return renderSize.Valid() ? renderSize.height : Device.dwHeight; }
 bool Configured() { return configured; }
 void InvalidateHistory() { ResetHistory(); }
+bool HdrInput() { return configured && hdrInput; }
 bool Active() { return configured && inScene && mainView && BackendReady(); }
 Offset RasterJitter() { return rasterJitter; }
 Offset PreviousRasterJitter() { return previousJitter; }

@@ -52,7 +52,15 @@ ui_shader* g_OutfitUpgradeIconsShader = NULL;
 ui_shader* g_WeaponUpgradeIconsShader = NULL;
 ui_shader* g_tmpWMShader = NULL;
 
-xr_map<LPCSTR, ui_shader*> g_CustomIconShaders;
+xr_unordered_flat_map<shared_str, ui_shader*> g_CustomIconShaders;
+int g_ui_inventory_icon_preload = 1;
+
+namespace
+{
+	xr_unordered_flat_map<shared_str, InventoryUtilities::InventoryIconDesc> g_InventoryIconMetadata;
+	xrSRWLock g_InventoryIconMetadataLock;
+	const CInifile* g_InventoryIconSettings = nullptr;
+}
 
 static CUIStatic* GetUIStatic();
 
@@ -63,6 +71,59 @@ CharInfoStrings* charInfoReputationStrings = NULL;
 CharInfoStrings* charInfoRankStrings = NULL;
 CharInfoStrings* charInfoGoodwillStrings = NULL;
 
+void InventoryUtilities::ClearInventoryIconMetadataCache()
+{
+	xrSRWLockGuard guard(g_InventoryIconMetadataLock);
+	g_InventoryIconMetadata.clear();
+	g_InventoryIconSettings = pSettings;
+}
+
+InventoryUtilities::InventoryIconDesc InventoryUtilities::GetInventoryIconDesc(LPCSTR section)
+{
+	R_ASSERT(section && section[0]);
+	const shared_str key = section;
+
+	{
+		xrSRWLockGuard guard(g_InventoryIconMetadataLock, true);
+		if (g_InventoryIconSettings == pSettings)
+		{
+			const auto it = g_InventoryIconMetadata.find(key);
+			if (it != g_InventoryIconMetadata.end())
+				return it->second;
+		}
+	}
+
+	InventoryIconDesc desc;
+	const float grid_x = pSettings->r_float(section, "inv_grid_x");
+	const float grid_y = pSettings->r_float(section, "inv_grid_y");
+	desc.grid_size.set(
+		pSettings->r_float(section, "inv_grid_width"),
+		pSettings->r_float(section, "inv_grid_height"));
+	desc.texture_rect.set(
+		grid_x * INV_GRID_WIDTH,
+		grid_y * INV_GRID_HEIGHT,
+		desc.grid_size.x * INV_GRID_WIDTH,
+		desc.grid_size.y * INV_GRID_HEIGHT);
+	desc.texture_rect.rb.add(desc.texture_rect.lt);
+	desc.texture = READ_IF_EXISTS(pSettings, r_string, section, "icons_texture", nullptr);
+
+	{
+		xrSRWLockGuard guard(g_InventoryIconMetadataLock);
+		if (g_InventoryIconSettings != pSettings)
+		{
+			g_InventoryIconMetadata.clear();
+			g_InventoryIconSettings = pSettings;
+		}
+		const auto [it, inserted] = g_InventoryIconMetadata.emplace(key, desc);
+		return inserted ? desc : it->second;
+	}
+}
+
+InventoryUtilities::InventoryIconDesc InventoryUtilities::GetInventoryIconDesc(const shared_str& section)
+{
+	return GetInventoryIconDesc(section.c_str());
+}
+
 void InventoryUtilities::CreateShaders()
 {
 	g_tmpWMShader = xr_new<ui_shader>();
@@ -72,6 +133,7 @@ void InventoryUtilities::CreateShaders()
 
 void InventoryUtilities::DestroyShaders()
 {
+	ClearInventoryIconMetadataCache();
 	xr_delete(g_BuyMenuShader);
 	g_BuyMenuShader = 0;
 
@@ -215,7 +277,9 @@ const ui_shader& InventoryUtilities::GetEquipmentIconsShader()
 
 ui_shader& InventoryUtilities::GetCustomIconTextureShader(LPCSTR name)
 {
-	xr_map<LPCSTR, ui_shader*>::iterator it = g_CustomIconShaders.find(name);
+	R_ASSERT(name && name[0]);
+	const shared_str texture_name = name;
+	auto it = g_CustomIconShaders.find(texture_name);
 
 	if (it != g_CustomIconShaders.end())
 		return *(it)->second;
@@ -223,13 +287,54 @@ ui_shader& InventoryUtilities::GetCustomIconTextureShader(LPCSTR name)
 	ui_shader* shader = xr_new<ui_shader>();
 	(*shader)->create("hud\\default", name);
 
-	std::pair<LPCSTR, ui_shader*> name_shader;
-	name_shader.first = name;
-	name_shader.second = shader;
-
-	g_CustomIconShaders.insert(name_shader);
+	g_CustomIconShaders.emplace(texture_name, shader);
 
 	return *shader;
+}
+
+namespace
+{
+	void preload_icon_section(LPCSTR section)
+	{
+		if (!section || !section[0] || !pSettings->line_exist(section, "icons_texture"))
+			return;
+
+		LPCSTR texture = pSettings->r_string(section, "icons_texture");
+		if (texture && texture[0])
+			InventoryUtilities::GetCustomIconTextureShader(texture);
+	}
+
+	void preload_inventory_item_icons(PIItem item)
+	{
+		if (!item)
+			return;
+
+		LPCSTR item_section = item->m_section_id.c_str();
+		preload_icon_section(item_section);
+
+		for (u32 layer = 1;; ++layer)
+		{
+			string32 field;
+			xr_sprintf(field, sizeof(field), "%uicon_layer", layer);
+			if (!pSettings->line_exist(item_section, field))
+				break;
+
+			preload_icon_section(pSettings->r_string(item_section, field));
+		}
+	}
+}
+
+u32 InventoryUtilities::PreloadInventoryIconShaders(CInventoryOwner* owner)
+{
+	if (!g_ui_inventory_icon_preload || !owner)
+		return 0;
+
+	const u32 shaders_before = static_cast<u32>(g_CustomIconShaders.size());
+	const CInventory& inventory = owner->inventory();
+	for (PIItem item : inventory.m_all)
+		preload_inventory_item_icons(item);
+
+	return static_cast<u32>(g_CustomIconShaders.size()) - shaders_before;
 }
 
 const ui_shader& InventoryUtilities::GetMPCharIconsShader()

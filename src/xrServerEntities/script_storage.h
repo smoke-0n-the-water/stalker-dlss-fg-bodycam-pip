@@ -13,6 +13,16 @@
 
 struct lua_State;
 class CScriptThread;
+struct lua_allocation_tracker;
+
+struct SLuaAllocationStats
+{
+	u64 alloc_calls = 0;
+	u64 realloc_calls = 0;
+	u64 free_calls = 0;
+	u64 allocated_bytes = 0;
+	u64 freed_bytes = 0;
+};
 
 #ifndef MASTER_GOLD
 #	define USE_DEBUGGER
@@ -46,6 +56,13 @@ private:
 	lua_State* m_virtual_machine;
 	CScriptThread* m_current_thread;
 	BOOL m_jit;
+	lua_allocation_tracker* m_allocation_tracker;
+
+#ifdef DEBUG
+	volatile LONG m_lua_owner_thread;
+	volatile LONG m_lua_owner_depth;
+	LPCSTR m_lua_owner_scope;
+#endif
 
 #ifdef DEBUG
 public:
@@ -80,9 +97,16 @@ public:
 	CScriptStorage();
 	virtual ~CScriptStorage();
 	IC lua_State* lua();
+	void debug_lua_enter(LPCSTR scope);
+	void debug_lua_leave();
+	void debug_lua_assert_access() const;
+	void set_lua_allocation_tracking(bool enabled);
+	void lua_allocation_stats(SLuaAllocationStats& result) const;
+	void reset_lua_allocation_stats();
 	IC void current_thread(CScriptThread* thread);
 	IC CScriptThread* current_thread() const;
-	bool load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LPCSTR caScriptName, LPCSTR caNameSpaceName = 0);
+	bool load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LPCSTR caScriptName,
+	    LPCSTR caNameSpaceName = 0, bool recoveredModuleLoad = false);
 	bool load_file_into_namespace(LPCSTR caScriptName, LPCSTR caNamespaceName);
 	bool namespace_loaded(LPCSTR caName, bool remove_from_stack = true);
 	bool object(LPCSTR caIdentifier, int type);
@@ -90,7 +114,8 @@ public:
 	::luabind::object name_space(LPCSTR namespace_name);
 	int error_log(LPCSTR caFormat, ...);
 	static int __cdecl script_log(ELuaMessageType message, LPCSTR caFormat, ...);
-	static bool print_output(lua_State* L, LPCSTR caScriptName, int iErorCode = 0);
+	static bool print_output(lua_State* L, LPCSTR caScriptName, int iErorCode = 0,
+	    bool recoveredModuleLoad = false, bool fatalFollows = false);
 	static void print_error(lua_State* L, int iErrorCode);
 	virtual void on_error(lua_State* L) = 0;
     void DebuggerAttach();
@@ -99,6 +124,29 @@ public:
 public:
     void flush_log();
 #endif //-LUA_DEBUG_PRINT DEBUG
+};
+
+class CScriptLuaStateGuard : xray::noncopyable
+{
+public:
+	CScriptLuaStateGuard(CScriptStorage& storage, LPCSTR scope) : m_storage(&storage)
+	{
+#ifdef DEBUG
+		m_storage->debug_lua_enter(scope);
+#else
+		(void)scope;
+#endif
+	}
+
+	~CScriptLuaStateGuard()
+	{
+#ifdef DEBUG
+		m_storage->debug_lua_leave();
+#endif
+	}
+
+private:
+	CScriptStorage* m_storage;
 };
 
 #include "script_storage_inline.h"

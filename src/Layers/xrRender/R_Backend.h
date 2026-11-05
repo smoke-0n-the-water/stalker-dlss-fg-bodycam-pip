@@ -241,6 +241,10 @@ private:
 
 public:
 	void Invalidate(); // pip: SetActive needs a full cache reset per viewport (was private)
+	// Forget bound texture lists/stages so the next draw rebinds them
+	// (needed after a CTexture's surface was swapped while bound).
+	void InvalidateTextures();
+
 	struct _stats
 	{
 		u32 polys;

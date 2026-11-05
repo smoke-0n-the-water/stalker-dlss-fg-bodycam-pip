@@ -42,7 +42,10 @@ struct script_attachment_bone_cb
 		m_overwrite = overwrite;
 	}
 
-	~script_attachment_bone_cb() {}
+	~script_attachment_bone_cb()
+	{
+		xr_delete(m_func);
+	}
 };
 
 class script_attachment :
@@ -59,7 +62,8 @@ private:
 	shared_str m_current_motion;
 	u16 m_parent_bone;
 
-	LPCSTR m_script_ui_func;
+	shared_str m_script_ui_func;
+	::luabind::object* m_script_ui_owner;
 	CUIWindow* m_script_ui;
 	Fmatrix m_script_ui_mat;
 	Fvector m_script_ui_offset[4];
@@ -82,6 +86,7 @@ private:
 	::luabind::object* m_userdata;
 
 	u32 m_last_upd_frame;
+	bool m_invalid_bone_warning_reported;
 
 public:
 	script_attachment(LPCSTR name, LPCSTR model_name);
@@ -93,6 +98,7 @@ public:
 		delete_data(m_children);
 		delete_data(m_bone_callbacks);
 		xr_delete(m_userdata);
+		xr_delete(m_script_ui_owner);
 	}
 
 	virtual void spatial_register();
@@ -152,7 +158,7 @@ public:
 	void SetUserdata(::luabind::object obj);
 
 	void SetScriptUI(LPCSTR ui_func);
-	LPCSTR GetScriptUI() { return m_script_ui_func; }
+	LPCSTR GetScriptUI() { return m_script_ui_func.c_str(); }
 
 	void RecalcScriptUIOffset();
 

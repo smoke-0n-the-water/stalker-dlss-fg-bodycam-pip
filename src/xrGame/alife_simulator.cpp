@@ -16,6 +16,7 @@
 #include "object_factory.h"
 #include "alife_object_registry.h"
 #include "../xrEngine/xr_ioconsole.h"
+#include "../xrCore/engine_error_logger.h"
 
 #ifdef DEBUG
 #	include "moving_objects.h"

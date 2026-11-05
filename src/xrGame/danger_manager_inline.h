@@ -12,11 +12,14 @@ IC CDangerManager::CDangerManager(CCustomMonster* object)
 {
 	VERIFY(object);
 	m_object = object;
+	m_objects.reserve(16);
+	m_object_index.reserve(32);
 }
 
 IC void CDangerManager::reset()
 {
 	m_objects.clear();
+	m_object_index.clear();
 	m_selected = 0;
 }
 

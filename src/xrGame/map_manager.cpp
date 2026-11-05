@@ -114,6 +114,7 @@ CMapManager::CMapManager()
 	m_locations_wrapper = xr_new<CMapLocationWrapper>();
 	m_locations_wrapper->registry().init(1);
 	m_locations = NULL;
+	m_locations_version = 0;
 }
 
 CMapManager::~CMapManager()
@@ -122,11 +123,18 @@ CMapManager::~CMapManager()
 	delete_data(m_locations_wrapper);
 }
 
+void CMapManager::MarkLocationsDirty()
+{
+	if (++m_locations_version == 0)
+		++m_locations_version;
+}
+
 CMapLocation* CMapManager::AddMapLocation(const shared_str& spot_type, u16 id)
 {
 	CMapLocation* l = xr_new<CMapLocation>(spot_type.c_str(), id);
 	Locations().push_back(SLocationKey(spot_type, id));
 	Locations().back().location = l;
+	MarkLocationsDirty();
 	if (IsGameTypeSingle() && g_actor)
 	{
 		Actor()->callback(GameObject::eMapLocationAdded)(spot_type.c_str(), id);
@@ -165,6 +173,7 @@ CMapLocation* CMapManager::AddRelationLocation(CInventoryOwner* pInvOwner)
 			on_added(sname.c_str(), pInvOwner->object_id());
 	}
 
+	MarkLocationsDirty();
 	return l;
 }
 
@@ -195,12 +204,14 @@ void CMapManager::RemoveMapLocation(const shared_str& spot_type, u16 id)
 		QueueRemovedNotify((*it).spot_type, (*it).object_id);
 		Destroy((*it).location);
 		Locations().erase(it);
+		MarkLocationsDirty();
 	}
 }
 
 // demonized: remove all map object spots by id
 void CMapManager::RemoveAllMapLocationsById(u16 id)
 {
+	bool changed = false;
 	for (Locations_it it = Locations().begin(); it != Locations().end(); ) {
 		if (it->object_id == id) {
 			if (IsGameTypeSingle())
@@ -208,14 +219,18 @@ void CMapManager::RemoveAllMapLocationsById(u16 id)
 			QueueRemovedNotify((*it).spot_type, (*it).object_id);
 			Destroy((*it).location);
 			it = Locations().erase(it);
+			changed = true;
 		} else {
 			it++;
 		}
 	}
+	if (changed)
+		MarkLocationsDirty();
 }
 
 void CMapManager::RemoveMapLocationByObjectID(u16 id) //call on destroy object
 {
+	bool changed = false;
 	FindLocationByID key(id);
 	Locations_it it = std::find_if(Locations().begin(), Locations().end(), key);
 	while (it != Locations().end())
@@ -226,9 +241,12 @@ void CMapManager::RemoveMapLocationByObjectID(u16 id) //call on destroy object
 		QueueRemovedNotify((*it).spot_type, (*it).object_id);
 		Destroy((*it).location);
 		Locations().erase(it);
+		changed = true;
 
 		it = std::find_if(Locations().begin(), Locations().end(), key);
 	}
+	if (changed)
+		MarkLocationsDirty();
 }
 
 void CMapManager::RemoveMapLocation(CMapLocation* ml)
@@ -244,6 +262,7 @@ void CMapManager::RemoveMapLocation(CMapLocation* ml)
 		QueueRemovedNotify((*it).spot_type, (*it).object_id);
 		Destroy((*it).location);
 		Locations().erase(it);
+		MarkLocationsDirty();
 	}
 }
 
@@ -319,6 +338,7 @@ void CMapManager::Update()
 	}
 	std::sort(Locations().begin(), Locations().end());
 
+	bool changed = false;
 	while ((!Locations().empty()) && (!Locations().back().actual))
 	{
 		if (IsGameTypeSingle())
@@ -327,7 +347,10 @@ void CMapManager::Update()
 		QueueRemovedNotify(Locations().back().spot_type, Locations().back().object_id);
 		Destroy(Locations().back().location);
 		Locations().pop_back();
+		changed = true;
 	}
+	if (changed)
+		MarkLocationsDirty();
 }
 
 void CMapManager::DisableAllPointers()
@@ -345,7 +368,8 @@ void CMapManager::ReloadSpots()
 	Locations_it it_e = Locations().end();
 
 	for (; it != it_e; ++it)
-		(*it).location->LoadSpot((*it).location->spot_type, false);
+		(*it).location->LoadSpot((*it).location->spot_type, true);
+	MarkLocationsDirty();
 }
 
 Locations& CMapManager::Locations()

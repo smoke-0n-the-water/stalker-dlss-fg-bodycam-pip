@@ -193,9 +193,10 @@ void CAI_Rat::FreeHuntingActive()
 
 	if (bfCheckIfGoalChanged())
 	{
-		if (m_bStateChanged || (Position().distance_to(m_tSpawnPosition) > m_fStableDistance) || (::Random.randF(0, 1) >
+		const float home_distance = Position().distance_to(m_tSafeSpawnPosition);
+		if (m_bStateChanged || (home_distance > m_fStableDistance) || (::Random.randF(0, 1) >
 			m_fChangeActiveStateProbability))
-			if (Position().distance_to(m_tSafeSpawnPosition) > m_fMaxHomeRadius)
+			if (home_distance > m_fMaxHomeRadius)
 				m_fSpeed = m_fSafeSpeed = m_fMaxSpeed;
 			else
 				vfChooseNewSpeed();
@@ -467,8 +468,9 @@ void CAI_Rat::Retreat()
 		vfNormalizeSafe(tTemp);
 		SRotation sTemp;
 		mk_rotation(tTemp, sTemp);
+		const float enemy_distance = memory().enemy().selected()->Position().distance_to(Position());
 
-		if ((memory().enemy().selected()->Position().distance_to(Position()) <= m_fAttackDistance) && (angle_difference(
+		if ((enemy_distance <= m_fAttackDistance) && (angle_difference(
 			movement().m_body.target.yaw, sTemp.yaw) > m_fAttackAngle))
 		{
 			m_fSpeed = 0.f;
@@ -476,7 +478,7 @@ void CAI_Rat::Retreat()
 		}
 
 		CHECK_IF_GO_TO_NEW_STATE_THIS_UPDATE(
-			(memory().enemy().selected()->Position().distance_to(Position()) <= m_fAttackDistance) && (angle_difference(
+			(enemy_distance <= m_fAttackDistance) && (angle_difference(
 				movement().m_body.target.yaw, sTemp.yaw) <= m_fAttackAngle), aiRatAttackFire)
 
 		tTemp.sub(Position(), memory().enemy().selected()->Position());
@@ -641,8 +643,9 @@ void CAI_Rat::ReturnHome()
 		vfNormalizeSafe(tTemp);
 		SRotation sTemp;
 		mk_rotation(tTemp, sTemp);
+		const float enemy_distance = memory().enemy().selected()->Position().distance_to(Position());
 
-		if ((memory().enemy().selected()->Position().distance_to(Position()) <= m_fAttackDistance) && (angle_difference(
+		if ((enemy_distance <= m_fAttackDistance) && (angle_difference(
 			movement().m_body.target.yaw, sTemp.yaw) > m_fAttackAngle))
 		{
 			m_fSpeed = 0.f;
@@ -650,7 +653,7 @@ void CAI_Rat::ReturnHome()
 		}
 
 		CHECK_IF_GO_TO_NEW_STATE_THIS_UPDATE(
-			(memory().enemy().selected()->Position().distance_to(Position()) <= m_fAttackDistance) && (angle_difference(
+			(enemy_distance <= m_fAttackDistance) && (angle_difference(
 				movement().m_body.target.yaw, sTemp.yaw) <= m_fAttackAngle), aiRatAttackFire)
 	}
 

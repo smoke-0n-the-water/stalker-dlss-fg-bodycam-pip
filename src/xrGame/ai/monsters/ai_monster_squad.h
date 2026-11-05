@@ -207,6 +207,20 @@ public:
 	void set_home_in_danger() { m_home_danger_end_tick = Device.dwTimeGlobal + m_home_danger_mode_time; }
 
 private:
+	struct SIdleSideIndices
+	{
+		u32 front_index;
+		u32 back_index;
+		u32 left_index;
+		u32 right_index;
+	};
+
+	xr_vector<SIdleSideIndices> m_idle_side_indices;
+	xr_unordered_flat_map<CEntity*, u32> m_idle_member_slots;
+	u32 idle_member_index(CEntity* entity) const;
+	void idle_remove_entity(ENTITY_VEC& side, CEntity* entity, u32 member_index,
+		u32 SIdleSideIndices::* index_member);
+
 	// danger mode is turns on when monsters hear dangerous sound or get a hit
 	// danger mode turns off after m_danger_mode_time miliseconds
 	u32 m_home_danger_mode_time;

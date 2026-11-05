@@ -3,12 +3,62 @@
 
 #include "xrXMLParser.h"
 
-extern void XMLLuaCallback(CXml &m_xml, LPCSTR xml_string);
+extern bool XMLLuaCallback(CXml& m_xml, LPCSTR xml_string, xr_string& transformed_xml);
+
+XRXMLPARSER_API BOOL psXmlTextCache = TRUE;
+XRXMLPARSER_API BOOL psXmlNodeCache = TRUE;
+XRXMLPARSER_API int psXmlTextCacheMaxMb = 64;
+
+namespace
+{
+struct XmlSourceCache
+{
+	xr_map<xr_string, xr_string> entries;
+	xrSRWLock lock;
+	size_t bytes = 0;
+};
+
+XmlSourceCache& xml_source_cache()
+{
+	// Process-lifetime cache: intentionally retained until process termination so
+	// it cannot be destroyed after xrCore allocator shutdown.
+	static XmlSourceCache* cache = new XmlSourceCache();
+	return *cache;
+}
+
+
+bool is_ui_xml(LPCSTR xml_filename)
+{
+	if (!xml_filename)
+		return false;
+	return !_strnicmp(xml_filename, "ui\\", 3) || strstr(xml_filename, "\\ui\\") != nullptr;
+}
+
+xr_string make_xml_cache_key(CXml& xml, LPCSTR path_alias, LPCSTR xml_filename)
+{
+	const shared_str resolver = xml.correct_file_name("ui", "__xml_cache_probe__.xml");
+	xr_string key = path_alias ? path_alias : "";
+	key += '|';
+	key += xml_filename ? xml_filename : "";
+	key += '|';
+	key += resolver.c_str() ? resolver.c_str() : "";
+	return key;
+}
+}
+
+XRXMLPARSER_API void ClearXmlTextCache()
+{
+	XmlSourceCache& cache = xml_source_cache();
+	xrSRWLockGuard guard(cache.lock);
+	cache.entries.clear();
+	cache.bytes = 0;
+}
 
 XRXMLPARSER_API CXml::CXml()
 	: m_root(NULL),
 	  m_pLocalRoot(NULL)
 {
+	m_node_path_cache.reserve(128);
 }
 
 XRXMLPARSER_API CXml::~CXml()
@@ -18,7 +68,18 @@ XRXMLPARSER_API CXml::~CXml()
 
 void CXml::ClearInternal()
 {
+	m_node_path_cache.clear();
+	m_pLocalRoot = nullptr;
+	m_root = nullptr;
 	m_Doc.Clear();
+}
+
+void CXml::SetLocalRoot(XML_NODE* pLocalRoot)
+{
+	if (m_pLocalRoot == pLocalRoot)
+		return;
+	m_pLocalRoot = pLocalRoot;
+	m_node_path_cache.clear();
 }
 
 void ParseFile(LPCSTR path, CMemoryWriter& W, IReader* F, CXml* xml)
@@ -120,18 +181,59 @@ void CXml::Load(LPCSTR path_alias, LPCSTR path, LPCSTR _xml_filename)
 //инициализация и загрузка XML файла
 void CXml::Load(LPCSTR path, LPCSTR xml_filename)
 {
+	ClearInternal();
 	xr_strcpy(m_xml_file_name, xml_filename);
-	// Load and parse xml file
 
-	IReader* F = FS.r_open(path, xml_filename);
-	R_ASSERT2(F, xml_filename);
+	const bool use_cache = psXmlTextCache && is_ui_xml(xml_filename);
+	const xr_string cache_key = use_cache ? make_xml_cache_key(*this, path, xml_filename) : xr_string();
+	xr_string source;
+	bool source_ready = false;
+	if (use_cache)
+	{
+		XmlSourceCache& cache = xml_source_cache();
+		xrSRWLockGuard guard(cache.lock, true);
+		const auto found = cache.entries.find(cache_key);
+		if (found != cache.entries.end())
+		{
+			// Copy under the read lock. This keeps explicit UI reload safe even if a
+			// different thread is finishing an XML parse at the same time.
+			source = found->second;
+			source_ready = true;
+		}
+	}
 
-	CMemoryWriter W;
-	ParseFile(path, W, F, this);
-	W.w_stringZ("");
-	FS.r_close(F);
+	if (!source_ready)
+	{
+		IReader* F = FS.r_open(path, xml_filename);
+		R_ASSERT2(F, xml_filename);
 
-	m_Doc.Parse(&m_Doc, (LPCSTR)W.pointer());
+		CMemoryWriter W;
+		ParseFile(path, W, F, this);
+		W.w_stringZ("");
+		FS.r_close(F);
+		source.assign(reinterpret_cast<LPCSTR>(W.pointer()));
+
+		if (use_cache)
+		{
+			XmlSourceCache& cache = xml_source_cache();
+			const size_t max_bytes = static_cast<size_t>(_max(psXmlTextCacheMaxMb, 0)) * 1024u * 1024u;
+			xrSRWLockGuard guard(cache.lock);
+			const auto existing = cache.entries.find(cache_key);
+			if (existing == cache.entries.end() && max_bytes && cache.bytes + source.size() + 1u <= max_bytes)
+			{
+				const auto inserted = cache.entries.insert(std::make_pair(cache_key, source));
+				if (inserted.second)
+					cache.bytes += source.size() + 1u;
+			}
+		}
+	}
+
+	xr_string transformed_source;
+	if (XMLLuaCallback(*this, source.c_str(), transformed_source))
+		source.swap(transformed_source);
+
+	LPCSTR xml_source = source.c_str();
+	m_Doc.Parse(&m_Doc, xml_source);
 	if (m_Doc.Error())
 	{
 		string1024 str;
@@ -140,7 +242,6 @@ void CXml::Load(LPCSTR path, LPCSTR xml_filename)
 	}
 
 	m_root = m_Doc.FirstChildElement();
-	XMLLuaCallback(*this, (LPCSTR)W.pointer());
 }
 
 void CXml::LoadFromString(LPCSTR xml_string)
@@ -202,7 +303,17 @@ XML_NODE* CXml::NavigateToNode(XML_NODE* start_node, LPCSTR path, int node_index
 
 XML_NODE* CXml::NavigateToNode(LPCSTR path, int node_index)
 {
-	return NavigateToNode(GetLocalRoot() ? GetLocalRoot() : GetRoot(), path, node_index);
+	if (!psXmlNodeCache || node_index != 0 || !path || !path[0])
+		return NavigateToNode(GetLocalRoot() ? GetLocalRoot() : GetRoot(), path, node_index);
+
+	const shared_str key(path);
+	const auto cached = m_node_path_cache.find(key);
+	if (cached != m_node_path_cache.end())
+		return cached->second;
+
+	XML_NODE* const result = NavigateToNode(GetLocalRoot() ? GetLocalRoot() : GetRoot(), path, node_index);
+	m_node_path_cache.emplace(key, result);
+	return result;
 }
 
 XML_NODE* CXml::NavigateToNodeWithAttribute(LPCSTR tag_name, LPCSTR attrib_name, LPCSTR attrib_value)

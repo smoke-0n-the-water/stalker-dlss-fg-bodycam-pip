@@ -14,6 +14,8 @@ void EndScene(bool invalidateHistory = false);
 bool Active();
 bool Configured();
 void InvalidateHistory();
+// DLSS takes linear HDR input (r_dlss_hdr_input)
+bool HdrInput();
 unsigned RenderWidth();
 unsigned RenderHeight();
 Offset RasterJitter();

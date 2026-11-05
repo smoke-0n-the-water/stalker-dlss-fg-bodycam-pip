@@ -18,6 +18,9 @@
 #include "path_manager.h"
 #include "graph_engine_space.h"
 #include "profiler.h"
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 
 #ifndef AI_COMPILER
 #	include "operator_condition.h"
@@ -34,6 +37,92 @@ namespace hash_fixed_vertex_manager
 } // namespace hash_fixed_vertex_manager
 
 using namespace GraphEngineSpace;
+
+class CAStarBucketTelemetry
+{
+public:
+	struct SSnapshot
+	{
+		u64 searches;
+		u64 overflow_searches;
+		u64 overflow_events;
+		u32 max_overflow_events_per_search;
+		u32 max_chain_length;
+	};
+
+private:
+	static IC std::atomic<u64>& searches_counter()
+	{
+		static std::atomic<u64> value(0);
+		return value;
+	}
+
+	static IC std::atomic<u64>& overflow_searches_counter()
+	{
+		static std::atomic<u64> value(0);
+		return value;
+	}
+
+	static IC std::atomic<u64>& overflow_events_counter()
+	{
+		static std::atomic<u64> value(0);
+		return value;
+	}
+
+	static IC std::atomic<u32>& max_overflow_counter()
+	{
+		static std::atomic<u32> value(0);
+		return value;
+	}
+
+	static IC std::atomic<u32>& max_chain_counter()
+	{
+		static std::atomic<u32> value(0);
+		return value;
+	}
+
+	static IC void update_max(std::atomic<u32>& target, u32 value)
+	{
+		u32 current = target.load(std::memory_order_relaxed);
+		while ((current < value) && !target.compare_exchange_weak(
+			current, value, std::memory_order_relaxed, std::memory_order_relaxed))
+		{
+		}
+	}
+
+public:
+	static IC void record(u32 overflow_events, u32 max_chain_length)
+	{
+		searches_counter().fetch_add(1, std::memory_order_relaxed);
+		if (overflow_events)
+		{
+			overflow_searches_counter().fetch_add(1, std::memory_order_relaxed);
+			overflow_events_counter().fetch_add(overflow_events, std::memory_order_relaxed);
+			update_max(max_overflow_counter(), overflow_events);
+		}
+		update_max(max_chain_counter(), max_chain_length);
+	}
+
+	static IC SSnapshot snapshot()
+	{
+		SSnapshot result;
+		result.searches = searches_counter().load(std::memory_order_relaxed);
+		result.overflow_searches = overflow_searches_counter().load(std::memory_order_relaxed);
+		result.overflow_events = overflow_events_counter().load(std::memory_order_relaxed);
+		result.max_overflow_events_per_search = max_overflow_counter().load(std::memory_order_relaxed);
+		result.max_chain_length = max_chain_counter().load(std::memory_order_relaxed);
+		return result;
+	}
+
+	static IC void reset()
+	{
+		searches_counter().store(0, std::memory_order_relaxed);
+		overflow_searches_counter().store(0, std::memory_order_relaxed);
+		overflow_events_counter().store(0, std::memory_order_relaxed);
+		max_overflow_counter().store(0, std::memory_order_relaxed);
+		max_chain_counter().store(0, std::memory_order_relaxed);
+	}
+};
 
 class CGraphEngine
 {
@@ -96,7 +185,34 @@ public:
 	> CStringAlgorithm;
 #endif // AI_COMPILER
 
-	CAlgorithm* m_algorithm;
+	struct SAlgorithmSlot
+	{
+		CAlgorithm* algorithm;
+		bool in_use;
+
+		SAlgorithmSlot(CAlgorithm* value) : algorithm(value), in_use(false) {}
+	};
+
+	std::mutex m_algorithm_pool_mutex;
+	std::condition_variable m_algorithm_pool_available;
+	xr_vector<SAlgorithmSlot> m_algorithm_pool;
+	u32 m_algorithm_pool_limit;
+	u32 m_max_vertex_count;
+
+	CAlgorithm* acquire_algorithm();
+	void release_algorithm(CAlgorithm* algorithm);
+
+	class CAlgorithmGuard
+	{
+	private:
+		CGraphEngine& m_owner;
+		CAlgorithm* m_algorithm;
+
+	public:
+		IC explicit CAlgorithmGuard(CGraphEngine& owner);
+		IC ~CAlgorithmGuard();
+		IC CAlgorithm* operator->() const { return m_algorithm; }
+	};
 
 #ifndef AI_COMPILER
 	CSolverAlgorithm* m_solver_algorithm;

@@ -13,24 +13,12 @@
     <ClInclude Include="imstb_rectpack.h" />
     <ClInclude Include="imstb_textedit.h" />
     <ClInclude Include="imstb_truetype.h" />
-    <ClInclude Include="backends\imgui_impl_dx9.h">
-      <Filter>backends</Filter>
-    </ClInclude>
-    <ClInclude Include="backends\imgui_impl_dx10.h">
-      <Filter>backends</Filter>
-    </ClInclude>
     <ClInclude Include="backends\imgui_impl_dx11.h">
       <Filter>backends</Filter>
     </ClInclude>
     <ClInclude Include="imgui_custom.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="backends\imgui_impl_dx9.cpp">
-      <Filter>backends</Filter>
-    </ClCompile>
-    <ClCompile Include="backends\imgui_impl_dx10.cpp">
-      <Filter>backends</Filter>
-    </ClCompile>
     <ClCompile Include="backends\imgui_impl_dx11.cpp">
       <Filter>backends</Filter>
     </ClCompile>

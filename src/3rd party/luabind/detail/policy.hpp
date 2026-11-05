@@ -23,12 +23,15 @@
 #pragma once
 
 #include <luabind/config.hpp>
+#include <luajit.h>
 
 #include <typeinfo>
+#include <limits>
 
 #include <luabind/detail/class_rep.hpp>
 #include <luabind/object.hpp>
 #include <luabind/weak_ref.hpp>
+#include <luabind/identity_back_reference.hpp>
 #include <luabind/detail/typetraits.hpp>
 #include <luabind/detail/decorate_type.hpp>
 #include <luabind/detail/class_registry.hpp>
@@ -143,7 +146,7 @@ namespace luabind { namespace detail
             const type<T>&,
             std::conditional_t<
                 std::is_reference_v<T> || std::is_pointer_v<T>,
-				type_identity_t<T>,
+				T,
                 std::add_lvalue_reference_t<T>
             >
         >;
@@ -657,7 +660,8 @@ namespace luabind { namespace detail
 				return;
 			}
 
-			if (back_reference<T>::extract(L, ptr))
+			if (back_reference<T>::extract(L, ptr) ||
+				identity_back_reference<T>::extract(L, ptr))
 				return;
 
 			class_rep* crep = get_class_rep<T>(L);
@@ -674,6 +678,9 @@ namespace luabind { namespace detail
 			// set the meta table
 			detail::getref(L, crep->metatable_ref());
 			lua_setmetatable(L, -2);
+			if (crep->get_class_type() == class_rep::cpp_class)
+				luaJIT_setudatafinalizer(L, -1, 0);
+			identity_back_reference<T>::store(L, ptr, -1);
 
 //			make_instance(L, ptr, (pointer_holder<T, T*>*)0);
 		}
@@ -738,6 +745,25 @@ namespace luabind { namespace detail
 		{}
 	};
 
+	// nil passed by value or const reference to a class without a holder. Release builds skip the
+	// match for single-overload functions, so this used to dereference null (vanilla
+	// xr_combat_zombied passes nil to vector:distance_to_sqr): pass an empty value instead
+	template<class T>
+	const T& nil_value(lua_State* L)
+	{
+		if constexpr (std::is_default_constructible_v<T>)
+		{
+			static const T empty{};
+			return empty;
+		}
+		else
+		{
+			lua_pushstring(L, "nil passed where an object is required");
+			lua_error(L);
+			return *static_cast<const T*>(nullptr);
+		}
+	}
+
 // ******* value converter *******
 
 	template<Direction Dir> struct value_converter;
@@ -756,6 +782,24 @@ namespace luabind { namespace detail
 			// if you get caught in this assert you are
 			// trying to use an unregistered type
 			assert(crep && "you are trying to use an unregistered type");
+
+			if constexpr (std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>
+				&& alignof(T) <= alignof(double))
+			{
+				if (crep->inline_value_copies())
+				{
+					// Keep an independent, mutable copy alive in its userdata. The
+					// normal object_rep finalizer still releases Lua fields/dependencies;
+					// only the separate native allocation and delete disappear.
+					constexpr size_t offset = (sizeof(object_rep) + alignof(T) - 1) & ~(alignof(T) - 1);
+					char* storage = static_cast<char*>(lua_newuserdata(L, offset + sizeof(T)));
+					T* value = new(storage + offset) T(ref);
+					new(storage) object_rep(value, crep, object_rep::owner, destruct_only_s<T>::apply);
+					detail::getref(L, crep->metatable_ref());
+					lua_setmetatable(L, -2);
+					return;
+				}
+			}
 
 			void* obj_rep;
 			void* held;
@@ -848,6 +892,8 @@ namespace luabind { namespace detail
 				guard.dismiss = true;
 			}
 
+			if (!ptr)
+				return nil_value<T>(L);
 			return *ptr;
 		}
 
@@ -898,7 +944,8 @@ namespace luabind { namespace detail
 				return;
 			}
 
-			if (back_reference<T>::extract(L, ptr))
+			if (back_reference<T>::extract(L, ptr) ||
+				identity_back_reference<T>::extract(L, ptr))
 				return;
 
 			class_rep* crep = get_class_rep<T>(L);
@@ -916,6 +963,9 @@ namespace luabind { namespace detail
 			// set the meta table
 			detail::getref(L, crep->metatable_ref());
 			lua_setmetatable(L, -2);
+			if (crep->get_class_type() == class_rep::cpp_class)
+				luaJIT_setudatafinalizer(L, -1, 0);
+			identity_back_reference<T>::store(L, ptr, -1);
 		}
 	};
 
@@ -965,7 +1015,8 @@ namespace luabind { namespace detail
 		template<class T>
 		void apply(lua_State* L, T& ref)
 		{
-			if (back_reference<T>::extract(L, &ref))
+			if (back_reference<T>::extract(L, &ref) ||
+				identity_back_reference<T>::extract(L, &ref))
 				return;
 
 			class_rep* crep = get_class_rep<T>(L);
@@ -984,6 +1035,9 @@ namespace luabind { namespace detail
 			// set the meta table
 			detail::getref(L, crep->metatable_ref());
 			lua_setmetatable(L, -2);
+			if (crep->get_class_type() == class_rep::cpp_class)
+				luaJIT_setudatafinalizer(L, -1, 0);
+			identity_back_reference<T>::store(L, ptr, -1);
 		}
 	};
 
@@ -1018,7 +1072,8 @@ namespace luabind { namespace detail
 		template<class T>
 		void apply(lua_State* L, const T& ref)
 		{
-			if (back_reference<T>::extract(L, &ref))
+			if (back_reference<T>::extract(L, &ref) ||
+				identity_back_reference<T>::extract(L, &ref))
 				return;
 
 			class_rep* crep = get_class_rep<T>(L);
@@ -1037,6 +1092,9 @@ namespace luabind { namespace detail
 			// set the meta table
 			detail::getref(L, crep->metatable_ref());
 			lua_setmetatable(L, -2);
+			if (crep->get_class_type() == class_rep::cpp_class)
+				luaJIT_setudatafinalizer(L, -1, 0);
+			identity_back_reference<T>::store(L, ptr, -1);
 		}
 	};
 
@@ -1075,6 +1133,8 @@ namespace luabind { namespace detail
 			if ((void*)ptr == (void*)target) destructor = detail::destruct_only_s<T>::apply;
 			assert(!destructor || sizeof(T) <= 32);
 
+			if (!ptr)
+				return nil_value<T>(L);
 			return *ptr;
 		}
 

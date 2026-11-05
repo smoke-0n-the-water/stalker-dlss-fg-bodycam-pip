@@ -94,6 +94,7 @@ bool CUISequenceItem::Stop(bool bForce)
 }
 
 CUISequencer::CUISequencer()
+	: m_UIWindow(nullptr), m_pStoredInputReceiver(nullptr)
 {
 	m_flags.zero();
 	m_name = "invalid";
@@ -243,6 +244,16 @@ extern CUISequencer* g_tutorial2;
 
 void CUISequencer::Destroy()
 {
+	// Stop callbacks are allowed to call back into tutorial control from Lua.
+	// Mark the sequencer inactive/stopping before invoking them and make teardown
+	// idempotent so recursive or repeated Stop/Destroy cannot run callbacks over
+	// already released UI windows.
+	if (m_flags.test(etsStopping) && !m_flags.test(etsActive))
+		return;
+
+	m_flags.set(etsStopping, TRUE);
+	m_flags.set(etsActive, FALSE);
+
 	if (m_stop_lua_function.size())
 		CallFunction(m_stop_lua_function);
 
@@ -252,7 +263,6 @@ void CUISequencer::Destroy()
 	delete_data(m_sequencer_items);
 	delete_data(m_UIWindow);
 	IR_Release();
-	m_flags.set(etsActive, FALSE);
 	m_pStoredInputReceiver = NULL;
 
 	if (!m_on_destroy_event.empty())
@@ -270,19 +280,24 @@ void CUISequencer::Destroy()
 
 void CUISequencer::Stop()
 {
-	if (m_sequencer_items.size())
-	{
-		if (m_flags.test(etsPlayEachItem))
+	if (!m_flags.test(etsActive) || m_flags.test(etsStopping))
+		return;
+
+	if (m_sequencer_items.size() && m_flags.test(etsPlayEachItem))
 		{
 			Next();
 			return;
 		}
-		else
+
+	// From this point teardown is final. Set the guard before item/global Lua stop
+	// callbacks so a callback cannot recursively stop and free the same windows.
+	m_flags.set(etsStopping, TRUE);
+
+	if (m_sequencer_items.size())
 		{
 			CUISequenceItem* pCurrItem = m_sequencer_items.front();
 			pCurrItem->Stop(true);
 		}
-	}
 	{
 		if (m_flags.test(etsNeedPauseOn) && !m_flags.test(etsStoredPauseState))
 			Device.Pause(FALSE, TRUE, TRUE, "tutorial_stop");

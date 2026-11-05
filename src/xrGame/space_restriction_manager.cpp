@@ -60,14 +60,14 @@ void CSpaceRestrictionManager::clear()
 
 void CSpaceRestrictionManager::remove_border(ALife::_OBJECT_ID id)
 {
-	CRestrictionPtr client_restriction = restriction(id);
+	const CRestrictionPtr& client_restriction = restriction(id);
 	if (client_restriction)
 		client_restriction->remove_border();
 }
 
 shared_str CSpaceRestrictionManager::in_restrictions(ALife::_OBJECT_ID id)
 {
-	CRestrictionPtr client_restriction = restriction(id);
+	const CRestrictionPtr& client_restriction = restriction(id);
 	if (client_restriction)
 		return (client_restriction->in_restrictions());
 	return ("");
@@ -75,7 +75,7 @@ shared_str CSpaceRestrictionManager::in_restrictions(ALife::_OBJECT_ID id)
 
 shared_str CSpaceRestrictionManager::out_restrictions(ALife::_OBJECT_ID id)
 {
-	CRestrictionPtr client_restriction = restriction(id);
+	const CRestrictionPtr& client_restriction = restriction(id);
 	if (client_restriction)
 		return (client_restriction->out_restrictions());
 	return ("");
@@ -95,9 +95,9 @@ shared_str CSpaceRestrictionManager::base_out_restrictions(ALife::_OBJECT_ID id)
 	return ((*I).second.m_base_out_restrictions);
 }
 
-CSpaceRestrictionManager::CRestrictionPtr CSpaceRestrictionManager::restriction(ALife::_OBJECT_ID id)
+const CSpaceRestrictionManager::CRestrictionPtr& CSpaceRestrictionManager::restriction(ALife::_OBJECT_ID id) const
 {
-	CLIENT_RESTRICTIONS::iterator I = m_clients->find(id);
+	CLIENT_RESTRICTIONS::const_iterator I = m_clients->find(id);
 	VERIFY(m_clients->end() != I);
 	return ((*I).second.m_restriction);
 }
@@ -149,14 +149,17 @@ void CSpaceRestrictionManager::unrestrict(ALife::_OBJECT_ID id)
         return;
 
 	CLIENT_RESTRICTIONS::iterator I = m_clients->find(id);
-	VERIFY(I != m_clients->end());
+	// Not an error: a spawn rejected as a duplicate id never got its own id (0xFFFF), and a leftover
+	// object destroyed after clear() has no entry; erase(end()) frees the map's head node
+	if (I == m_clients->end())
+		return;
 	m_clients->erase(I);
 	collect_garbage();
 }
 
 bool CSpaceRestrictionManager::accessible(ALife::_OBJECT_ID id, const Fsphere& sphere)
 {
-	CRestrictionPtr client_restriction = restriction(id);
+	const CRestrictionPtr& client_restriction = restriction(id);
 	if (client_restriction)
 		return (client_restriction->accessible(sphere));
 	return (true);
@@ -166,7 +169,7 @@ bool CSpaceRestrictionManager::accessible(ALife::_OBJECT_ID id, u32 level_vertex
 {
 	if (level_vertex_id == (u32)-1)
 		return false;
-	CRestrictionPtr client_restriction = restriction(id);
+	const CRestrictionPtr& client_restriction = restriction(id);
 	if (client_restriction)
 		return (client_restriction->accessible(level_vertex_id, radius));
 	return (true);
@@ -196,7 +199,7 @@ CSpaceRestrictionManager::CRestrictionPtr CSpaceRestrictionManager::restriction(
 
 u32 CSpaceRestrictionManager::accessible_nearest(ALife::_OBJECT_ID id, const Fvector& position, Fvector& result)
 {
-	CRestrictionPtr client_restriction = restriction(id);
+	const CRestrictionPtr& client_restriction = restriction(id);
 	VERIFY(client_restriction);
 	return (client_restriction->accessible_nearest(position, result));
 }

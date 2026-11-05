@@ -10,6 +10,7 @@
 #include "character_community.h"
 #include "character_reputation.h"
 #include "character_rank.h"
+#include "InventoryOwner.h"
 
 #include "alife_object_registry.h"
 #include "xrServer_Objects_ALife_Monsters.h"
@@ -33,12 +34,14 @@ void RELATION_DATA::clear()
 {
 	personal.clear();
 	communities.clear();
+	RELATION_REGISTRY::InvalidateAttitudeCache();
 }
 
 void RELATION_DATA::load(IReader& stream)
 {
 	load_data(personal, stream);
 	load_data(communities, stream);
+	RELATION_REGISTRY::InvalidateAttitudeCache();
 }
 
 void RELATION_DATA::save(IWriter& stream)
@@ -63,6 +66,7 @@ RELATION_REGISTRY::RELATION_MAP_SPOTS::RELATION_MAP_SPOTS()
 CRelationRegistryWrapper* RELATION_REGISTRY::m_relation_registry = NULL;
 RELATION_REGISTRY::FIGHT_VECTOR* RELATION_REGISTRY::m_fight_registry = NULL;
 RELATION_REGISTRY::RELATION_MAP_SPOTS* RELATION_REGISTRY::m_spot_names = NULL;
+xr_unordered_flat_map<u32, CHARACTER_GOODWILL> RELATION_REGISTRY::m_attitude_cache;
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -88,6 +92,9 @@ CRelationRegistryWrapper& RELATION_REGISTRY::relation_registry()
 		VERIFY(IsGameTypeSingle());
 
 		m_relation_registry = xr_new<CRelationRegistryWrapper>();
+		// Relation queries are extremely hot in stalker memory/enemy classification.
+		// Keep pair results resident; mutations are rare and invalidate the cache.
+		m_attitude_cache.reserve(4096);
 		load_attack_goodwill();
 	}
 
@@ -108,6 +115,14 @@ void RELATION_REGISTRY::clear_relation_registry()
 	xr_delete(m_relation_registry);
 	xr_delete(m_fight_registry);
 	xr_delete(m_spot_names);
+	m_attitude_cache.clear();
+}
+
+void RELATION_REGISTRY::InvalidateAttitudeCache()
+{
+	// clear() keeps the robin-hood allocation, so normal relation changes do not
+	// create allocator churn while still providing strict invalidation semantics.
+	m_attitude_cache.clear();
 }
 
 const shared_str& RELATION_REGISTRY::GetSpotName(ALife::ERelationType& type)
@@ -147,6 +162,49 @@ CHARACTER_GOODWILL RELATION_REGISTRY::GetGoodwill(u16 from, u16 to) const
 	return NEUTRAL_GOODWILL;
 }
 
+CHARACTER_GOODWILL RELATION_REGISTRY::GetAttitude(const CInventoryOwner* from, const CInventoryOwner* to) const
+{
+	VERIFY(from);
+	VERIFY(to);
+	const u16 from_id = from->object_id();
+	const u16 to_id = to->object_id();
+	const u32 cache_key = (static_cast<u32>(from_id) << 16) | static_cast<u32>(to_id);
+	const auto cached = m_attitude_cache.find(cache_key);
+	if (cached != m_attitude_cache.end())
+		return cached->second;
+
+	const CCharacterInfo& from_info = from->CharacterInfo();
+	const CCharacterInfo& to_info = to->CharacterInfo();
+
+	const CHARACTER_GOODWILL personal_goodwill = GetGoodwill(from_id, to_id);
+	VERIFY(personal_goodwill != NO_GOODWILL);
+
+	// Live inventory owners already keep these indices in sync whenever the
+	// underlying values change. Reusing them avoids constructing four temporary
+	// rank/reputation objects and linearly scanning each threshold table twice
+	// for every relation query in NPC visibility and combat code.
+	const CHARACTER_GOODWILL reputation_goodwill = CHARACTER_REPUTATION::relation(
+		from_info.Reputation().index(), to_info.Reputation().index());
+	const CHARACTER_GOODWILL rank_goodwill =
+		CHARACTER_RANK::relation(from_info.Rank().index(), to_info.Rank().index());
+
+	const CHARACTER_COMMUNITY_INDEX from_community = from_info.Community().index();
+	const CHARACTER_COMMUNITY_INDEX to_community = to_info.Community().index();
+	const CHARACTER_GOODWILL community_goodwill = GetCommunityGoodwill(from_community, to_id);
+	VERIFY(community_goodwill != NO_GOODWILL);
+	const CHARACTER_GOODWILL community_to_community = GetCommunityRelation(from_community, to_community);
+
+	const CHARACTER_GOODWILL attitude = personal_goodwill + reputation_goodwill + rank_goodwill +
+		community_goodwill + community_to_community;
+	m_attitude_cache[cache_key] = attitude;
+	return attitude;
+}
+
+CHARACTER_GOODWILL RELATION_REGISTRY::GetAttitude(CInventoryOwner* from, CInventoryOwner* to) const
+{
+	return GetAttitude(static_cast<const CInventoryOwner*>(from), static_cast<const CInventoryOwner*>(to));
+}
+
 void RELATION_REGISTRY::SetGoodwill(u16 from, u16 to, CHARACTER_GOODWILL goodwill)
 {
 	RELATION_DATA& relation_data = relation_registry().registry().objects(from);
@@ -155,6 +213,7 @@ void RELATION_REGISTRY::SetGoodwill(u16 from, u16 to, CHARACTER_GOODWILL goodwil
 	clamp(goodwill, gw_limits.x, gw_limits.y);
 
 	relation_data.personal[to].SetGoodwill(goodwill);
+	InvalidateAttitudeCache();
 }
 
 void RELATION_REGISTRY::ForceSetGoodwill(u16 from, u16 to, CHARACTER_GOODWILL goodwill)
@@ -175,6 +234,7 @@ void RELATION_REGISTRY::ForceSetGoodwill(u16 from, u16 to, CHARACTER_GOODWILL go
 		from_obj->Community(), to_obj->Community());
 
 	relation_data.personal[to].SetGoodwill(goodwill - community_to_obj_goodwill - community_to_community_goodwill);
+	InvalidateAttitudeCache();
 }
 
 
@@ -211,6 +271,7 @@ void RELATION_REGISTRY::SetCommunityGoodwill(CHARACTER_COMMUNITY_INDEX from_comm
 	RELATION_DATA& relation_data = relation_registry().registry().objects(to_character);
 
 	relation_data.communities[from_community].SetGoodwill(goodwill);
+	InvalidateAttitudeCache();
 }
 
 void RELATION_REGISTRY::ChangeCommunityGoodwill(CHARACTER_COMMUNITY_INDEX from_community, u16 to_character,
@@ -251,4 +312,5 @@ void RELATION_REGISTRY::SetCommunityRelation(CHARACTER_COMMUNITY_INDEX index1, C
                                              CHARACTER_GOODWILL goodwill)
 {
 	CHARACTER_COMMUNITY::set_relation(index1, index2, goodwill);
+	InvalidateAttitudeCache();
 }

@@ -17,6 +17,7 @@ class CBlend;
 class CActor;
 class CAI_Stalker;
 class CInventoryOwner;
+class IKinematics;
 
 class CEntityAlive : public CEntity
 {
@@ -214,6 +215,7 @@ public:
 
 private:
 	void fill_hit_bone_surface_areas() const;
+	void rebuild_visible_hit_bone_distribution(IKinematics* kinematics) const;
 
 private:
 	typedef xr_vector<std::pair<u16, float>> hit_bone_surface_areas_type;
@@ -221,8 +223,11 @@ private:
 private:
 	mutable xrSRWLock					m_hit_bone_lock;
 	mutable hit_bone_surface_areas_type m_hit_bone_surface_areas;
+	mutable hit_bone_surface_areas_type m_visible_hit_bone_cumulative_areas;
 	mutable CRandom m_hit_bones_random;
 	mutable xr_atomic_bool m_hit_bone_surface_areas_actual;
+	mutable u64 m_visible_hit_bones_mask;
+	mutable float m_visible_hit_bones_surface_area;
 };
 
 #include "entity_alive_inline.h"

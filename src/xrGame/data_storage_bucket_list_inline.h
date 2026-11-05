@@ -28,7 +28,11 @@ IC CBucketList::CDataStorage(const u32 vertex_count) :
 {
 	m_min_bucket_value = _dist_type(0);
 	m_max_bucket_value = _dist_type(1000);
+	m_bucket_overflow_count = 0;
+	m_max_bucket_chain_length = 0;
+	m_last_telemetry_path_id = _path_id_type(0);
 	ZeroMemory(m_buckets, bucket_count*sizeof(CGraphVertex*));
+	ZeroMemory(m_bucket_occupancy, bucket_count*sizeof(SBucketOccupancy));
 }
 
 TEMPLATE_SPECIALIZATION
@@ -41,6 +45,14 @@ IC void CBucketList::init()
 {
 	inherited::init();
 	m_min_bucket_id = bucket_count;
+	m_bucket_overflow_count = 0;
+	m_max_bucket_chain_length = 0;
+
+	const _path_id_type path_id = current_path_id();
+	if (path_id <= m_last_telemetry_path_id)
+		ZeroMemory(m_bucket_occupancy, bucket_count*sizeof(SBucketOccupancy));
+	m_last_telemetry_path_id = path_id;
+
 	if (clear_buckets)
 		ZeroMemory(m_buckets, bucket_count*sizeof(CGraphVertex*));
 }
@@ -71,13 +83,43 @@ IC bool CBucketList::is_opened_empty()
 }
 
 TEMPLATE_SPECIALIZATION
-IC u32 CBucketList::compute_bucket_id(CGraphVertex& vertex) const
+IC u32 CBucketList::compute_bucket_id(CGraphVertex& vertex)
 {
 	if (vertex.f() >= m_max_bucket_value)
+	{
+		++m_bucket_overflow_count;
 		return (bucket_count - 1);
+	}
 	if (vertex.f() <= m_min_bucket_value)
 		return (0);
 	return (u32(bucket_count * (vertex.f() - m_min_bucket_value) / (m_max_bucket_value - m_min_bucket_value)));
+}
+
+
+TEMPLATE_SPECIALIZATION
+IC void CBucketList::telemetry_add_to_bucket(u32 bucket_id)
+{
+	SBucketOccupancy& occupancy = m_bucket_occupancy[bucket_id];
+	if (occupancy.path_id != current_path_id())
+	{
+		occupancy.path_id = current_path_id();
+		occupancy.count = 0;
+	}
+
+	++occupancy.count;
+	if (occupancy.count > m_max_bucket_chain_length)
+		m_max_bucket_chain_length = occupancy.count;
+}
+
+TEMPLATE_SPECIALIZATION
+IC void CBucketList::telemetry_remove_from_bucket(u32 bucket_id)
+{
+	SBucketOccupancy& occupancy = m_bucket_occupancy[bucket_id];
+	if (occupancy.path_id != current_path_id())
+		return;
+
+	VERIFY(occupancy.count);
+	--occupancy.count;
 }
 
 TEMPLATE_SPECIALIZATION
@@ -111,6 +153,8 @@ IC void CBucketList::verify_buckets() const
 TEMPLATE_SPECIALIZATION
 IC void CBucketList::add_to_bucket(CGraphVertex& vertex, u32 m_bucket_id)
 {
+	telemetry_add_to_bucket(m_bucket_id);
+
 	if (m_bucket_id < m_min_bucket_id)
 		m_min_bucket_id = m_bucket_id;
 
@@ -195,6 +239,7 @@ IC void CBucketList::decrease_opened(CGraphVertex& vertex, const _dist_type valu
 {
 	VERIFY(!is_opened_empty());
 	u32 node_bucket_id = compute_bucket_id(vertex);
+	telemetry_remove_from_bucket(vertex.m_bucket_id);
 	if (vertex.prev())
 		vertex.prev()->next() = vertex.next();
 	else
@@ -216,6 +261,7 @@ IC void CBucketList::remove_best_opened()
 	VERIFY(!is_opened_empty());
 	verify_buckets();
 	VERIFY(m_buckets[m_min_bucket_id] && is_visited(m_buckets[m_min_bucket_id]->index()));
+	telemetry_remove_from_bucket(m_min_bucket_id);
 	m_buckets[m_min_bucket_id] = m_buckets[m_min_bucket_id]->next();
 	if (m_buckets[m_min_bucket_id])
 		m_buckets[m_min_bucket_id]->prev() = 0;
@@ -239,6 +285,19 @@ TEMPLATE_SPECIALIZATION
 IC void CBucketList::set_max_bucket_value(const _dist_type max_bucket_value)
 {
 	m_max_bucket_value = max_bucket_value;
+}
+
+
+TEMPLATE_SPECIALIZATION
+IC u32 CBucketList::bucket_overflow_count() const
+{
+	return m_bucket_overflow_count;
+}
+
+TEMPLATE_SPECIALIZATION
+IC u32 CBucketList::max_bucket_chain_length() const
+{
+	return m_max_bucket_chain_length;
 }
 
 #undef TEMPLATE_SPECIALIZATION

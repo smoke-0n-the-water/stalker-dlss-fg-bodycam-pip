@@ -47,10 +47,23 @@ struct CDataStorageBucketList
 		typedef typename CGraphVertex::_index_type _index_type;
 
 	protected:
+		struct SBucketOccupancy
+		{
+			_path_id_type path_id;
+			u32 count;
+		};
+
 		_dist_type m_min_bucket_value;
 		_dist_type m_max_bucket_value;
 		CGraphVertex* m_buckets[bucket_count];
+		SBucketOccupancy m_bucket_occupancy[bucket_count];
 		u32 m_min_bucket_id;
+		u32 m_bucket_overflow_count;
+		u32 m_max_bucket_chain_length;
+		_path_id_type m_last_telemetry_path_id;
+
+		IC void telemetry_add_to_bucket(u32 bucket_id);
+		IC void telemetry_remove_from_bucket(u32 bucket_id);
 
 	public:
 		IC CDataStorage(const u32 vertex_count);
@@ -58,7 +71,7 @@ struct CDataStorageBucketList
 		IC void init();
 		IC void add_best_closed();
 		IC bool is_opened_empty();
-		IC u32 compute_bucket_id(CGraphVertex& vertex) const;
+		IC u32 compute_bucket_id(CGraphVertex& vertex);
 		IC void verify_buckets() const;
 		IC void add_to_bucket(CGraphVertex& vertex, u32 bucket_id);
 		IC void add_opened(CGraphVertex& vertex);
@@ -67,6 +80,8 @@ struct CDataStorageBucketList
 		IC CGraphVertex& get_best();
 		IC void set_min_bucket_value(const _dist_type min_bucket_value);
 		IC void set_max_bucket_value(const _dist_type max_bucket_value);
+		IC u32 bucket_overflow_count() const;
+		IC u32 max_bucket_chain_length() const;
 	};
 };
 

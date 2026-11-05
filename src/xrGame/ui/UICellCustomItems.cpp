@@ -95,6 +95,14 @@ void CUIInventoryCellItem::OnAfterChild(CUIDragDropListEx* parent_list)
 
 #include <eatable_item.h>
 
+CUIInventoryCellItem::~CUIInventoryCellItem()
+{
+	for (SIconLayer*& layer : m_layers)
+		xr_delete(layer);
+
+	m_layers.clear();
+}
+
 bool CUIInventoryCellItem::EqualTo(CUICellItem* itm)
 {
 	CUIInventoryCellItem* ci = smart_cast<CUIInventoryCellItem*>(itm);
@@ -197,8 +205,10 @@ void CUIInventoryCellItem::RemoveLayer(SIconLayer* layer)
 	{
 		if ((*it) == layer)
 		{
-			DetachChild((*it)->m_icon);
+			SIconLayer* owned_layer = *it;
+			DetachChild(owned_layer->m_icon);
 			m_layers.erase(it);
+			xr_delete(owned_layer);
 			return;
 		}
 	}
@@ -217,24 +227,22 @@ void CUIInventoryCellItem::CreateLayer(LPCSTR section, Fvector2 offset, float sc
 CUIStatic* CUIInventoryCellItem::InitLayer(CUIStatic* s, LPCSTR section, Fvector2 addon_offset, bool b_rotate,
                                            float scale)
 {
+	const InventoryUtilities::InventoryIconDesc icon_desc = InventoryUtilities::GetInventoryIconDesc(section);
 	if (!s)
 	{
 		s = xr_new<CUIStatic>();
 		s->SetAutoDelete(true);
 		AttachChild(s);
 
-		if (pSettings->line_exist(section, "icons_texture"))
-		{
-			LPCSTR icons_texture = pSettings->r_string(section, "icons_texture");
-			s->SetShader(InventoryUtilities::GetCustomIconTextureShader(icons_texture));
-		}
+		if (icon_desc.texture.size())
+			s->SetShader(InventoryUtilities::GetCustomIconTextureShader(icon_desc.texture.c_str()));
 		else
 			s->SetShader(InventoryUtilities::GetEquipmentIconsShader());
 
 		s->SetTextureColor(GetTextureColor());
 	}
 
-	Frect tex_rect;
+	Frect tex_rect = icon_desc.texture_rect;
 	Fvector2 base_scale;
 
 	if (Heading())
@@ -248,13 +256,8 @@ CUIStatic* CUIInventoryCellItem::InitLayer(CUIStatic* s, LPCSTR section, Fvector
 		base_scale.y = (GetHeight() / (INV_GRID_HEIGHTF * m_grid_size.y)) * scale;
 	}
 	Fvector2 cell_size;
-	cell_size.x = pSettings->r_float(section, "inv_grid_width") * INV_GRID_WIDTHF;
-	cell_size.y = pSettings->r_float(section, "inv_grid_height") * INV_GRID_HEIGHTF;
-
-	tex_rect.x1 = pSettings->r_float(section, "inv_grid_x") * INV_GRID_WIDTHF;
-	tex_rect.y1 = pSettings->r_float(section, "inv_grid_y") * INV_GRID_HEIGHTF;
-
-	tex_rect.rb.add(tex_rect.lt, cell_size);
+	cell_size.x = icon_desc.grid_size.x * INV_GRID_WIDTHF;
+	cell_size.y = icon_desc.grid_size.y * INV_GRID_HEIGHTF;
 
 	cell_size.mul(base_scale);
 
@@ -574,7 +577,8 @@ void CUIWeaponCellItem::OnAfterChild(CUIDragDropListEx* parent_list)
 
 void CUIWeaponCellItem::InitAddon(CUIStatic* s, LPCSTR section, Fvector2 addon_offset, bool b_rotate)
 {
-	Frect tex_rect;
+	const InventoryUtilities::InventoryIconDesc icon_desc = InventoryUtilities::GetInventoryIconDesc(section);
+	Frect tex_rect = icon_desc.texture_rect;
 	Fvector2 base_scale;
 
 	if (Heading())
@@ -588,13 +592,8 @@ void CUIWeaponCellItem::InitAddon(CUIStatic* s, LPCSTR section, Fvector2 addon_o
 		base_scale.y = GetHeight() / (INV_GRID_HEIGHTF * m_grid_size.y);
 	}
 	Fvector2 cell_size;
-	cell_size.x = pSettings->r_u32(section, "inv_grid_width") * INV_GRID_WIDTHF;
-	cell_size.y = pSettings->r_u32(section, "inv_grid_height") * INV_GRID_HEIGHTF;
-
-	tex_rect.x1 = pSettings->r_u32(section, "inv_grid_x") * INV_GRID_WIDTHF;
-	tex_rect.y1 = pSettings->r_u32(section, "inv_grid_y") * INV_GRID_HEIGHTF;
-
-	tex_rect.rb.add(tex_rect.lt, cell_size);
+	cell_size.x = icon_desc.grid_size.x * INV_GRID_WIDTHF;
+	cell_size.y = icon_desc.grid_size.y * INV_GRID_HEIGHTF;
 
 	cell_size.mul(base_scale);
 

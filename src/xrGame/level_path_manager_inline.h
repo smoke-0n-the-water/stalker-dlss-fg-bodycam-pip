@@ -60,19 +60,13 @@ TEMPLATE_SPECIALIZATION
 IC void CLevelManagerTemplate::before_search(const _vertex_id_type start_vertex_id,
                                              const _vertex_id_type dest_vertex_id)
 {
-	if (m_object)
-	{
-		m_object->add_border(start_vertex_id, dest_vertex_id);
-		VERIFY(!m_object->applied() || ai().level_graph().is_accessible(start_vertex_id));
-		VERIFY(!m_object->applied() || ai().level_graph().is_accessible(dest_vertex_id));
-	}
+	// CLevelPathBuilder snapshots the restriction border into the evaluator
+	// before publishing the job. The shared level graph remains immutable here.
 }
 
 TEMPLATE_SPECIALIZATION
 IC void CLevelManagerTemplate::after_search()
 {
-	if (m_object)
-		m_object->remove_border();
 }
 
 TEMPLATE_SPECIALIZATION

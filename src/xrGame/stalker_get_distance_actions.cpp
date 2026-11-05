@@ -44,14 +44,19 @@ void CStalkerActionRunToCover::initialize()
 
 	MemorySpace::CMemoryInfo mem_object = object().memory().memory(object().memory().enemy().selected());
 	Fvector position = mem_object.m_object_params.m_position;
-	object().m_ce_close->setup(position, 0.f, object().Position().distance_to(position), 10.f);
-	const CCoverPoint* point = ai().cover_manager().best_cover(object().Position(), 10.f, *object().m_ce_close,
-	                                                           CStalkerMovementRestrictor(m_object, true));
+	const Fvector& object_position = object().Position();
+	const float enemy_distance = object_position.distance_to(position);
+	CStalkerMovementRestrictor near_restrictor(m_object, true);
+	bool near_search_performed = false;
+	object().m_ce_close->setup(position, 0.f, enemy_distance, 10.f);
+	const CCoverPoint* point = ai().cover_manager().best_cover(object_position, 10.f, *object().m_ce_close,
+	                                                           near_restrictor, 0.f, &near_search_performed);
 	if (!point)
 	{
-		object().m_ce_close->setup(position, 0.f, object().Position().distance_to(position), 10.f);
-		point = ai().cover_manager().best_cover(object().Position(), 30.f, *object().m_ce_close,
-		                                        CStalkerMovementRestrictor(m_object, true));
+		object().m_ce_close->setup(position, 0.f, enemy_distance, 10.f);
+		point = ai().cover_manager().best_cover(object_position, 30.f, *object().m_ce_close,
+		                                        CStalkerMovementRestrictor(m_object, true),
+		                                        near_search_performed ? 10.f : 0.f);
 	}
 
 	if (point)

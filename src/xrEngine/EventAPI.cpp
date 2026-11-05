@@ -226,7 +226,13 @@ BOOL CEventAPI::Peek(LPCSTR EName)
 
 void CEventAPI::_destroy()
 {
+	CS.Enter();
 	Dump();
-	if (Events.empty()) Events.clear();
-	if (Events_Deferred.empty()) Events_Deferred.clear();
+
+	Events_Deferred.clear();
+	for (CEvent*& event : Events)
+		xr_delete(event);
+	Events.clear();
+
+	CS.Leave();
 }

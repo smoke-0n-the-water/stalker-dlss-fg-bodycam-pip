@@ -49,6 +49,7 @@ void CInventoryItem::add_upgrade(const shared_str& upgrade_id, bool loading)
 	if (!has_upgrade(upgrade_id))
 	{
 		m_upgrades.push_back(upgrade_id);
+		InvalidateInventoryUI();
 
 		if (!loading)
 		{

@@ -48,3 +48,4 @@
 #include "../xrCore/profiler.h"
 
 #include "pch_script.h"
+#include "script_game_object_identity.h"

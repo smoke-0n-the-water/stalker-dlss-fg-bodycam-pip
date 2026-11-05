@@ -47,6 +47,10 @@ struct _open_file
 
 	shared_str _fn;
 	u32 _used;
+
+	_open_file() : _reader(NULL), _used(0)
+	{
+	}
 };
 
 template <typename T>
@@ -61,7 +65,7 @@ struct eq_pointer<IReader>
 	{
 	}
 
-	bool operator ()(_open_file& itm)
+	bool operator ()(const _open_file& itm) const
 	{
 		return (_val == itm._reader);
 	}
@@ -76,7 +80,7 @@ struct eq_pointer<CStreamReader>
 	{
 	}
 
-	bool operator ()(_open_file& itm)
+	bool operator ()(const _open_file& itm) const
 	{
 		return (_val == itm._stream_reader);
 	}
@@ -87,7 +91,7 @@ struct eq_fname_free
 	shared_str _val;
 	eq_fname_free(shared_str s) { _val = s; }
 
-	bool operator ()(_open_file& itm)
+	bool operator ()(const _open_file& itm) const
 	{
 		return (_val == itm._fn && itm._reader == NULL);
 	}
@@ -98,23 +102,22 @@ struct eq_fname_check
 	shared_str _val;
 	eq_fname_check(shared_str s) { _val = s; }
 
-	bool operator ()(_open_file& itm)
+	bool operator ()(const _open_file& itm) const
 	{
 		return (_val == itm._fn && itm._reader != NULL);
 	}
 };
 
 XRCORE_API xr_vector<_open_file> g_open_files;
+
+#ifdef PROFILE_CRITICAL_SECTIONS
+static xrCriticalSection g_open_files_lock(MUTEX_PROFILE_ID(g_open_files));
+#else
 static xrCriticalSection g_open_files_lock;
+#endif
 
-void _check_open_file(const shared_str& _fname)
-{
-	xr_vector<_open_file>::iterator it = std::find_if(g_open_files.begin(), g_open_files.end(), eq_fname_check(_fname));
-	if (it != g_open_files.end())
-		Log("file opened at least twice", _fname.c_str());
-}
-
-_open_file& find_free_item(const shared_str& _fname)
+// Caller must hold g_open_files_lock.
+static _open_file& find_free_item_locked(const shared_str& _fname)
 {
 	xr_vector<_open_file>::iterator it = std::find_if(g_open_files.begin(), g_open_files.end(), eq_fname_free(_fname));
 	if (it == g_open_files.end())
@@ -128,12 +131,12 @@ _open_file& find_free_item(const shared_str& _fname)
 	return *it;
 }
 
-void setup_reader(CStreamReader* _r, _open_file& _of)
+static void setup_reader(CStreamReader* _r, _open_file& _of)
 {
 	_of._stream_reader = _r;
 }
 
-void setup_reader(IReader* _r, _open_file& _of)
+static void setup_reader(IReader* _r, _open_file& _of)
 {
 	_of._reader = _r;
 }
@@ -141,63 +144,98 @@ void setup_reader(IReader* _r, _open_file& _of)
 template <typename T>
 void _register_open_file(T* _r, LPCSTR _fname)
 {
-	g_open_files_lock.Enter();
+	if (!_r || !_fname || !_fname[0])
+		return;
 
-	shared_str f = _fname;
-	_check_open_file(f);
+	xr_string filename = _fname;
+	bool already_open = false;
+	{
+		xrCriticalSectionGuard guard(g_open_files_lock);
+		shared_str f = filename.c_str();
 
-	_open_file& _of = find_free_item(_fname);
+		already_open = std::find_if(g_open_files.begin(), g_open_files.end(), eq_fname_check(f)) != g_open_files.end();
+
+		_open_file& _of = find_free_item_locked(f);
 	setup_reader(_r, _of);
 	_of._used += 1;
+	}
 
-	g_open_files_lock.Leave();
+	// Do not call the logging subsystem while holding the file tracking lock.
+	if (already_open)
+		Log("file opened at least twice", filename.c_str());
 }
 
 template <typename T>
 void _unregister_open_file(T* _r)
 {
-	g_open_files_lock.Enter();
+	if (!_r)
+		return;
+
+	bool found = false;
+	{
+		xrCriticalSectionGuard guard(g_open_files_lock);
 
 	xr_vector<_open_file>::iterator it = std::find_if(g_open_files.begin(), g_open_files.end(), eq_pointer<T>(_r));
-	VERIFY(it != g_open_files.end());
-	_open_file& _of = *it;
-	_of._reader = NULL;
-	g_open_files_lock.Leave();
+		if (it != g_open_files.end())
+		{
+			it->_reader = NULL;
+			found = true;
+		}
+	}
+
+	VERIFY2(found, "attempt to unregister an unknown file reader");
 }
 
 XRCORE_API void _dump_open_files(int mode)
 {
-	xr_vector<_open_file>::iterator it = g_open_files.begin();
-	xr_vector<_open_file>::iterator it_e = g_open_files.end();
+	struct open_file_snapshot
+	{
+		xr_string filename;
+		u32 used;
+		bool opened;
+	};
+
+	xr_vector<open_file_snapshot> snapshot;
+	{
+		xrCriticalSectionGuard guard(g_open_files_lock);
+		snapshot.reserve(g_open_files.size());
+
+		for (const _open_file& file : g_open_files)
+		{
+			open_file_snapshot item;
+			item.filename = file._fn.c_str() ? file._fn.c_str() : "";
+			item.used = file._used;
+			item.opened = file._reader != NULL;
+			snapshot.push_back(item);
+		}
+	}
 
 	bool bShow = false;
 	if (mode == 1)
 	{
-		for (; it != it_e; ++it)
+		for (const open_file_snapshot& file : snapshot)
 		{
-			_open_file& _of = *it;
-			if (_of._reader != NULL)
+			if (file.opened)
 			{
 				if (!bShow)
 					Log("----opened files");
 
 				bShow = true;
-				Msg("[%d] fname:%s", _of._used, _of._fn.c_str());
+				Msg("[%d] fname:%s", file.used, file.filename.c_str());
 			}
 		}
 	}
 	else
 	{
 		Log("----un-used");
-		for (it = g_open_files.begin(); it != it_e; ++it)
+		for (const open_file_snapshot& file : snapshot)
 		{
-			_open_file& _of = *it;
-			if (_of._reader == NULL)
-				Msg("[%d] fname:%s", _of._used, _of._fn.c_str());
+			if (!file.opened)
+				Msg("[%d] fname:%s", file.used, file.filename.c_str());
 		}
 	}
 	if (bShow)
-		Log("----total count=", g_open_files.size());
+		Log("----total count=", snapshot.size());
 }
 
 // How many m_files_lock holds the current thread has (counted with -dbg only)
@@ -225,6 +263,87 @@ CLocatorAPI::files_lock_guard::~files_lock_guard()
 	if (counted)
 		--files_lock_depth;
 }
+// Reuse directory metadata only while fsgame.ltx aliases are initialized.
+// Registration is still replayed in the original depth-first order, including
+// overlapping aliases: archive/loose-file precedence must not change.
+bool ignore_name(const char* name);
+bool ignore_path(const char* path);
+
+struct CLocatorAPI::StartupScanCache
+{
+    struct Directory
+    {
+        FFVec entries;
+        bool ignored = false;
+        bool succeeded = false;
+    };
+
+    static constexpr size_t budget_bytes = 64u * 1024u * 1024u;
+    size_t retained_bytes = 0;
+    xr_unordered_map<xr_string, std::shared_ptr<Directory>> directories;
+
+    static void enumerate(Directory& directory, LPCSTR path, bool need_check)
+    {
+        string_path scan_path;
+        xr_strcpy(scan_path, sizeof(scan_path), path);
+        xr_strcat(scan_path, ".xrignore");
+        struct stat buffer;
+        if (!stat(scan_path, &buffer))
+        {
+            directory.ignored = directory.succeeded = true;
+            return;
+        }
+        xr_strcpy(scan_path, sizeof(scan_path), path);
+        xr_strcat(scan_path, "*.*");
+        _finddata_t data;
+        const intptr_t handle = _findfirst(scan_path, &data);
+        if (handle == -1)
+            return;
+        // Small mod directories must not consume a large reservation each.
+        directory.entries.reserve(16);
+        do
+        {
+            bool ignore = ignore_name(data.name);
+            if (!ignore && need_check)
+            {
+                string1024 full_path;
+                xr_strcpy(full_path, sizeof(full_path), path);
+                xr_strcat(full_path, data.name);
+                ignore = ignore_path(full_path);
+            }
+            if (!ignore)
+                directory.entries.push_back(data);
+        } while (_findnext(handle, &data) != -1);
+        _findclose(handle);
+        std::sort(directory.entries.begin(), directory.entries.end(),
+            [](const _finddata_t& a, const _finddata_t& b) { return xr_strcmp(a.name, b.name) < 0; });
+        directory.succeeded = true;
+    }
+
+    std::shared_ptr<Directory> acquire(LPCSTR path, bool need_check)
+    {
+        const auto found = directories.find(path);
+        if (found != directories.end())
+            return found->second;
+
+        auto result = std::make_shared<Directory>();
+        enumerate(*result, path, need_check);
+        if (!result->succeeded || retained_bytes >= budget_bytes)
+            return result;
+        if (result->entries.capacity() > result->entries.size() * 2u + 16u)
+            result->entries.shrink_to_fit();
+        // Include vector capacity, key storage and conservative map/control-block
+        // overhead. Oversized listings remain local and are never retained.
+        const size_t cost = result->entries.capacity() * sizeof(_finddata_t) +
+            sizeof(Directory) + xr_strlen(path) + 256u;
+        if (cost <= budget_bytes - retained_bytes)
+        {
+            directories.emplace(path, result);
+            retained_bytes += cost;
+        }
+        return result;
+    }
+};
 
 CLocatorAPI::CLocatorAPI()
 #ifdef PROFILE_CRITICAL_SECTIONS
@@ -252,6 +371,8 @@ void CLocatorAPI::Register(LPCSTR name, u32 vfs, u32 crc, u32 ptr, u32 size_real
 	string256 temp_file_name;
 	xr_strcpy(temp_file_name, sizeof(temp_file_name), name);
 	xr_strlwr(temp_file_name);
+	if (m_Flags.test(flReady))
+		erase_negative_file_lookup(temp_file_name);
 
 	// Register file
 	file desc;
@@ -313,6 +434,8 @@ void CLocatorAPI::Register(LPCSTR name, u32 vfs, u32 crc, u32 ptr, u32 size_real
 			}
 
 			R_ASSERT(I.second);
+			if (m_Flags.test(flReady))
+				erase_negative_file_lookup(desc.name);
 		}
 		xr_strcpy(temp, sizeof(temp), path);
 		if (xr_strlen(temp)) temp[xr_strlen(temp) - 1] = 0;
@@ -534,6 +657,7 @@ void CLocatorAPI::unload_archive(CLocatorAPI::archive& A)
 {
 	files_lock_guard guard(m_files_lock);
 
+	clear_file_lookup_cache();
 	files_it I = m_files.begin();
 	while (I != m_files.end())
 	{
@@ -637,49 +761,21 @@ bool ignore_path(const char* _path)
 
 bool CLocatorAPI::Recurse(const char* path)
 {
-	string_path scanPath;
-	xr_strcpy(scanPath, sizeof(scanPath), path);
-	xr_strcat(scanPath, ".xrignore");
-	struct stat buffer;
-	if (!stat(scanPath, &buffer))
-		return true;
-	xr_strcpy(scanPath, sizeof(scanPath), path);
-	xr_strcat(scanPath, "*.*");
-	_finddata_t findData;
-	intptr_t handle = _findfirst(scanPath, &findData);
-	if (handle == -1)
-		return false;
-	rec_files.reserve(256);
-	size_t oldSize = rec_files.size();
-	intptr_t done = handle;
-	while (done != -1)
-	{
-		string1024 fullPath;
-		bool ignore = false;
-		if (m_Flags.test(flNeedCheck))
-		{
-			xr_strcpy(fullPath, sizeof(fullPath), path);
-			xr_strcat(fullPath, findData.name);
-			ignore = ignore_name(findData.name) || ignore_path(fullPath);
-		}
+    // Pin the listing across recursive cache rehashes and capacity fallback.
+    std::shared_ptr<StartupScanCache::Directory> directory;
+    if (m_startup_scan_cache)
+        directory = m_startup_scan_cache->acquire(path, m_Flags.test(flNeedCheck));
 		else
 		{
-			ignore = ignore_name(findData.name);
+        directory = std::make_shared<StartupScanCache::Directory>();
+        StartupScanCache::enumerate(*directory, path, m_Flags.test(flNeedCheck));
 		}
-		if (!ignore)
-			rec_files.push_back(findData);
-		done = _findnext(handle, &findData);
-	}
-	_findclose(handle);
-	size_t newSize = rec_files.size();
-	if (newSize > oldSize)
-	{
-		std::sort(rec_files.begin() + oldSize, rec_files.end(), pred_str_ff);
-		for (size_t i = oldSize; i < newSize; i++)
-			ProcessOne(path, rec_files[i]);
-		rec_files.erase(rec_files.begin() + oldSize, rec_files.end());
-	}
-	// insert self
+    if (!directory->succeeded)
+        return false;
+    if (directory->ignored)
+        return true;
+    for (const _finddata_t& entry : directory->entries)
+        ProcessOne(path, entry);
 	if (path && path[0] != 0)
 		Register(path, 0xffffffff, 0, 0, 0, 0, 0);
 	return true;
@@ -788,6 +884,19 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 {
 	char _delimiter = '|'; //','
 	if (m_Flags.is(flReady))return;
+    std::unique_ptr<StartupScanCache> scan_cache;
+    struct reset_scan_pointer
+    {
+        StartupScanCache*& pointer;
+        ~reset_scan_pointer() { pointer = nullptr; }
+    } reset_scan{m_startup_scan_cache};
+#ifndef _EDITOR
+    if (!(Core.Params && strstr(Core.Params, "-no_fs_scan_cache")))
+    {
+        scan_cache = std::make_unique<StartupScanCache>();
+        m_startup_scan_cache = scan_cache.get();
+    }
+#endif
 	CTimer t;
 	t.Start();
 	Log("Initializing File System...");
@@ -881,6 +990,11 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 	};
 
 
+    // A runtime rescan must see changes made after startup. Drop metadata and
+    // its memory before publishing the ready index or applying an overlay.
+    m_startup_scan_cache = nullptr;
+    scan_cache.reset();
+
 	Msg("File System Ready...");
 	size_t M2 = Memory.mem_usage();
 	Msg("FS: %d files cached %d archives, %lldKb memory used.", m_files.size(), m_archives.size(), (M2 - M1) / 1024);
@@ -905,7 +1019,6 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 		}
 	}
 
-	rec_files.clear();
 	//-----------------------------------------------------------
 
 	if (!Core.ParamsData.test(ECoreParams::nolog))
@@ -917,6 +1030,7 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 void CLocatorAPI::_destroy()
 {
 	xrLogger::CloseLog();
+	clear_file_lookup_cache();
 
 	{
 		files_lock_guard guard(m_files_lock);
@@ -944,8 +1058,7 @@ void CLocatorAPI::_destroy()
 
 const CLocatorAPI::file* CLocatorAPI::exist(const char* fn)
 {
-	files_it it = file_find_it(fn);
-	return (it != m_files.end()) ? &(*it) : 0;
+	return file_find_cached(fn);
 }
 
 const CLocatorAPI::file* CLocatorAPI::exist(const char* path, const char* name)
@@ -1364,30 +1477,20 @@ void CLocatorAPI::copy_file_to_build(T*& r, LPCSTR source_name)
 
 bool CLocatorAPI::check_for_file(LPCSTR path, LPCSTR _fname, string_path& fname, const file*& desc)
 {
-	// проверить нужно ли пересканировать пути
-	check_pathes();
-
 	// correct path
 	xr_strcpy(fname, _fname);
 	xr_strlwr(fname);
 	if (path && path[0])
 		update_path(fname, path, fname);
 
-	// Search entry
-	file desc_f;
-	desc_f.name = fname;
-
-	files_lock_guard guard(m_files_lock, true);
-	files_it I = m_files.find(desc_f);
-	if (I == m_files.end())
+	// Search entry through the runtime positive/negative lookup cache.
+	desc = file_find_cached(fname);
+	if (!desc)
 		return (false);
 
 	++dwOpenCounter;
-	desc = &*I;
 	return (true);
 }
-
-#include "..\xrGame\Actor_Flags.h"
 
 template <typename T>
 T* CLocatorAPI::r_open_impl(LPCSTR path, LPCSTR _fname)
@@ -1481,16 +1584,147 @@ void CLocatorAPI::w_close(IWriter*& S)
 		R_ASSERT(S->fName.size());
 		string_path fname;
 		xr_strcpy(fname, sizeof(fname), S->fName.c_str());
-		bool bReg = S->valid();
+		const bool bReg = S->finalize();
 		xr_delete(S);
 
 		if (bReg)
 		{
 			struct _stat st;
-			_stat(fname, &st);
+			if (_stat(fname, &st) == 0)
 			Register(fname, 0xffffffff, 0, 0, st.st_size, st.st_size, (u32)st.st_mtime);
+			else
+				Msg("! Cannot register written file '%s': _stat failed with error %d", fname, errno);
 		}
 	}
+}
+
+bool CLocatorAPI::write_file_atomic(
+	LPCSTR file_name,
+	const void* prefix,
+	u32 prefix_size,
+	const void* data,
+	u32 data_size)
+{
+	if (!file_name || !file_name[0] || (prefix_size && !prefix) || (data_size && !data))
+		return false;
+
+	string_path final_name;
+	xr_strcpy(final_name, sizeof(final_name), file_name);
+	xr_strlwr(final_name);
+
+	constexpr LPCSTR temporary_extension = ".tmp";
+	if (xr_strlen(final_name) + xr_strlen(temporary_extension) >= sizeof(string_path))
+	{
+		Msg("! Cannot save file atomically: path is too long: '%s'", final_name);
+		return false;
+	}
+
+	string_path temporary_name;
+	strconcat(sizeof(temporary_name), temporary_name, final_name, temporary_extension);
+	VerifyPath(temporary_name);
+	_unlink(temporary_name);
+
+	FILE* file = nullptr;
+	const errno_t open_result = fopen_s(&file, temporary_name, "wb");
+	if (open_result != 0 || !file)
+	{
+		Msg("! Cannot create temporary file '%s': error %d", temporary_name, int(open_result));
+		return false;
+	}
+
+	auto write_all = [file](const void* source, u32 size) -> bool
+	{
+		const u8* bytes = static_cast<const u8*>(source);
+		constexpr u32 max_block_size = 16u * 1024u * 1024u;
+
+		while (size)
+		{
+			const u32 block_size = size < max_block_size ? size : max_block_size;
+			const size_t written = fwrite(bytes, 1, block_size, file);
+			if (written != block_size)
+				return false;
+
+			bytes += block_size;
+			size -= block_size;
+		}
+
+		return true;
+	};
+
+	bool write_result = true;
+	if (prefix_size)
+		write_result = write_all(prefix, prefix_size);
+	if (write_result && data_size)
+		write_result = write_all(data, data_size);
+
+	if (write_result && fflush(file) != 0)
+		write_result = false;
+
+	const int close_result = fclose(file);
+	file = nullptr;
+	if (close_result != 0)
+		write_result = false;
+
+	if (!write_result)
+	{
+		Msg("! Cannot write temporary file '%s': error %d", temporary_name, errno);
+		_unlink(temporary_name);
+		return false;
+	}
+
+	if (!MoveFileExA(temporary_name, final_name, MOVEFILE_REPLACE_EXISTING))
+	{
+		const DWORD error = GetLastError();
+		Msg("! Cannot commit temporary file '%s' to '%s': Win32 error %lu", temporary_name, final_name, error);
+		_unlink(temporary_name);
+		return false;
+	}
+
+	struct _stat st;
+	if (_stat(final_name, &st) == 0)
+	{
+		Register(final_name, 0xffffffff, 0, 0, st.st_size, st.st_size, (u32)st.st_mtime);
+	}
+	else
+	{
+		const u64 total_size_64 = u64(prefix_size) + u64(data_size);
+		const u32 total_size = total_size_64 > u64(u32(-1)) ? u32(-1) : u32(total_size_64);
+		Msg("! Saved file '%s', but _stat failed with error %d; registering known size", final_name, errno);
+		Register(final_name, 0xffffffff, 0, 0, total_size, total_size, 0);
+	}
+
+	return true;
+}
+
+void CLocatorAPI::clear_file_lookup_cache()
+{
+	xrSRWLockGuard guard(m_file_lookup_cache_lock);
+	m_file_lookup_cache.clear();
+	m_file_negative_cache.clear();
+}
+
+void CLocatorAPI::erase_negative_file_lookup(LPCSTR fname)
+{
+	if (!fname || !fname[0])
+		return;
+
+	xrSRWLockGuard guard(m_file_lookup_cache_lock);
+	m_file_negative_cache.erase(shared_str(fname));
+}
+
+const CLocatorAPI::file* CLocatorAPI::file_find_cached(LPCSTR fname)
+{
+	if (!fname || !fname[0])
+		return nullptr;
+
+	// Quark memoizes these lookups, but its cache is filled outside m_files_lock and
+	// can keep a pointer to an entry another thread has since erased. Plain locked find.
+	check_pathes();
+	file desc_f;
+	desc_f.name = fname;
+	files_lock_guard guard(m_files_lock, true);
+	const files_it found = m_files.find(desc_f);
+	return found != m_files.end() ? &*found : nullptr;
 }
 
 CLocatorAPI::files_it CLocatorAPI::file_find_it(LPCSTR fname)
@@ -1517,6 +1751,7 @@ CLocatorAPI::files_it CLocatorAPI::file_find_it_nolock(LPCSTR fname)
 
 BOOL CLocatorAPI::dir_delete(LPCSTR path, LPCSTR nm, BOOL remove_files)
 {
+	clear_file_lookup_cache();
 	string_path fpath;
 	if (path && path[0]) update_path(fpath, path, nm);
 	else xr_strcpy(fpath, sizeof(fpath), nm);
@@ -1567,6 +1802,7 @@ BOOL CLocatorAPI::dir_delete(LPCSTR path, LPCSTR nm, BOOL remove_files)
 
 void CLocatorAPI::file_delete(LPCSTR path, LPCSTR nm)
 {
+	clear_file_lookup_cache();
 	string_path fname;
 	if (path && path[0]) update_path(fname, path, nm);
 	else xr_strcpy(fname, sizeof(fname), nm);
@@ -1604,6 +1840,7 @@ void CLocatorAPI::file_copy(LPCSTR src, LPCSTR dest)
 
 void CLocatorAPI::file_rename(LPCSTR src, LPCSTR dest, bool bOwerwrite)
 {
+	clear_file_lookup_cache();
 	check_pathes();
 	bool renamed = false;
 	{
@@ -1731,13 +1968,16 @@ void CLocatorAPI::set_file_age(LPCSTR nm, u32 age)
 
 void CLocatorAPI::rescan_path(LPCSTR full_path, BOOL bRecurse)
 {
+	clear_file_lookup_cache();
+	const u64 scan_started = CPU::QPC();
+	size_t removed_count = 0;
+
 	file desc;
 	desc.name = full_path;
 	{
 		// Released before Recurse(), which re-enters via Register()
 		files_lock_guard guard(m_files_lock);
 		files_it I = m_files.lower_bound(desc);
-		if (I == m_files.end()) return;
 
 		size_t base_len = xr_strlen(full_path);
 		for (; I != m_files.end();)
@@ -1754,10 +1994,22 @@ void CLocatorAPI::rescan_path(LPCSTR full_path, BOOL bRecurse)
 			char* str = LPSTR(cur_item->name);
 			xr_free(str);
 			m_files.erase(cur_item);
+		++removed_count;
 		}
 	}
+
+	const BOOL previous_no_recurse = bNoRecurse;
 	bNoRecurse = !bRecurse;
 	Recurse(full_path);
+	bNoRecurse = previous_no_recurse;
+
+	const u64 elapsed_ticks = CPU::QPC() - scan_started;
+	if (CPU::qpc_freq && elapsed_ticks >= CPU::qpc_freq / 20u)
+	{
+		const double elapsed_ms = 1000.0 * static_cast<double>(elapsed_ticks) /
+			static_cast<double>(CPU::qpc_freq);
+		Msg("! FS rescan hitch: '%s' took %.2f ms, removed %zu cached entries", full_path, elapsed_ms, removed_count);
+	}
 }
 
 void CLocatorAPI::rescan_pathes()

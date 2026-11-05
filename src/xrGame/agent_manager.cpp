@@ -15,10 +15,14 @@
 #include "agent_member_manager.h"
 #include "agent_memory_manager.h"
 #include "agent_manager_planner.h"
+#include "ai/stalker/ai_stalker.h"
+#include "ai_space.h"
+#include "../xrServerEntities/script_engine.h"
 #include "profiler.h"
 
 CAgentManager::CAgentManager()
 {
+	m_relcase_object_ids.reserve(32);
 	init_scheduler();
 	init_components();
 }
@@ -76,6 +80,22 @@ void CAgentManager::remove_components()
 
 void CAgentManager::remove_links(CObject* object)
 {
+	if (object)
+	{
+		if (m_relcase_frame != Device.dwFrame)
+		{
+			m_relcase_frame = Device.dwFrame;
+			m_relcase_object_ids.clear_not_free();
+		}
+
+		const u16 object_id = object->ID();
+		auto processed = std::lower_bound(m_relcase_object_ids.begin(), m_relcase_object_ids.end(), object_id);
+		if (processed != m_relcase_object_ids.end() && *processed == object_id)
+			return;
+
+		m_relcase_object_ids.insert(processed, object_id);
+	}
+
 	corpse().remove_links(object);
 	enemy().remove_links(object);
 	explosive().remove_links(object);
@@ -83,6 +103,7 @@ void CAgentManager::remove_links(CObject* object)
 	member().remove_links(object);
 	memory().remove_links(object);
 	brain().remove_links(object);
+
 }
 
 void CAgentManager::update_impl()
@@ -90,13 +111,46 @@ void CAgentManager::update_impl()
 	PROF_EVENT("CAgentManager::update_impl");
 	VERIFY(!member().members().empty());
 
+	const CMemberOrder* representative = member().members().front();
+	LPCSTR profile_name = representative ? *representative->object().cName() : "agent_group";
+	const u32 profile_id = representative ? static_cast<u32>(representative->object().ID()) : u32(-1);
+	const u32 member_count = static_cast<u32>(member().members().size());
+
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "agent_manager", "memory", profile_name, profile_id, member_count);
+
 	memory().update();
+	}
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "agent_manager", "corpse", profile_name, profile_id, member_count);
+
 	corpse().update();
+	}
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "agent_manager", "enemy", profile_name, profile_id, member_count);
+
 	enemy().update();
+	}
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "agent_manager", "explosive", profile_name, profile_id, member_count);
+
 	explosive().update();
+	}
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "agent_manager", "location", profile_name, profile_id, member_count);
+
 	location().update();
+	}
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "agent_manager", "member", profile_name, profile_id, member_count);
+
 	member().update();
+	}
+	{
+		CScopedLuaRecordPhase phase(ai().script_engine(), "agent_manager", "brain", profile_name, profile_id, member_count);
+
 	brain().update();
+	}
 }
 
 #ifdef USE_SCHEDULER_IN_AGENT_MANAGER

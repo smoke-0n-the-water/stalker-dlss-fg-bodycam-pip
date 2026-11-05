@@ -100,7 +100,16 @@ IC void CSolverPathManager::create_path(T& vertex, _DataStorage& data_storage, b
 {
 	VERIFY(this->data_storage);
 	if (m_edge_path)
+	{
+#ifndef AI_COMPILER
+		const u64 profile_started = graph->solve_profile_enabled() && CPU::qpc_freq ? CPU::QPC() : 0;
+#endif
 		data_storage.get_edge_path(*m_edge_path, &vertex, reverse_order);
+#ifndef AI_COMPILER
+		if (profile_started)
+			graph->record_solution_rebuild_profile(CPU::QPC() - profile_started);
+#endif
+	}
 }
 
 TEMPLATE_SPECIALIZATION
@@ -109,7 +118,16 @@ IC void CSolverPathManager::create_path(T& vertex)
 {
 	VERIFY(this->data_storage);
 	if (m_edge_path)
+	{
+#ifndef AI_COMPILER
+		const u64 profile_started = graph->solve_profile_enabled() && CPU::qpc_freq ? CPU::QPC() : 0;
+#endif
 		data_storage->get_edge_path(*m_edge_path, &vertex, typename _Graph::reverse_search);
+#ifndef AI_COMPILER
+		if (profile_started)
+			graph->record_solution_rebuild_profile(CPU::QPC() - profile_started);
+#endif
+	}
 }
 
 #undef TEMPLATE_SPECIALIZATION

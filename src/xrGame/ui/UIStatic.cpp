@@ -44,6 +44,35 @@ CUIStatic::~CUIStatic()
 	xr_delete(m_pTextControl);
 }
 
+bool CUIStatic::extract_lua_instance(lua_State* L) const
+{
+	if (m_lua_instance_ref.empty())
+		return false;
+
+	m_lua_instance_ref.get(L);
+	if (lua_isuserdata(L, -1))
+		return true;
+
+	lua_pop(L, 1);
+	m_lua_instance_ref = luabind::weak_ref();
+	return false;
+}
+
+void CUIStatic::store_lua_instance(lua_State* L, int index) const
+{
+	m_lua_instance_ref = luabind::weak_ref(L, index);
+}
+
+bool luabind::identity_back_reference<CUIStatic>::extract(lua_State* L, const CUIStatic* object)
+{
+	return object->extract_lua_instance(L);
+}
+
+void luabind::identity_back_reference<CUIStatic>::store(lua_State* L, const CUIStatic* object, int index)
+{
+	object->store_lua_instance(L, index);
+}
+
 void CUIStatic::SetXformLightAnim(LPCSTR lanim, bool bCyclic)
 {
 	if (lanim && lanim[0] != 0)
@@ -335,6 +364,35 @@ void CUIStatic::OnFocusLost()
 //-------------------------------------
 CUITextWnd::CUITextWnd()
 {
+}
+
+bool CUITextWnd::extract_lua_instance(lua_State* L) const
+{
+	if (m_lua_instance_ref.empty())
+		return false;
+
+	m_lua_instance_ref.get(L);
+	if (lua_isuserdata(L, -1))
+		return true;
+
+	lua_pop(L, 1);
+	m_lua_instance_ref = luabind::weak_ref();
+	return false;
+}
+
+void CUITextWnd::store_lua_instance(lua_State* L, int index) const
+{
+	m_lua_instance_ref = luabind::weak_ref(L, index);
+}
+
+bool luabind::identity_back_reference<CUITextWnd>::extract(lua_State* L, const CUITextWnd* object)
+{
+	return object->extract_lua_instance(L);
+}
+
+void luabind::identity_back_reference<CUITextWnd>::store(lua_State* L, const CUITextWnd* object, int index)
+{
+	object->store_lua_instance(L, index);
 }
 
 void CUITextWnd::AdjustHeightToText()

@@ -43,6 +43,15 @@ typedef CStalkerPropertyEvaluator::_value_type _value_type;
 
 const float wounded_enemy_reached_distance = 3.f;
 
+namespace
+{
+const ::luabind::functor<bool>* should_throw_grenade_callback()
+{
+	static cached_script_functor<bool> callback_cache("_G.CAI_Stalker__ShouldThrow");
+	return callback_cache.get(ai().script_engine());
+}
+}
+
 //////////////////////////////////////////////////////////////////////////
 // CStalkerPropertyEvaluatorALife
 //////////////////////////////////////////////////////////////////////////
@@ -516,10 +525,9 @@ _value_type CStalkerPropertyEvaluatorShouldThrowGrenade::evaluate()
 
 	// Lua hook: allow scripts to cancel the throw (e.g. rank-based grenade denial)
 	{
-		::luabind::functor<bool> funct;
-		if (ai().script_engine().functor("_G.CAI_Stalker__ShouldThrow", funct))
+		if (const auto* funct = should_throw_grenade_callback())
 		{
-			if (!funct(object().lua_game_object()))
+			if (!(*funct)(object().lua_game_object()))
 				return (false);
 		}
 	}

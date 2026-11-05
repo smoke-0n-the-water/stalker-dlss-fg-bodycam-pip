@@ -10,6 +10,7 @@
 
 #include "ai/stalker/ai_stalker_impl.h"
 #include "agent_manager.h"
+#include "agent_member_manager.h"
 #include "agent_location_manager.h"
 
 class CAI_Stalker;
@@ -19,6 +20,8 @@ class CStalkerMovementRestrictor
 private:
 	CAI_Stalker* m_object;
 	const CAgentManager* m_agent_manager;
+	mutable MemorySpace::squad_mask_type m_member_mask;
+	mutable bool m_member_mask_actual;
 	bool m_use_enemy_info;
 	bool m_notify_agent_manager;
 

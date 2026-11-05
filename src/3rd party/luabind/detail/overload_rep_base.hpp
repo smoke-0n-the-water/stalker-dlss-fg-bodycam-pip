@@ -35,7 +35,7 @@ namespace luabind::detail
 	struct LUABIND_API overload_rep_base
 	{
 #if !defined(LUABIND_NO_ERROR_CHECKING)
-		overload_rep_base(): m_get_signature_fun(nullptr), m_arity(-1), m_match_fun(nullptr) 
+		overload_rep_base(): m_get_signature_fun(nullptr), m_match_fun(nullptr), m_arity(-1) 
         {
         }
 #else

@@ -573,3 +573,15 @@ void CSoundMemoryManager::on_requested_spawn(CObject* object)
 		return;
 	}
 }
+
+// Used by Quark's memory manager merge. Our sound memory has no id index, so this
+// is the plain linear lookup over the (small) per-NPC sound list.
+const CSoundMemoryManager::CSoundObject* CSoundMemoryManager::object_by_id(u16 id) const
+{
+	if (!m_sounds)
+		return nullptr;
+	for (const CSoundObject& sound : *m_sounds)
+		if (sound.m_object && sound.m_object->ID() == id)
+			return &sound;
+	return nullptr;
+}

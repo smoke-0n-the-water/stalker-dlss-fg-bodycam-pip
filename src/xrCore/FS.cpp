@@ -20,7 +20,7 @@
 #ifdef FS_DEBUG
 XRCORE_API u32 g_file_mapped_memory = 0;
 u32 g_file_mapped_count = 0;
-typedef xr_map<u32, std::pair<u32, shared_str> > FILE_MAPPINGS;
+typedef xr_map<uintptr_t, std::pair<u32, shared_str> > FILE_MAPPINGS;
 FILE_MAPPINGS g_file_mappings;
 static xrCriticalSection CSFileMapping;
 
@@ -28,9 +28,9 @@ void register_file_mapping(void* address, const u32& size, LPCSTR file_name)
 {
     xrCriticalSectionGuard guard(CSFileMapping);
 
-    FILE_MAPPINGS::const_iterator I = g_file_mappings.find(*(u32*)&address);
+    FILE_MAPPINGS::const_iterator I = g_file_mappings.find(reinterpret_cast<uintptr_t>(address));
     VERIFY(I == g_file_mappings.end());
-    g_file_mappings.insert(std::make_pair(*(u32*)&address, std::make_pair(size, shared_str(file_name))));
+    g_file_mappings.insert(std::make_pair(reinterpret_cast<uintptr_t>(address), std::make_pair(size, shared_str(file_name))));
 
     // Msg ("++register_file_mapping(%2d): [0x%08x]%s", g_file_mapped_count + 1, *((u32*)&address), file_name);
 
@@ -48,7 +48,7 @@ void unregister_file_mapping(void* address, const u32& size)
 {
     xrCriticalSectionGuard guard(CSFileMapping);
 
-    FILE_MAPPINGS::iterator I = g_file_mappings.find(*(u32*)&address);
+    FILE_MAPPINGS::iterator I = g_file_mappings.find(reinterpret_cast<uintptr_t>(address));
     VERIFY(I != g_file_mappings.end());
     // VERIFY2 ((*I).second.first == size,make_string("file mapping sizes are different: %d -> %d",(*I).second.first,size));
     g_file_mapped_memory -= (*I).second.first;
@@ -71,8 +71,8 @@ XRCORE_API void dump_file_mappings()
     FILE_MAPPINGS::const_iterator E = g_file_mappings.end();
     for (; I != E; ++I)
         Msg(
-        "* [0x%08x][%d][%s]",
-        (*I).first,
+        "* [%p][%d][%s]",
+        reinterpret_cast<void*>((*I).first),
         (*I).second.first,
         (*I).second.second.c_str()
         );
@@ -230,13 +230,34 @@ CMemoryWriter::~CMemoryWriter()
 	xr_free(data);
 }
 
+void CMemoryWriter::reserve(u32 capacity)
+{
+	if (capacity <= mem_size)
+		return;
+
+	if (!data)
+		data = static_cast<BYTE*>(Memory.mem_alloc_uninitialized(capacity
+#ifdef DEBUG_MEMORY_NAME
+			, "CMemoryWriter - reserve"
+#endif // DEBUG_MEMORY_NAME
+		));
+	else
+		data = static_cast<BYTE*>(Memory.mem_realloc(data, capacity
+#ifdef DEBUG_MEMORY_NAME
+			, "CMemoryWriter - reserve"
+#endif // DEBUG_MEMORY_NAME
+		));
+
+	mem_size = capacity;
+}
+
 void CMemoryWriter::w(const void* ptr, u32 count)
 {
 	if (position + count > mem_size)
 	{
 		// reallocate
 		if (mem_size == 0) mem_size = 128;
-		while (mem_size <= (position + count)) mem_size *= 2;
+		while (mem_size < (position + count)) mem_size *= 2;
 		if (0 == data)
 			data = (BYTE*)Memory.mem_alloc(mem_size
 #ifdef DEBUG_MEMORY_NAME

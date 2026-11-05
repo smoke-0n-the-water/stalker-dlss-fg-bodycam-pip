@@ -42,8 +42,10 @@ typename luabind::memory_allocator<T>::const_pointer luabind::memory_allocator<T
 {
 	return			(&value);
 }
+#if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable: 5037)
+#endif
 template <typename T>
 typename luabind::memory_allocator<T>::pointer luabind::memory_allocator<T>::allocate(size_type const n, void const* const p) const
 {
@@ -53,7 +55,9 @@ typename luabind::memory_allocator<T>::pointer luabind::memory_allocator<T>::all
 
 	return (pResult);
 }
+#if defined(_MSC_VER)
 #pragma warning(pop)
+#endif
 template <typename T>
 char *luabind::memory_allocator<T>::__charalloc										(size_type const n)
 {
@@ -61,13 +65,13 @@ char *luabind::memory_allocator<T>::__charalloc										(size_type const n)
 }
 
 template <typename T>
-void luabind::memory_allocator<T>::deallocate										(pointer const p, size_type const n) const
+void luabind::memory_allocator<T>::deallocate										(pointer const p, size_type const) const
 {
 	luabind::call_allocator	(p,0);
 }
 
 template <typename T>
-void luabind::memory_allocator<T>::deallocate										(void *p, size_type n) const
+void luabind::memory_allocator<T>::deallocate										(void *p, size_type) const
 {
 	luabind::call_allocator	(p,0);
 }

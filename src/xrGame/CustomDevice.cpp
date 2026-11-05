@@ -459,7 +459,11 @@ void CCustomDevice::UpdateCL()
 {
 	inherited::UpdateCL();
 
-	if (H_Parent() != Level().CurrentEntity()) return;
+	// During level teardown the actor global is cleared before every child item is
+	// necessarily reclaimed. HUD-only work has no meaning once that ownership link
+	// is gone and Actor() would dereference a null global.
+	if (!g_actor || !g_player_hud || H_Parent() != g_actor || H_Parent() != Level().CurrentEntity())
+		return;
 
 	UpdateVisibility();
 

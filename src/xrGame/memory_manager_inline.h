@@ -25,7 +25,7 @@ IC void CMemoryManager::fill_enemies(const xr_vector<T>* objects, const _predica
 
 		const CEntityAlive* _enemy = smart_cast<const CEntityAlive*>((*I).m_object);
 
-		if (_enemy && enemy().useful(_enemy))
+		if (_enemy && enemy().useful_cached(_enemy))
 			predicate(_enemy);
 	}
 }
@@ -33,6 +33,20 @@ IC void CMemoryManager::fill_enemies(const xr_vector<T>* objects, const _predica
 template <typename _predicate>
 IC void CMemoryManager::fill_enemies(const _predicate& predicate) const
 {
+	if (m_visual_enemy_candidates_valid)
+	{
+		for (const CEntityAlive* candidate : m_visual_enemy_candidates)
+		{
+			// Candidate membership is the snapshot produced by this NPC's own
+			// visual-memory merge. Keep hard native relation/alive checks live,
+			// while reusing the already-evaluated Lua predicate.
+			if (candidate && enemy().useful_cached(candidate))
+				predicate(candidate);
+		}
+		return;
+	}
+
+	// First-update/load compatibility path before a snapshot exists.
 	fill_enemies(visual().objectsPtr(), predicate);
 	//	fill_enemies			(sound().objects(),predicate);
 	//	fill_enemies			(hit().objects(),predicate);

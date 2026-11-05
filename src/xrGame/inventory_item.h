@@ -208,8 +208,9 @@ public:
 	//---------------------------------------------------------------------
 	IC float GetCondition() const { return m_fCondition; }
 	virtual float GetConditionToShow() const { return GetCondition(); }
-	IC void SetCondition(float val) { m_fCondition = val; }
+	void SetCondition(float val);
 	void ChangeCondition(float fDeltaCondition);
+	void InvalidateInventoryUI();
 	IC float GetLowestBatteryCharge() const { return m_fLowestBatteryCharge; }
 
 	u16 BaseSlot() const { return m_ItemCurrPlace.base_slot_id; }

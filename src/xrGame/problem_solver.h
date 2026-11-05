@@ -78,6 +78,37 @@ public:
 	typedef typename OPERATOR_VECTOR::const_iterator const_iterator;
 	typedef associative_vector<_condition_type, _condition_evaluator_ptr> EVALUATORS;
 
+	struct SSolveProfile
+	{
+		struct SEvaluatorProfile
+		{
+			u32 condition_id = u32(-1);
+			u32 calls = 0;
+			u64 total_ticks = 0;
+			u64 max_ticks = 0;
+		};
+
+		static constexpr u32 max_evaluator_profiles = 64;
+
+		u64 actuality_ticks = 0;
+		u64 search_ticks = 0;
+		u64 evaluator_ticks = 0;
+		u64 operator_apply_ticks = 0;
+		u64 operator_weight_ticks = 0;
+		u64 solution_rebuild_ticks = 0;
+		u32 evaluator_calls = 0;
+		u32 operator_apply_calls = 0;
+		u32 operator_weight_calls = 0;
+		u32 solution_rebuild_calls = 0;
+		u32 visited_nodes = 0;
+		u32 solution_size = 0;
+		u32 evaluator_profile_count = 0;
+		SEvaluatorProfile evaluator_profiles[max_evaluator_profiles] = {};
+		bool search_performed = false;
+		bool actual_shortcut = false;
+		bool failed = false;
+	};
+
 protected:
 	OPERATOR_VECTOR m_operators;
 	EVALUATORS m_evaluators;
@@ -89,15 +120,17 @@ protected:
 	bool m_actuality;
 	bool m_solution_changed;
 	bool m_failed;
+	mutable bool m_solve_profile_enabled;
+	mutable SSolveProfile m_solve_profile;
 
 private:
-	template <bool>
-	IC bool is_goal_reached_impl(const _index_type& vertex_index) const { return is_goal_reached_impl(vertex_index); }
-
-	template <>
-	IC bool is_goal_reached_impl<true>(const _index_type& vertex_index) const
+	IC _value_type evaluate_profiled(const _condition_type& condition_id, _condition_evaluator_ptr evaluator) const;
+	IC bool is_goal_reached_dispatch(const _index_type& vertex_index) const
 	{
-		return is_goal_reached_impl(vertex_index, true);
+		if constexpr (reverse_search)
+			return is_goal_reached_impl(vertex_index, true);
+		else
+			return is_goal_reached_impl(vertex_index);
 	}
 
 	IC bool is_goal_reached_impl(const _index_type& vertex_index) const;
@@ -106,24 +139,13 @@ private:
 	IC _edge_value_type estimate_edge_weight_impl(const _index_type& vertex_index) const;
 	IC _edge_value_type estimate_edge_weight_impl(const _index_type& vertex_index, bool) const;
 
-private:
-	template <bool>
-	struct helper
+	IC _edge_value_type estimate_edge_weight_dispatch(const _index_type& vertex_index) const
 	{
-		static IC _edge_value_type estimate_edge_weight_impl(self_type const& self, const _index_type& vertex_index)
-		{
-			return self.estimate_edge_weight_impl(vertex_index);
-		}
-	}; // struct helper
-
-	template <>
-	struct helper<true>
-	{
-		static IC _edge_value_type estimate_edge_weight_impl(self_type const& self, const _index_type& vertex_index)
-		{
-			return self.estimate_edge_weight_impl(vertex_index, true);
-		}
-	}; // struct helper
+		if constexpr (reverse_search)
+			return estimate_edge_weight_impl(vertex_index, true);
+		else
+			return estimate_edge_weight_impl(vertex_index);
+	}
 
 protected:
 #ifdef DEBUG
@@ -171,6 +193,10 @@ public:
 	// solver interface
 	IC void solve();
 	IC const xr_vector<_edge_type>& solution() const;
+	IC void set_solve_profile_enabled(bool enabled);
+	IC bool solve_profile_enabled() const;
+	IC const SSolveProfile& solve_profile() const;
+	IC void record_solution_rebuild_profile(u64 elapsed_ticks) const;
 	virtual void clear();
 };
 

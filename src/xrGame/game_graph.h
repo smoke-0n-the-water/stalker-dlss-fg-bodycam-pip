@@ -83,6 +83,8 @@ public:
 	IC _GRAPH_ID vertex_id(const CVertex* vertex) const;
 	IC void set_current_level(u32 level_id);
 	IC const _GRAPH_ID& current_level_vertex() const;
+	// Nearest vertex of level_id by level_point; false when the level has no vertices (distance is then
+	// undefined).
 DECLARE_SCRIPT_REGISTER_FUNCTION
 };
 

@@ -244,14 +244,18 @@ void CStalkerActionRetreatFromEnemy::execute()
 	CMemoryInfo mem_object = object().memory().memory(object().memory().enemy().selected());
 	if (mem_object.m_object)
 	{
+		const Fvector& object_position = object().Position();
+		CStalkerMovementRestrictor near_restrictor(m_object, true);
+		bool near_search_performed = false;
 		object().m_ce_far->setup(mem_object.m_object_params.m_position, 0.f, 300.f);
-		point = ai().cover_manager().best_cover(object().Position(), 30.f, *object().m_ce_far,
-		                                        CStalkerMovementRestrictor(m_object, true));
+		point = ai().cover_manager().best_cover(object_position, 30.f, *object().m_ce_far,
+		                                        near_restrictor, 0.f, &near_search_performed);
 		if (!point)
 		{
 			object().m_ce_far->setup(mem_object.m_object_params.m_position, 0.f, 300.f);
-			point = ai().cover_manager().best_cover(object().Position(), 50.f, *object().m_ce_far,
-			                                        CStalkerMovementRestrictor(m_object, true));
+			point = ai().cover_manager().best_cover(object_position, 50.f, *object().m_ce_far,
+			                                        CStalkerMovementRestrictor(m_object, true),
+			                                        near_search_performed ? 30.f : 0.f);
 		}
 	}
 
@@ -1009,16 +1013,21 @@ void CStalkerActionDetourEnemy::execute()
 	if (object().movement().path_completed())
 	{
 		Fvector position = mem_object.m_object_params.m_position;
+		const Fvector& object_position = object().Position();
+		const float fire_range = object().ffGetRange();
+		CStalkerMovementRestrictor near_restrictor(m_object, true);
+		bool near_search_performed = false;
 
-		object().m_ce_angle->setup(position, 10.f, object().ffGetRange(), mem_object.m_object_params.m_level_vertex_id);
-		const CCoverPoint* point = ai().cover_manager().best_cover(object().Position(), 10.f, *object().m_ce_angle,
-		                                                           CStalkerMovementRestrictor(m_object, true));
+		object().m_ce_angle->setup(position, 10.f, fire_range, mem_object.m_object_params.m_level_vertex_id);
+		const CCoverPoint* point = ai().cover_manager().best_cover(object_position, 10.f, *object().m_ce_angle,
+		                                                           near_restrictor, 0.f, &near_search_performed);
 		if (!point)
 		{
-			object().m_ce_angle->setup(position, 10.f, object().ffGetRange(),
+			object().m_ce_angle->setup(position, 10.f, fire_range,
 			                           mem_object.m_object_params.m_level_vertex_id);
-			point = ai().cover_manager().best_cover(object().Position(), 30.f, *object().m_ce_angle,
-			                                        CStalkerMovementRestrictor(m_object, true));
+			point = ai().cover_manager().best_cover(object_position, 30.f, *object().m_ce_angle,
+			                                        CStalkerMovementRestrictor(m_object, true),
+			                                        near_search_performed ? 10.f : 0.f);
 		}
 
 		if (point)

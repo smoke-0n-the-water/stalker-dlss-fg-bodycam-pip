@@ -22,9 +22,13 @@
 #include "../actor.h"
 #include "UICheckButton.h"
 
+int g_ui_pda_task_cache = 1;
+
 CUITaskWnd::CUITaskWnd()
 {
 	hint_wnd = NULL;
+	m_actual_frame = u32(-1);
+	m_map_locations_version = u32(-1);
 }
 
 CUITaskWnd::~CUITaskWnd()
@@ -106,9 +110,10 @@ void CUITaskWnd::Init()
 
 void CUITaskWnd::Update()
 {
-	if (Level().GameTaskManager().ActualFrame() != m_actual_frame)
+	if (!g_ui_pda_task_cache || Level().GameTaskManager().ActualFrame() != m_actual_frame ||
+		Level().MapManager().LocationsVersion() != m_map_locations_version)
 	{
-		ReloadTaskInfo();
+		ReloadTaskInfo(g_ui_pda_task_cache == 0);
 	}
 
 	if (m_pStoryLineTaskItem->show_hint && m_pStoryLineTaskItem->OwnerTask())
@@ -170,8 +175,15 @@ void CUITaskWnd::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
 	CUIWndCallback::OnEvent(pWnd, msg, pData);
 }
 
-void CUITaskWnd::ReloadTaskInfo()
+void CUITaskWnd::ReloadTaskInfo(bool force)
 {
+	const u32 actual_frame = Level().GameTaskManager().ActualFrame();
+	const u32 locations_version = Level().MapManager().LocationsVersion();
+	if (!force && actual_frame == m_actual_frame && locations_version == m_map_locations_version)
+		return;
+
+	m_actual_frame = actual_frame;
+
 	CGameTask* t = Level().GameTaskManager().ActiveTask();
 	m_pStoryLineTaskItem->InitTask(t);
 
@@ -180,31 +192,28 @@ void CUITaskWnd::ReloadTaskInfo()
 	else
 		m_btn_focus->Show(true);
 
-	Locations map_locs = Level().MapManager().Locations();
-	Locations_it b = map_locs.begin(),
-	             e = map_locs.end();
-	for (; b != e; b++)
+	const Locations& map_locs = Level().MapManager().Locations();
+	for (const SLocationKey& map_location : map_locs)
 	{
-		shared_str spot = b->spot_type;
+		const shared_str& spot = map_location.spot_type;
 		if (spot == "treasure")
-			m_bTreasuresEnabled ? b->location->EnableSpot() : b->location->DisableSpot();
+			m_bTreasuresEnabled ? map_location.location->EnableSpot() : map_location.location->DisableSpot();
 		else if (spot == "primary_object")
-			m_bPrimaryObjectsEnabled ? b->location->EnableSpot() : b->location->DisableSpot();
+			m_bPrimaryObjectsEnabled ? map_location.location->EnableSpot() : map_location.location->DisableSpot();
 		else if (spot == "secondary_task_location" || spot == "secondary_task_location_complex_timer")
 			(/*b->location->SpotEnabled() && */m_bSecondaryTasksEnabled)
-				? b->location->EnableSpot()
-				: b->location->DisableSpot();
+				? map_location.location->EnableSpot()
+				: map_location.location->DisableSpot();
 		else if (spot == "ui_pda2_trader_location" || spot == "ui_pda2_mechanic_location" ||
 			spot == "ui_pda2_scout_location" || spot == "ui_pda2_quest_npc_location" ||
 			spot == "ui_pda2_medic_location" || spot == "ui_pda2_actor_box_location" ||
 			spot == "ui_pda2_actor_sleep_location")
-			m_bQuestNpcsEnabled ? b->location->EnableSpot() : b->location->DisableSpot();
+			m_bQuestNpcsEnabled ? map_location.location->EnableSpot() : map_location.location->DisableSpot();
 	}
+	m_map_locations_version = Level().MapManager().LocationsVersion();
 
 	if (!t)
 		return;
-
-	m_actual_frame = Level().GameTaskManager().ActualFrame();
 
 	u32 task_count = Level().GameTaskManager().GetTaskCount(eTaskStateInProgress);
 	if (task_count)
@@ -225,7 +234,7 @@ void CUITaskWnd::Show(bool status)
 	m_map_legend_wnd->Show(false);
 	if (status)
 	{
-		ReloadTaskInfo();
+		ReloadTaskInfo(true);
 		m_task_wnd->Show(m_task_wnd_show);
 	}
 	else
@@ -318,25 +327,25 @@ void CUITaskWnd::Switch_ShowMapLegend()
 void CUITaskWnd::OnShowTreasures(CUIWindow* ui, void* d)
 {
 	m_bTreasuresEnabled = !m_bTreasuresEnabled;
-	ReloadTaskInfo();
+	ReloadTaskInfo(true);
 }
 
 void CUITaskWnd::OnShowPrimaryObjects(CUIWindow* ui, void* d)
 {
 	m_bPrimaryObjectsEnabled = !m_bPrimaryObjectsEnabled;
-	ReloadTaskInfo();
+	ReloadTaskInfo(true);
 }
 
 void CUITaskWnd::OnShowSecondaryTasks(CUIWindow* ui, void* d)
 {
 	m_bSecondaryTasksEnabled = !m_bSecondaryTasksEnabled;
-	ReloadTaskInfo();
+	ReloadTaskInfo(true);
 }
 
 void CUITaskWnd::OnShowQuestNpcs(CUIWindow* ui, void* d)
 {
 	m_bQuestNpcsEnabled = !m_bQuestNpcsEnabled;
-	ReloadTaskInfo();
+	ReloadTaskInfo(true);
 }
 
 // --------------------------------------------------------------------------------------------------
