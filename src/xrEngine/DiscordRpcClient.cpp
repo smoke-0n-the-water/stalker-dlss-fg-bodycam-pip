@@ -192,8 +192,8 @@ std::string Client::ActivityJson(const discord::Activity& activity)
         field(out,"large_text",assets.GetLargeText());field(out,"small_image",assets.GetSmallImage());field(out,"small_text",assets.GetSmallText());
         out+='}';
     }
-    out+=",\"buttons\":[{\"label\":\"Discord\",\"url\":";
-    json_string(out,community_url);out+="}]}";return out;
+    // No "Discord" invite button: stock Anomaly presence has none.
+    out+='}';return out;
 }
 
 bool Client::Submit(const discord::Activity& activity)
