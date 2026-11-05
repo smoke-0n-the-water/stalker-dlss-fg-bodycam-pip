@@ -25,7 +25,7 @@ float previousFov{};
 u32 previousFrame{};
 const char* lastReason{};
 
-enum Method : u32 { Off = 0, Dlss = 1, Fsr = 2 };
+enum Method : u32 { Off = 0, Dlss = 1, Fsr = 2, Dlss3x = 3, Dlss4x = 4 };
 
 void Status(const char* reason)
 {
@@ -48,7 +48,7 @@ bool Eligible()
     if (!bridge) return false;
     if (!RuntimeMatchesSetting(*bridge))
     {
-        Status(ps_r_frame_generation == Dlss && !StreamlineIntegration::CanInitialize() ?
+        Status(ps_r_frame_generation != Fsr && !StreamlineIntegration::CanInitialize() ?
             "DLSS frame generation needs a game restart after FSR frame generation was used." :
             "Selected method is not active: Apply/vid_restart to switch, or it failed to start (see [DX12 bridge] lines).");
         return false;
@@ -146,7 +146,7 @@ void EndPresent()
     else if (!bridge || bridge->GenerationFailed() || !bridge->FrameGenerationReady())
         SetFrameGenerationError("Frame generation is unavailable. See the game log.");
     else if (!RuntimeMatchesSetting(*bridge))
-        SetFrameGenerationError(ps_r_frame_generation == Dlss && !StreamlineIntegration::CanInitialize() ?
+        SetFrameGenerationError(ps_r_frame_generation != Fsr && !StreamlineIntegration::CanInitialize() ?
             "DLSS frame generation needs a game restart after using FSR frame generation." :
             "Selected frame generation method is not active. Apply again or see the game log.");
     // Upscaling Off is the player's choice, not an error: the menu hides the frame
@@ -261,6 +261,6 @@ bool ReflexLimitsFrames()
 float FrameLimitScale()
 {
     auto* bridge = HW.PresentationBridge();
-    return bridge && bridge->GenerationActive() ? 2.f : 1.f;
+    return bridge && bridge->GenerationActive() ? float(bridge->GenerationMultiplier()) : 1.f;
 }
 }

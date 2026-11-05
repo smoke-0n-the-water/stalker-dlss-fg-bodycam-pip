@@ -76,6 +76,9 @@ public:
     bool FrameGenerationReady() const;
     // The last presented frame was submitted with generation enabled.
     bool GenerationActive() const { return m_lastGenerated; }
+    // Displayed frames per rendered frame while generating (2 for FSR, 2-4 for DLSS-G).
+    UINT GenerationMultiplier() const
+    { return m_runtimeKind == PresentRuntime::Streamline ? m_streamline.FramesToGenerate() + 1 : 2; }
     bool VSyncBlocksGeneration() const { return m_vsyncBlocked; }
     StreamlineIntegration* GetStreamline() { return m_streamline.IsReady() ? &m_streamline : nullptr; }
     HRESULT BeginFrame(UINT frameLimitUs, bool allowGeneration);

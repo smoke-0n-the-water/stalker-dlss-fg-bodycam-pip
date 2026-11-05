@@ -565,7 +565,10 @@ HRESULT D3D12PresentBridge::SubmitFrame()
     if (!m_acquired || m_submitted) return Check(E_UNEXPECTED, "Acquire/render/submit/present order");
     bool generate = NeedsFGInputs() && m_sceneValid && m_hudlessValid;
     const bool streamline = m_runtimeKind == PresentRuntime::Streamline && m_streamline.IsReady();
-    if (streamline && !m_streamline.SetEnabled(generate))
+    // r_frame_generation: dlss3x (3) = 2 generated frames, dlss4x (4) = 3, else 1.
+    extern unsigned int ps_r_frame_generation; // u32 in xrRender_console.cpp; xrCore types are not included here
+    const UINT framesToGenerate = ps_r_frame_generation == 4 ? 3 : ps_r_frame_generation == 3 ? 2 : 1;
+    if (streamline && !m_streamline.SetEnabled(generate, framesToGenerate))
     {
         // Turn FG off and keep presenting; fatal only if DLSS-G cannot be disabled.
         BRIDGE_CHECK(FailGeneration("DLSS-G on/off switch"));

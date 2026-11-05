@@ -362,6 +362,15 @@ bool FrameGenerationSupported(unsigned id)
         }
     case 2: return HW.PresentationBridge() && HW.PresentationBridge()->FsrRuntimeAvailable() &&
         *HW.PresentationBridge()->FsrFrameGenerationVersion();
+    case 3: // DLSS 3x / 4x: DLSS-G plus a runtime maximum of 2 / 3 generated frames.
+    case 4:
+    {
+        if (!FrameGenerationSupported(1)) return false;
+        // Unknown until Streamline has started this session: offer it; the bridge
+        // clamps a request the runtime cannot do to what it reports (logged).
+        const UINT max = StreamlineIntegration::MaxFramesToGenerate();
+        return max == 0 || max >= id - 1;
+    }
     default: return false;
     }
 #else
