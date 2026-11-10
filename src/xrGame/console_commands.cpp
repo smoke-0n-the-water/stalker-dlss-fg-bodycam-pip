@@ -2857,6 +2857,8 @@ void CCC_RegisterCommands()
 	// Physics
 	CMD1(CCC_PHFps, "ph_frequency");
 	CMD1(CCC_PHIterations, "ph_iterations");
+	// 1 = solve heavy physics island batches on several job lanes (Quark), 0 = serial (v0.5.1)
+	CMD4(CCC_Integer, "ph_parallel_islands", &ph_console::ph_parallel_islands, 0, 1);
 
 #ifdef DEBUG
 	CMD1(CCC_PHGravity, "ph_gravity");

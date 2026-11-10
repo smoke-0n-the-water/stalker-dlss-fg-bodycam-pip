@@ -8,4 +8,6 @@ struct XRPHYSICS_API ph_console
 	static float phBreakCommonFactor; //= 0.01f;
 	static float phRigidBreakWeaponFactor; //= 1.f;
 	static float ph_step_time; //=fixed_step;
+	static BOOL ph_parallel_islands; //= 1; solve heavy physics island batches on several job lanes
+
 };
