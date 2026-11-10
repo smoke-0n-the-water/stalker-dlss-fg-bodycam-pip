@@ -92,7 +92,6 @@ public:
 	IC void SetNextState(u32 v) { m_nextState = v; }
 	IC u32 CurrStateTime() const { return Device.dwTimeGlobal - m_dw_curr_state_time; }
 	IC void ResetSubStateTime() { m_dw_curr_substate_time = Device.dwTimeGlobal; }
-	IC float MotionTimeLeft() const { return m_fCurrentMotionSpeed > 0.f ? _max(m_fCurrentMotionLength - m_fCurrentMotionTime, 0.f) / m_fCurrentMotionSpeed : 0.f; }
 	virtual void SwitchState(u32 S) = 0;
 	virtual void OnStateSwitch(u32 S, u32 oldState) = 0;
 };
@@ -165,6 +164,10 @@ public:
 	BOOL GetHUDmode();
 	void PlayBlendAnm(LPCSTR name, float speed = 1.f, float power = 1.f, bool stop_old = true);
 	IC bool IsPending() const { return !!m_huditem_flags.test(fl_pending); }
+	// Seconds left in the current HUD motion (smart cover reload sync, upstream #827). Upstream reads the
+	// Scripted Weapon Attachments motion fields, which this tree does not have; m_dwMotionEndTm is the
+	// same end time (upstream #822 used it before the attachments merge).
+	IC float MotionTimeLeft() const { return m_dwMotionEndTm > Device.dwTimeGlobal ? float(m_dwMotionEndTm - Device.dwTimeGlobal) / 1000.f : 0.f; }
 
 	virtual void DeleteHudItemData();
 
