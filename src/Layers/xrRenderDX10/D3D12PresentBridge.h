@@ -81,7 +81,8 @@ public:
     { return m_runtimeKind == PresentRuntime::Streamline ? m_streamline.FramesToGenerate() + 1 : 2; }
     bool VSyncBlocksGeneration() const { return m_vsyncBlocked; }
     StreamlineIntegration* GetStreamline() { return m_streamline.IsReady() ? &m_streamline : nullptr; }
-    HRESULT BeginFrame(UINT frameLimitUs, bool allowGeneration);
+    // framesToGenerate: 1 = 2x, 2 = 3x, 3 = 4x (DLSS-G); applied when this frame is submitted.
+    HRESULT BeginFrame(UINT frameLimitUs, bool allowGeneration, UINT framesToGenerate = 1);
     HRESULT CaptureScene(ID3D11Resource* depth, ID3D11Resource* motion, const FrameGenerationInputs& inputs);
     HRESULT CaptureHudless(bool valid);
     bool NeedsFGInputs() const;
@@ -227,6 +228,7 @@ private:
     bool m_diagnosticPending{}, m_fgFailed{};
     UINT64 m_diagnosticFrame{};
     FrameGenerationInputs m_inputs{};
+    UINT m_framesToGenerate{1};
     bool m_allowGeneration{}, m_sceneValid{}, m_hudlessValid{}, m_resetHistory{true};
     ComPtr<ID3D12Resource> m_depthExport12;
     UINT64 m_depthExportGeneration{};

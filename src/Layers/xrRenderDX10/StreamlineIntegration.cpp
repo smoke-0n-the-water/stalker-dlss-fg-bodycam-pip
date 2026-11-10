@@ -232,7 +232,10 @@ bool StreamlineIntegration::SetEnabled(bool enabled, UINT framesToGenerate)
     options.flags = m_failed ? sl::DLSSGFlags{} : sl::DLSSGFlags::eRetainResourcesWhenOff;
     options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
     sl::Result result = m_slDLSSGSetOptions(m_viewport, options);
-    if (result != sl::Result::eOk && enabled && frames > 1)
+    // eWarnOutOfVRAM is a warning, not a refusal: the options were applied and Check() already
+    // treats it as non-fatal. Counting it as "refused" downgraded a selected 3x/4x to 2x for the
+    // rest of the process whenever VRAM was tight (seen 2026-11-10, result 39 with 4x selected).
+    if (result != sl::Result::eOk && result != sl::Result::eWarnOutOfVRAM && enabled && frames > 1)
     {
         // A multiplier the runtime refuses is not a failure: fall back to 2x and
         // remember it so the request is not repeated every frame.

@@ -157,6 +157,12 @@ int ps_r_fg_diagnostics = 0; // Latched at bridge creation.
 // dlss = DLSS 2x; dlss3x/dlss4x ask Streamline for 2/3 generated frames (RTX 50, or
 // RTX 20/30/40 with an MFG unlock). Ids 1/3/4 are DLSS, 2 stays FSR so saved configs keep working.
 static xr_token frame_generation_token[] = {{"off",0},{"dlss",1},{"dlss3x",3},{"dlss4x",4},{"fsr",2},{nullptr,0}};
+// Frame generation while a true-PiP scope is up (r__svpscope 2, scope aimed). same = keep
+// r_frame_generation; off = pause generation while scoped; dlss/dlss3x/dlss4x = that DLSS-G
+// multiplier while scoped. Only meaningful with r_frame_generation on; FSR has a fixed 2x.
+u32 ps_r_frame_generation_pip = 0;
+static xr_token frame_generation_pip_token[] = {{"same",0},{"off",1},{"dlss",2},{"dlss3x",3},{"dlss4x",4},{nullptr,0}};
+static bool FrameGenerationPipSupported(unsigned id); // defined after DlssIntegration.h is included
 // DX12-only: AMD FSR through the bridge (FSR 4 on supported Radeon GPUs).
 static xr_token upscaler_token_dx12[] = {{"off", 0}, {"dlss", 1}, {"fsr3", 2}, {"fsr4", 3}, {nullptr, 0}};
 #endif
@@ -671,6 +677,14 @@ public:
         return m_visible.data();
     }
 };
+
+#ifdef XR_DX12_BRIDGE
+// same/off are always valid; the DLSS multipliers follow r_frame_generation's own support test.
+static bool FrameGenerationPipSupported(unsigned id)
+{
+    return id < 2 || dlss::FrameGenerationSupported(id == 2 ? 1u : id);
+}
+#endif
 
 // Read-only capability summary for the options script; never saved to user.ltx.
 class CCC_UpscalerSupport : public IConsole_Command
@@ -1840,6 +1854,7 @@ void xrRender_initconsole()
 	CMD1(CCC_UpscalerSupport, "r_upscaler_support");
 #ifdef XR_DX12_BRIDGE
     CMD4(CCC_SupportedToken, "r_frame_generation", &ps_r_frame_generation, frame_generation_token, &dlss::FrameGenerationSupported);
+    CMD4(CCC_SupportedToken, "r_frame_generation_pip", &ps_r_frame_generation_pip, frame_generation_pip_token, &FrameGenerationPipSupported);
     CMD4(CCC_Integer, "r_fg_diagnostics", &ps_r_fg_diagnostics, 0, 1);
 #endif
 	CMD3(CCC_Token, "r_fsr3_quality", &ps_r_fsr3_quality, fsr3_quality_token);

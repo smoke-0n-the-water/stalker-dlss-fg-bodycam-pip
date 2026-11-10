@@ -565,9 +565,8 @@ HRESULT D3D12PresentBridge::SubmitFrame()
     if (!m_acquired || m_submitted) return Check(E_UNEXPECTED, "Acquire/render/submit/present order");
     bool generate = NeedsFGInputs() && m_sceneValid && m_hudlessValid;
     const bool streamline = m_runtimeKind == PresentRuntime::Streamline && m_streamline.IsReady();
-    // r_frame_generation: dlss3x (3) = 2 generated frames, dlss4x (4) = 3, else 1.
-    extern unsigned int ps_r_frame_generation; // u32 in xrRender_console.cpp; xrCore types are not included here
-    const UINT framesToGenerate = ps_r_frame_generation == 4 ? 3 : ps_r_frame_generation == 3 ? 2 : 1;
+    // Chosen per frame in BeginFrame (r_frame_generation, or r_frame_generation_pip while scoped).
+    const UINT framesToGenerate = m_framesToGenerate;
     if (streamline && !m_streamline.SetEnabled(generate, framesToGenerate))
     {
         // Turn FG off and keep presenting; fatal only if DLSS-G cannot be disabled.
@@ -663,9 +662,10 @@ HRESULT D3D12PresentBridge::SubmitFrame()
     return S_OK;
 }
 
-HRESULT D3D12PresentBridge::BeginFrame(UINT frameLimitUs, bool allowGeneration)
+HRESULT D3D12PresentBridge::BeginFrame(UINT frameLimitUs, bool allowGeneration, UINT framesToGenerate)
 {
     m_allowGeneration = allowGeneration;
+    m_framesToGenerate = framesToGenerate < 1 ? 1 : framesToGenerate > 3 ? 3 : framesToGenerate;
     m_sceneValid = m_hudlessValid = m_depthValid = false;
     if (m_runtimeKind != PresentRuntime::Streamline || !m_streamline.IsReady() || m_fgFailed) return S_OK;
     return m_streamline.BeginFrame(frameLimitUs) ? S_OK : FailGeneration("Begin Reflex frame");
