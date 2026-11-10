@@ -85,7 +85,7 @@ BOOL CSpaceRestrictor::net_Spawn(CSE_Abstract* data)
 #ifdef SPATIAL_CHANGE
 	// Anomaly trigger volumes must not occlude sight rays through their area.
 	if (zone)
-		spatial.type |= STYPE_FEELVISIONIGNORE;
+		SpatialComponent->spatial.type |= STYPE_FEELVISIONIGNORE;
 #endif
 
 	setEnabled(FALSE);
