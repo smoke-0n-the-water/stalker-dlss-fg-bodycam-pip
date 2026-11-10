@@ -123,7 +123,12 @@ TEMPLATE_SPECIALIZATION
 IC bool CLevelPathManager::is_accessible(const _index_type& vertex_id) const
 {
 	VERIFY(graph);
-	if (!graph->valid_vertex_id(vertex_id))
+	// Honour the level graph's shared access mask (restriction borders set by add_border).
+	// The Quark graft dropped this check and relied on its own level path builder passing a
+	// per-search blocked set, which was never merged. Level paths then ignored space
+	// restrictors, the detail path (which still honours the mask) failed, and the NPC rebuilt
+	// the same level path forever: mutants and stalkers stuck in place.
+	if (!graph->is_accessible(vertex_id))
 		return false;
 
 	return !m_blocked_vertices || m_blocked_vertices->find(vertex_id) == m_blocked_vertices->end();
