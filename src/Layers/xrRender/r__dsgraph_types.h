@@ -265,9 +265,11 @@ namespace R_dsgraph
 		mapDSGraphItems<float, true> mapScopeHUDOverlay; // pip non-lens 3DSS late-pass meshes (iScopeLense==11) under true PiP
 		mapDSGraphItems<float, true> mapScopeReflexHUD; // 3DSS reflex reticles (iScopeLense==10) for the reticle pass
 		mapDSGraphItems<float, false> mapScopeHUD;
-		// Particles and laser beams drawn after the upscaler, with the post chain.
+		// Laser beams, and particles with the post chain, drawn after the upscaler.
 		mapDSGraphItems<float, true> mapDlssEffects;
 		mapDSGraphItems<float, true> mapDlssHudEffects;
+		// Reflex sight reticles drawn in the scene, copied for frame generation's mask.
+		mapDSGraphItems<float, true> mapFgReticles;
 #endif
 		template<bool free = true>
 		IC void clear_graph(RenderQueueArray& queue, u32 _priority)
@@ -355,6 +357,7 @@ namespace R_dsgraph
 #ifdef USE_DX11
 				mapHUDNativeUi.clear_and_free();
 				mapDlssHudEffects.clear_and_free();
+				mapFgReticles.clear_and_free();
 				mapScopeHUD.clear_and_free();
 				mapScopeHUDSorted.clear_and_free();
 				mapScopeHUDObjective.clear_and_free();
@@ -380,6 +383,7 @@ namespace R_dsgraph
 #ifdef USE_DX11
 				mapHUDNativeUi.clear();
 				mapDlssHudEffects.clear();
+				mapFgReticles.clear();
 				mapScopeHUD.clear();
 				mapScopeHUDSorted.clear();
 				mapScopeHUDObjective.clear();

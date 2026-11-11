@@ -1178,7 +1178,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 #else
 	const char* const binaryVariant = "DX11";
 #endif
-	Msg("[DLSS/FSR] xray-monolith DLSS/FSR 0.71 (%s), built %s", binaryVariant, __DATE__);
+	Msg("[DLSS/FSR] xray-monolith DLSS/FSR 0.72 (%s), built %s", binaryVariant, __DATE__);
 	xr_luajit_pool_stats lua_pool_stats = {};
 	XR_GET_POOL_STATS(&lua_pool_stats);
 	Msg("* LuaJIT low-address pool: reserved=%Iu/%Iu MiB at %p (virtual; committed on demand)",

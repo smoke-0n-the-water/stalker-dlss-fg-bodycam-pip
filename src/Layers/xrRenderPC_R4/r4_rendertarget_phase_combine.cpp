@@ -2,6 +2,7 @@
 #include "scope_vslr_renderer.h"
 #ifdef XR_DX12_BRIDGE
 #include "Dlss/FrameGeneration.h"
+#include "../xrRenderDX10/D3D12PresentBridge.h"
 #endif
 #include "../../xrEngine/igame_persistent.h"
 #include "../../xrEngine/environment.h"
@@ -101,6 +102,119 @@ void CRenderTarget::DoAsyncScreenshot()
 }
 
 float hclip(float v, float dim) { return 2.f * v / dim - 1.f; }
+
+#ifdef XR_DX12_BRIDGE
+extern int ps_r_fg_hudless_test;
+extern int ps_r_fg_laser_fill;
+extern int ps_r_fg_laser_fill_view;
+
+// r_fg_laser_fill: laser beams and reflex sight reticles go into the HUD-less
+// image filled from the pixels around them. Frame generation interpolates that
+// image; where it differs from the presented frame it takes the frame, so the
+// beams and dots are shown where they are rather than moved along the scene.
+bool CRenderTarget::FgMaskWanted()
+{
+	if (!ps_r_fg_laser_fill || ps_r_fg_hudless_test || fg_laser_fill_state < 0) return false;
+	auto* bridge = HW.PresentationBridge();
+	return bridge && (ps_r_fg_laser_fill_view || bridge->NeedsFGInputs());
+}
+
+bool CRenderTarget::fg_mask_begin()
+{
+	if (!FgMaskWanted() || !fg_laser_fill_create()) return false;
+	u_setrt(rt_fg_mask, nullptr, nullptr, HW.pBaseZB);
+	if (fg_mask_frame != Device.dwFrame)
+	{
+		const float black[4] = {0, 0, 0, 0};
+		HW.pContext->ClearRenderTargetView(rt_fg_mask->pRT, black);
+		fg_mask_frame = Device.dwFrame;
+	}
+	RImplementation.rmNormal();
+	RCache.set_CullMode(CULL_CCW);
+	RCache.set_Stencil(FALSE);
+	RCache.set_ColorWriteEnable();
+	return true;
+}
+
+// The HUD-less image for frame generation, or null for the presentation surface
+// itself. r_fg_hudless_test: a centred square, of that percentage of the screen
+// height from centre to edge, filled from its border; a developer test.
+// r_fg_laser_fill: the pixels in this frame's mask.
+ID3DTexture2D* CRenderTarget::fg_hudless_image()
+{
+	auto* bridge = HW.PresentationBridge();
+	if (!bridge) return nullptr;
+	const bool test = ps_r_fg_hudless_test != 0;
+	const bool fill = !test && ps_r_fg_laser_fill && fg_mask_frame == Device.dwFrame;
+	const bool view = fill && ps_r_fg_laser_fill_view;
+	if (!test && !fill) return nullptr;
+	if (!view && !bridge->NeedsFGInputs()) return nullptr;
+	if (test ? !fg_hudless_test_create() : !fg_laser_fill_create()) return nullptr;
+
+	ID3DTexture2D* frame = nullptr;
+	if (FAILED(HW.GetPresentationSurface(&frame)) || !frame) return nullptr;
+	D3D11_TEXTURE2D_DESC desc{};
+	frame->GetDesc(&desc);
+	const D3DFORMAT format = desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ? D3DFMT_A8R8G8B8 :
+		desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM ? D3DFMT_A2R10G10B10 : D3DFMT_UNKNOWN;
+	if (format == D3DFMT_UNKNOWN || desc.Width != Device.dwWidth || desc.Height != Device.dwHeight ||
+		!fg_hudless_create(format))
+	{
+		if (reported_fg_hudless_test != -1)
+			Msg("! [FG] HUD-less image not filled, presentation surface not supported: format %u, %ux%u",
+				unsigned(desc.Format), desc.Width, desc.Height);
+		reported_fg_hudless_test = -1;
+		frame->Release();
+		return nullptr;
+	}
+	HW.pContext->CopyResource(rt_fg_hudless[0]->pSurface, frame);
+
+	const int w = int(Device.dwWidth), h = int(Device.dwHeight);
+	u32 offset;
+	FVF::TL* quad = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, offset);
+	quad[0].set(0, float(h), EPS_S, 1, 0xffffffff, 0, 1);
+	quad[1].set(0, 0, EPS_S, 1, 0xffffffff, 0, 0);
+	quad[2].set(float(w), float(h), EPS_S, 1, 0xffffffff, 1, 1);
+	quad[3].set(float(w), 0, EPS_S, 1, 0xffffffff, 1, 0);
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+	u_setrt(rt_fg_hudless[1], nullptr, nullptr, nullptr);
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_ColorWriteEnable();
+	RCache.set_Geometry(g_combine);
+	const int half = std::max(1, h * ps_r_fg_hudless_test / 100);
+	if (test)
+	{
+		RCache.set_Element(s_fg_hudless_test->E[0]);
+		RCache.set_c("dlss_fg_hudless_rect", float(w / 2 - half), float(h / 2 - half),
+			float(w / 2 + half - 1), float(h / 2 + half - 1));
+	}
+	else
+		RCache.set_Element(s_fg_laser_fill->E[0]);
+	RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+	// r_fg_laser_fill_view: present what frame generation is given.
+	if (view)
+		HW.pContext->CopyResource(frame, rt_fg_hudless[1]->pSurface);
+	frame->Release();
+	// Back to the presentation surface for the 2D HUD, as phase_pp left it.
+	u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT, NULL, NULL, HW.pBaseZB);
+
+	if (test && reported_fg_hudless_test != ps_r_fg_hudless_test)
+	{
+		Msg("[FG test] HUD-less square filled: %dx%d px at the centre of %dx%d; %s",
+			2 * half, 2 * half, w, h, fg::RuntimeVersions());
+		reported_fg_hudless_test = ps_r_fg_hudless_test;
+	}
+	const int mode = view ? 2 : 1;
+	if (fill && reported_fg_laser_fill != mode)
+	{
+		Msg("[FG] Laser beams and reflex reticles filled in the HUD-less image%s: %dx%d; %s",
+			view ? ", presented (r_fg_laser_fill_view)" : "", w, h, fg::RuntimeVersions());
+		reported_fg_laser_fill = mode;
+	}
+	return rt_fg_hudless[1]->pSurface;
+}
+#endif
 
 void CRenderTarget::phase_combine()
 {
@@ -720,7 +834,7 @@ void CRenderTarget::phase_combine()
 			phase_sunshafts();
 		}
 		dlss_post_upscale();
-		dlss_post_effects();
+		dlss_post_effects(dlss_post_jitter.x, dlss_post_jitter.y);
 		// Beams and the volumetric sun change on their own but carry the motion
 		// of the scene behind them; in the upscaler's history they became grids.
 		// A distortion mask now fills rt_Generic_1; it used to overwrite their
@@ -1084,7 +1198,7 @@ void CRenderTarget::phase_combine()
 
 #ifdef XR_DX12_BRIDGE
     // Display-sized postprocessed scene, before the ordinary 2D HUD is drawn.
-    fg::CaptureHudless();
+    fg::CaptureHudless(fg_hudless_image());
 #endif
 	//	Re-adapt luminance
 	RCache.set_Stencil(FALSE);
@@ -1220,6 +1334,10 @@ void CRenderTarget::phase_combine_volumetric(bool high)
 {
 	PIX_EVENT(phase_combine_volumetric);
 	u32 Offset = 0;
+	// With smoothed sunshafts after reconstruction, the combine reads the volumetric
+	// lights over time: already display-sized and unjittered.
+	ID3DBaseTexture* raw = DlssVolumetricOverTime() ?
+		dlss_volumetric_over_time(dlss_post_jitter.x, dlss_post_jitter.y) : nullptr;
 	//Fvector2	p0,p1;
 
 	//	TODO: DX10: Remove half pixel offset here
@@ -1246,7 +1364,9 @@ void CRenderTarget::phase_combine_volumetric(bool high)
 
 		// Draw
 		RCache.set_Element(s_combine_volumetric->E[0]);
-		if (dlss_post_swapped)
+		if (raw)
+			RCache.set_c("dlss_volumetric_params", 0.f, 0.f, 1.f, 0.f);
+		else if (dlss_post_swapped)
 			RCache.set_c("dlss_volumetric_params", dlss_post_jitter.x / float(dlss::RenderWidth()),
 				dlss_post_jitter.y / float(dlss::RenderHeight()), 1.f, 0.f);
 		else
@@ -1257,4 +1377,10 @@ void CRenderTarget::phase_combine_volumetric(bool high)
         scope_reference_capture_volumetric(Offset);
 	}
 	RCache.set_ColorWriteEnable();
+	if (raw)
+	{
+		rt_Generic_2->pTexture->surface_set(raw);
+		_RELEASE(raw);
+		RCache.InvalidateTextures();
+	}
 }
