@@ -319,6 +319,7 @@ public:
 	ref_shader s_svp_nearblur; // pip near-field defocus on the scope image (svpscope 2)
 	ref_shader s_svp_distort_stamp; // pip neutral distort-mask stamp over the composited lens
 	ref_shader s_svp_taa_stamp; // pip raw taa skip mask over the composited lens
+	ref_shader s_svp_lens_motion; // frame generation: the scope image's motion over the lens mesh
 	ref_shader s_svp_lens_stencil; // pip 3DSS lens stencil (254) stamp under the late-pass overlays
 	ref_shader s_svp_lens_stencil_glass; // pip the same stamp where deferred physical glass is the visible lens
 	bool m_scope_shaders_ready = false;
@@ -489,6 +490,7 @@ public:
 	ref_rt rt_upscaler_camera_mv;
 	ref_shader s_upscaler_camera_mv;
 	bool reported_camera_mv = false;
+	bool reported_lens_motion = false;
 	// Post chain after reconstruction: each scene target the chain uses has a
 	// display-size twin. Their storage is swapped for the chain, so the phases
 	// and shaders stay unchanged. Empty without the display copy shader, with MSAA or
@@ -760,6 +762,7 @@ public:
 	void phase_pp();
 	void phase_dlss_postprocess();
 	ref_rt& phase_upscaler_camera_mv();
+	void phase_svp_lens_motion();
 	void dlss_post_twin(ref_rt& scene, float divisor = 1.f, int resample = -1);
 	bool DlssPostAfterUpscale() const;
 	bool DlssEffectsAfterUpscale() const;

@@ -258,6 +258,12 @@ void CaptureScene()
     sceneCaptured = true;
 }
 
+bool NeedsSceneInputs()
+{
+    auto* bridge = HW.PresentationBridge();
+    return bridge && Eligible() && bridge->NeedsFGInputs();
+}
+
 void CaptureHudless(ID3D11Texture2D* source)
 {
     auto* bridge = HW.PresentationBridge();

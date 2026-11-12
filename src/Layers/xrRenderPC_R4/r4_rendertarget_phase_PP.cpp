@@ -167,6 +167,54 @@ ref_rt& CRenderTarget::phase_upscaler_camera_mv()
 	}
 	return rt_upscaler_camera_mv;
 }
+
+// Frame generation reads the main motion vectors. Inside a True PiP lens they hold only the scope
+// model's own motion, so while panning aimed the magnified image moves far but is reported as
+// still, and the generated frames in the lens only blend between real frames. This adds the scope
+// view's image motion over the lens mesh, mapped from scope-view UV to screen through the mesh UV
+// gradient (svp_lens_motion.ps). Main target, scoped frames with frame generation only; the copy
+// into the camera-MV target is scratch, phase_upscaler_camera_mv rewrites that target afterwards.
+void CRenderTarget::phase_svp_lens_motion()
+{
+#ifdef XR_DX12_BRIDGE
+	if (this != RImplementation.TargetMain || ps_r__svp_fg_lens_motion <= 0.f || !Device.true_pip_on ||
+		!Device.m_SecondViewport.IsSVPActive() || RImplementation.GMBase.RGraph.mapScopeHUDSorted.empty() ||
+		!RImplementation.TargetSVP || !fg::NeedsSceneInputs())
+		return;
+	EnsureScopeShaders();
+	if (!s_svp_lens_motion || !rt_upscaler_camera_mv || !rt_ssfx_motion_vectors ||
+		rt_upscaler_camera_mv->dwWidth != rt_ssfx_motion_vectors->dwWidth ||
+		rt_upscaler_camera_mv->dwHeight != rt_ssfx_motion_vectors->dwHeight)
+		return;
+
+	HW.pContext->CopyResource(rt_upscaler_camera_mv->pSurface, rt_ssfx_motion_vectors->pSurface);
+
+	D3D_VIEWPORT saved[1];
+	UINT savedCount = 1;
+	HW.pContext->RSGetViewports(&savedCount, saved);
+	u_setrt(rt_ssfx_motion_vectors, nullptr, nullptr, nullptr);
+	set_viewport_size(HW.pContext, float(rt_ssfx_motion_vectors->dwWidth), float(rt_ssfx_motion_vectors->dwHeight));
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	const float scale = ps_r__svp_fg_lens_motion;
+	const float iw = 1.f / float(rt_ssfx_motion_vectors->dwWidth), ih = 1.f / float(rt_ssfx_motion_vectors->dwHeight);
+	draw_scope(s_svp_lens_motion, [scale, iw, ih]()
+	{
+		RCache.set_c("scope_phase", 0);
+		RCache.set_c("svp_lens_motion", iw, ih, scale, 0.f);
+		RCache.set_ColorWriteEnable();
+	});
+	HW.pContext->RSSetViewports(savedCount, saved);
+	u_setrt(rt_Color, nullptr, nullptr, nullptr);
+
+	if (!reported_lens_motion)
+	{
+		reported_lens_motion = true;
+		Msg("[DLSS FG] True PiP lens motion active (r__svp_fg_lens_motion %.2f)", scale);
+	}
+#endif
+}
+
 bool CRenderTarget::ScopeAfterUpscale() const
 {
 	// Only the stock 3DSS branch (render_3DSS_reticles) hands its lenses over; the
@@ -621,7 +669,10 @@ void CRenderTarget::phase_dlss_postprocess()
 		// it for the SVP/scope target - and that is a different test from the
 		// m_render_pass_is_svp one phase_combine uses to gate phase_pp.
 		if (m_is_main_target)
+		{
+			phase_svp_lens_motion();
 			fg::CaptureScene();
+		}
 #endif
 		sceneJitter = dlss::RasterJitter();
 		dlssOutput = dlss::Evaluate(hdrResolve ? dlss_hdr_encode(2) : rt_Color->pSurface, phase_upscaler_camera_mv()->pSurface);

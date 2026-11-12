@@ -198,6 +198,7 @@ void CRenderTarget::EnsureScopeShaders()
 	s_scope_depth_write.create("scope_depth_write");
 	s_svp_distort_stamp.create("svp_distort_stamp");
 	s_svp_taa_stamp.create("svp_taa_stamp");
+	s_svp_lens_motion.create("svp_lens_motion");
 	s_svp_lens_stencil.create("svp_lens_stencil");
 	s_svp_lens_stencil_glass.create("svp_lens_stencil_glass");
 	s_scope_glass_fallback.create("scope_glass_fallback");

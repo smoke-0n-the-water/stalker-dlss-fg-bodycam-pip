@@ -8,6 +8,8 @@ void EndSimulation();
 void BeginRender();
 void EndPresent();
 void CaptureScene();
+// CaptureScene will hand this frame's depth and motion vectors to frame generation.
+bool NeedsSceneInputs();
 // source: replaces the presentation surface as the HUD-less image (r_fg_hudless_test).
 void CaptureHudless(ID3D11Texture2D* source = nullptr);
 // "runtime, FSR frame generation version, DLSS-G module versions", for test logs.
