@@ -168,12 +168,12 @@ ref_rt& CRenderTarget::phase_upscaler_camera_mv()
 	return rt_upscaler_camera_mv;
 }
 
-// Frame generation reads the main motion vectors. Inside a True PiP lens they hold only the scope
-// model's own motion, so while panning aimed the magnified image moves far but is reported as
-// still, and the generated frames in the lens only blend between real frames. This adds the scope
-// view's image motion over the lens mesh, mapped from scope-view UV to screen through the mesh UV
-// gradient (svp_lens_motion.ps). Main target, scoped frames with frame generation only; the copy
-// into the camera-MV target is scratch, phase_upscaler_camera_mv rewrites that target afterwards.
+// DLSS and frame generation read the main motion vectors. Inside a True PiP lens they hold only the
+// scope model's own motion, so while panning aimed the magnified image moves far but is reported as
+// still: DLSS smears the lens and frame generation only blends it between real frames. This adds the
+// scope view's image motion over the lens mesh, mapped from scope-view UV to screen through the mesh
+// UV gradient (svp_lens_motion.ps). Main target, scoped frames only; called from the late lens pass
+// in svp_optics.cpp, where the lens meshes are still listed.
 void CRenderTarget::phase_svp_lens_motion()
 {
 #ifdef XR_DX12_BRIDGE
@@ -184,7 +184,7 @@ void CRenderTarget::phase_svp_lens_motion()
 	if (ps_r__svp_fg_lens_motion <= 0.f) skipped = "r__svp_fg_lens_motion 0";
 	else if (RImplementation.GMBase.RGraph.mapScopeHUDSorted.empty()) skipped = "no lens mesh this frame";
 	else if (!RImplementation.TargetSVP) skipped = "no scope target";
-	else if (!fg::NeedsSceneInputs()) skipped = "frame generation takes no inputs";
+	else if (!dlss::Active() && !fg::NeedsSceneInputs()) skipped = "neither DLSS nor frame generation reads motion";
 	else
 	{
 		EnsureScopeShaders();
@@ -205,14 +205,16 @@ void CRenderTarget::phase_svp_lens_motion()
 		return;
 	lens_motion_frame = Device.dwFrame;
 
-	// Frame generation alone gets the lens motion (fg_motion_source): the scene's own consumers of
-	// the motion buffer (motion blur, TAA, the upscaler) keep it unchanged.
+	// Into the scene's motion buffer, so DLSS reconstructs the lens with its real motion as well as
+	// frame generation. This runs in the late lens pass, after motion blur; with DLSS on, TAA does not
+	// read the buffer. The shader reads a copy (the scratch camera-MV target, rewritten later by
+	// phase_upscaler_camera_mv) and writes whole vectors, so the glass tag in w is kept.
 	HW.pContext->CopyResource(rt_upscaler_camera_mv->pSurface, rt_ssfx_motion_vectors->pSurface);
 
 	D3D_VIEWPORT saved[1];
 	UINT savedCount = 1;
 	HW.pContext->RSGetViewports(&savedCount, saved);
-	u_setrt(rt_upscaler_camera_mv, nullptr, nullptr, nullptr);
+	u_setrt(rt_ssfx_motion_vectors, nullptr, nullptr, nullptr);
 	set_viewport_size(HW.pContext, float(rt_ssfx_motion_vectors->dwWidth), float(rt_ssfx_motion_vectors->dwHeight));
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
@@ -229,18 +231,13 @@ void CRenderTarget::phase_svp_lens_motion()
 #endif
 }
 
-ID3DTexture2D* CRenderTarget::fg_motion_source() const
-{
-	// The lens-corrected copy, until phase_upscaler_camera_mv reuses that target after the capture.
-	return lens_motion_frame == Device.dwFrame && rt_upscaler_camera_mv ? rt_upscaler_camera_mv->pSurface
-		: rt_ssfx_motion_vectors->pSurface;
-}
-
 bool CRenderTarget::ScopeAfterUpscale() const
 {
 	// Only the stock 3DSS branch (render_3DSS_reticles) hands its lenses over; the
-	// true-PiP/Reference lens pipeline keeps its own composite in phase_combine,
-	// where s_dlss_scope_resolve de-jitters it for DLSS.
+	// true-PiP/Reference lens pipeline keeps its own composite in phase_combine and is
+	// reconstructed by DLSS with the rest of the scene (phase_svp_lens_motion gives it
+	// its motion). s_dlss_scope_resolve never runs for it: the lens meshes are cleared
+	// at the main-pass tail, before the DLSS phase.
 	return ps_r_upscaler_scope_after && m_is_main_target && dlss::Configured() && s_dlss_display_copy._get() != nullptr;
 }
 

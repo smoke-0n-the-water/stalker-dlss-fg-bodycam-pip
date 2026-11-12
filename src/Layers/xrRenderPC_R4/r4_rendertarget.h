@@ -763,9 +763,7 @@ public:
 	void phase_pp();
 	void phase_dlss_postprocess();
 	ref_rt& phase_upscaler_camera_mv();
-	void phase_svp_lens_motion();
-	ID3DTexture2D* fg_motion_source() const; // motion vectors frame generation captures this frame
-	void dlss_post_twin(ref_rt& scene, float divisor = 1.f, int resample = -1);
+	void phase_svp_lens_motion();	void dlss_post_twin(ref_rt& scene, float divisor = 1.f, int resample = -1);
 	bool DlssPostAfterUpscale() const;
 	bool DlssEffectsAfterUpscale() const;
 	void dlss_post_upscale();

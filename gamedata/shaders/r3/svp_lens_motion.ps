@@ -10,7 +10,7 @@
 #include "scope_color_write.ps"
 #undef main
 
-Texture2D s_lens_body_motion; // the scene's motion vectors (the target is frame generation's copy)
+Texture2D s_lens_body_motion; // copy of the scene's motion vectors taken just before this pass
 Texture2D s_svp_motion; // the scope view's motion vectors
 uniform float4 svp_lens_motion; // xy: 1 / target size, z: r__svp_fg_lens_motion
 

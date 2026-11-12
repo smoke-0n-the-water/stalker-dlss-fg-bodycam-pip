@@ -244,7 +244,7 @@ void CaptureScene()
     inputs.aspectRatio = Device.mProject._22 / Device.mProject._11;
     inputs.frameTimeDelta = Device.fTimeDelta * 1000.f;
     inputs.reset = cut;
-    const HRESULT result = bridge->CaptureScene(dlss::SceneDepthTexture(), RImplementation.Target->fg_motion_source(), inputs);
+    const HRESULT result = bridge->CaptureScene(dlss::SceneDepthTexture(), RImplementation.Target->rt_ssfx_motion_vectors->pSurface, inputs);
     if (FAILED(result)) { R_CHK(bridge->FailGeneration(bridge->LastFailure())); havePrevious = false; return; }
     if (ps_r_fg_diagnostics && (cut || Device.dwFrame % 240 == 0))
         Msg("[FG DIAG] Capture engineFrame=%u previous=%u cut=%u scope=%u render=%ux%u display=%ux%u",Device.dwFrame,previousFrame,unsigned(cut),

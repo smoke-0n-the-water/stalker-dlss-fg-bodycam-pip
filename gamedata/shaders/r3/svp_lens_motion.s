@@ -1,12 +1,12 @@
--- Frame generation motion over the True PiP lens mesh (svp_lens_motion.ps). Writes the whole
--- motion vector into frame generation's copy, read from the scene's motion buffer, so the glass
--- tag in w is kept and the scene's buffer stays unchanged.
+-- Lens motion over the True PiP lens mesh (svp_lens_motion.ps), for DLSS and frame generation.
+-- Writes the whole motion vector into the scene's motion buffer, read from a copy taken just
+-- before, so the glass tag in w is kept.
 function normal(shader, t_base, t_second, t_detail)
 	shader:begin("scope_vertex", "svp_lens_motion")
 	: zb(false, false)
 	: blend(false, blend.one, blend.zero)
 	: scopelense(3)
-	shader:dx10texture("s_lens_body_motion", "$user$ssfx_motion_vectors")
+	shader:dx10texture("s_lens_body_motion", "$user$upscaler_camera_mv")
 	shader:dx10texture("s_svp_motion", "$user$ssfx_motion_vectors$svp")
 	shader:dx10texture("s_reticle", "$user$reticle")
 	shader:dx10texture("s_image", "$user$viewport2")
