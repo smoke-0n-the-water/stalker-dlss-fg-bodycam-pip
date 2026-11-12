@@ -1071,8 +1071,8 @@ void CWeaponStatMgun::IgnoreOwnerCallback(bool &do_colide, bool bo1, dContact &c
 
 	dxGeomUserData *gd1 = bo1 ? PHRetrieveGeomUserData(c.geom.g1) : PHRetrieveGeomUserData(c.geom.g2);
 	dxGeomUserData *gd2 = bo1 ? PHRetrieveGeomUserData(c.geom.g2) : PHRetrieveGeomUserData(c.geom.g1);
-	CGameObject *obj = (gd1) ? smart_cast<CGameObject *>(gd1->ph_ref_object) : nullptr;
-	CGameObject *who = (gd2) ? smart_cast<CGameObject *>(gd2->ph_ref_object) : nullptr;
+	CGameObject *obj = (gd1) ? smart_cast<CGameObject *>(PHLiveRefObject(gd1)) : nullptr;
+	CGameObject *who = (gd2) ? smart_cast<CGameObject *>(PHLiveRefObject(gd2)) : nullptr;
 	if (!obj || !who)
 	{
 		return;

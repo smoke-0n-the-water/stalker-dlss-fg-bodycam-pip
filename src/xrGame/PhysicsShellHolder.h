@@ -23,12 +23,6 @@ class CIKLimbsController;
 class CCustomMonster;
 #endif
 
-// A geom's owner, only while it is still a live level object: nullptr for static geometry and for
-// a shell left in the collision world after its owner was destroyed, which a contact callback must
-// not call into. Checked through the object id the geom data stores, so a stale owner pointer is
-// never dereferenced.
-IPhysicsShellHolder* PHLiveRefObject(const dxGeomUserData* ud);
-
 class CPhysicsShellHolder : public CGameObject,
                             public CParticlesPlayer,
                             public IObjectPhysicsCollision,

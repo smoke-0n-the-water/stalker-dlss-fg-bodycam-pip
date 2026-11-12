@@ -674,25 +674,19 @@ std::string	CPhysicsShellHolder::dump(EDumpType type) const
 }
 #endif
 
-IPhysicsShellHolder* PHLiveRefObject(const dxGeomUserData* ud)
+// xrPhysics' PHLiveRefObject asks the level which holder owns an id now (ExtendedGeom.h).
+static IPhysicsShellHolder* ResolvePhysicsRefObject(u16 id)
 {
-	if (!ud || !ud->ph_ref_object)
+	if (!g_pGameLevel)
 		return nullptr;
-	// No id recorded (not a level object): nothing to check against, keep the old behaviour.
-	if (ud->ph_ref_object_id == u16(-1) || !g_pGameLevel)
-		return ud->ph_ref_object;
-	CObject* live = Level().Objects.net_Find(ud->ph_ref_object_id);
+	CObject* live = Level().Objects.net_Find(id);
 	CPhysicsShellHolder* holder = live ? smart_cast<CPhysicsShellHolder*>(live) : nullptr;
-	if (holder && static_cast<IPhysicsShellHolder*>(holder) == ud->ph_ref_object)
-		return ud->ph_ref_object;
-	static u16 reported = u16(-1);
-	if (reported != ud->ph_ref_object_id)
-	{
-		reported = ud->ph_ref_object_id;
-		Msg("! [Physics] contact with a shell whose owner (id %u) no longer exists; ignored", u32(ud->ph_ref_object_id));
-	}
-	return nullptr;
+	return holder ? static_cast<IPhysicsShellHolder*>(holder) : nullptr;
 }
+static const struct RegisterPhysicsRefObjectResolver
+{
+	RegisterPhysicsRefObjectResolver() { g_ph_ref_object_resolver = &ResolvePhysicsRefObject; }
+} register_physics_ref_object_resolver;
 
 #if 1
 void CPhysicsShellHolder::IgnoreCollisionCallback(bool &do_colide, bool bo1, dContact &c, SGameMtl *material_1, SGameMtl *material_2)

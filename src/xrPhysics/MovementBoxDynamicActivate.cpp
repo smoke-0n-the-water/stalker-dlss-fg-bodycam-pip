@@ -79,15 +79,15 @@ void TTestDepthCallback(bool& do_colide, bool bo1, dContact& c, SGameMtl* materi
 			dxGeomUserData* ud1 = retrieveGeomUserData(c.geom.g1);
 			dxGeomUserData* ud2 = retrieveGeomUserData(c.geom.g2);
 
-			if (ud1 && ud1->ph_ref_object)
+			if (IPhysicsShellHolder* ref1 = PHLiveRefObject(ud1))
 			{
-				CPhysicsShell* phsl = ud1->ph_ref_object->ObjectPPhysicsShell();
+				CPhysicsShell* phsl = ref1->ObjectPPhysicsShell();
 				if (phsl) phsl->Enable();
 			}
 
-			if (ud2 && ud2->ph_ref_object)
+			if (IPhysicsShellHolder* ref2 = PHLiveRefObject(ud2))
 			{
-				CPhysicsShell* phsl = ud2->ph_ref_object->ObjectPPhysicsShell();
+				CPhysicsShell* phsl = ref2->ObjectPPhysicsShell();
 				if (phsl) phsl->Enable();
 			}
 

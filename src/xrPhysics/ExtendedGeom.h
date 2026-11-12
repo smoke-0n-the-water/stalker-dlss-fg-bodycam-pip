@@ -159,6 +159,19 @@ IC dGeomID retrieveGeom(dGeomID geom)
 }
 
 XRPHYSICS_API dxGeomUserData* PHRetrieveGeomUserData(dGeomID geom);
+
+// The level object with this id as a physics holder, nullptr when there is none. Set by xrGame
+// (PhysicsShellHolder.cpp); unset, PHLiveRefObject trusts the stored pointer as before.
+typedef IPhysicsShellHolder* PHRefObjectResolverFun(u16 id);
+extern XRPHYSICS_API PHRefObjectResolverFun* g_ph_ref_object_resolver;
+
+// A geom's owner, only while it is still a live level object: nullptr for static geometry and for
+// a shell left in the collision world after its owner was destroyed, which a contact callback must
+// not call into (2026-11-12: door_ignore called into a destructed holder). Checked through the
+// object id the geom data stores, so a stale owner pointer is never dereferenced. Pointer
+// comparisons need no check.
+XRPHYSICS_API IPhysicsShellHolder* PHLiveRefObject(const dxGeomUserData* ud);
+
 IC dxGeomUserData* retrieveGeomUserData(dGeomID geom)
 {
 	return dGeomGetUserData(retrieveGeom(geom));
@@ -173,9 +186,7 @@ XRPHYSICS_API void get_user_data(dxGeomUserData* & gd1, dxGeomUserData* & gd2, b
 
 IC IPhysicsShellHolder* retrieveRefObject(dGeomID geom)
 {
-	dxGeomUserData* ud = dGeomGetUserData(retrieveGeom(geom));
-	if (ud)return ud->ph_ref_object;
-	else return NULL;
+	return PHLiveRefObject(dGeomGetUserData(retrieveGeom(geom)));
 }
 
 IC void dGeomCreateUserData(dxGeom* geom)
