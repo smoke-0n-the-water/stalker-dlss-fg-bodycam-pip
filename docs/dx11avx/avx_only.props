@@ -1,0 +1,10 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- DX11-AVX fallback build: plain AVX for every file that does not set its own
+       instruction set (runtime-dispatched *_AVX2 files keep theirs). Imported after the
+       project's own ItemDefinitionGroups, so it wins over the vcxproj AVX2 default. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>
