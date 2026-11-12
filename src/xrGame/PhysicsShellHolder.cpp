@@ -674,6 +674,26 @@ std::string	CPhysicsShellHolder::dump(EDumpType type) const
 }
 #endif
 
+IPhysicsShellHolder* PHLiveRefObject(const dxGeomUserData* ud)
+{
+	if (!ud || !ud->ph_ref_object)
+		return nullptr;
+	// No id recorded (not a level object): nothing to check against, keep the old behaviour.
+	if (ud->ph_ref_object_id == u16(-1) || !g_pGameLevel)
+		return ud->ph_ref_object;
+	CObject* live = Level().Objects.net_Find(ud->ph_ref_object_id);
+	CPhysicsShellHolder* holder = live ? smart_cast<CPhysicsShellHolder*>(live) : nullptr;
+	if (holder && static_cast<IPhysicsShellHolder*>(holder) == ud->ph_ref_object)
+		return ud->ph_ref_object;
+	static u16 reported = u16(-1);
+	if (reported != ud->ph_ref_object_id)
+	{
+		reported = ud->ph_ref_object_id;
+		Msg("! [Physics] contact with a shell whose owner (id %u) no longer exists; ignored", u32(ud->ph_ref_object_id));
+	}
+	return nullptr;
+}
+
 #if 1
 void CPhysicsShellHolder::IgnoreCollisionCallback(bool &do_colide, bool bo1, dContact &c, SGameMtl *material_1, SGameMtl *material_2)
 {
@@ -684,8 +704,9 @@ void CPhysicsShellHolder::IgnoreCollisionCallback(bool &do_colide, bool bo1, dCo
 
 	dxGeomUserData *gd1 = bo1 ? PHRetrieveGeomUserData(c.geom.g1) : PHRetrieveGeomUserData(c.geom.g2);
 	dxGeomUserData *gd2 = bo1 ? PHRetrieveGeomUserData(c.geom.g2) : PHRetrieveGeomUserData(c.geom.g1);
-	CGameObject *obj = (gd1) ? smart_cast<CGameObject *>(gd1->ph_ref_object) : NULL;
-	CGameObject *who = (gd2) ? smart_cast<CGameObject *>(gd2->ph_ref_object) : NULL;
+	IPhysicsShellHolder *ref1 = PHLiveRefObject(gd1), *ref2 = PHLiveRefObject(gd2);
+	CGameObject *obj = ref1 ? smart_cast<CGameObject *>(ref1) : NULL;
+	CGameObject *who = ref2 ? smart_cast<CGameObject *>(ref2) : NULL;
 
 	if (obj == NULL)
 	{

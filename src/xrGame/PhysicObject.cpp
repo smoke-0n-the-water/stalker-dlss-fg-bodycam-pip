@@ -174,10 +174,9 @@ static CPhysicsShellHolder* retrive_collide_object(bool bo1, dContact& c)
 	else
 		ud = PHRetrieveGeomUserData(c.geom.g1);
 
-	if (ud)
-		collide_obj = static_cast<CPhysicsShellHolder*>(ud->ph_ref_object);
-	else
-		collide_obj = 0;
+	// Only a live owner: a shell can outlive its destroyed owner in the collision world.
+	IPhysicsShellHolder* ref = PHLiveRefObject(ud);
+	collide_obj = ref ? static_cast<CPhysicsShellHolder*>(ref) : 0;
 	return collide_obj;
 }
 
@@ -1032,8 +1031,9 @@ void CPhysicObject::PhysicContactCallback(bool &do_colide, bool bo1, dContact &c
 
 	dxGeomUserData *gd1 = bo1 ? PHRetrieveGeomUserData(c.geom.g1) : PHRetrieveGeomUserData(c.geom.g2);
 	dxGeomUserData *gd2 = bo1 ? PHRetrieveGeomUserData(c.geom.g2) : PHRetrieveGeomUserData(c.geom.g1);
-	CGameObject *obj = (gd1) ? smart_cast<CGameObject *>(gd1->ph_ref_object) : NULL;
-	CGameObject *who = (gd2) ? smart_cast<CGameObject *>(gd2->ph_ref_object) : NULL;
+	IPhysicsShellHolder *ref1 = PHLiveRefObject(gd1), *ref2 = PHLiveRefObject(gd2);
+	CGameObject *obj = ref1 ? smart_cast<CGameObject *>(ref1) : NULL;
+	CGameObject *who = ref2 ? smart_cast<CGameObject *>(ref2) : NULL;
 
 	CPhysicObject *phy = (obj) ? smart_cast<CPhysicObject *>(obj) : NULL;
 	if (phy == NULL || who == NULL)
