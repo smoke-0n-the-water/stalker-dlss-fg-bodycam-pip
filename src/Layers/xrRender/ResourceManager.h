@@ -27,6 +27,11 @@ struct TexResClass
 	u32 age_ms = 120000;
 	u32 hold_ms = 300000;
 	u32 floor_lod = 2;
+	// [default] catches every unpinned texture no other class matches. It demotes only inside a
+	// VRAM pressure trim, never in the idle sweep (thousands of world textures would churn), and
+	// with no age line it uses the VRAM tier's idle time.
+	bool is_default = false;
+	bool age_from_tier = false;
 };
 
 // defs
@@ -120,6 +125,7 @@ private:
     xrCriticalSection texResInitGuard;
     std::atomic<bool> m_tex_res_classes_ready{false};
     xr_vector<TexResClass> m_tex_res_classes;
+    s8 m_tex_res_default = -1; // index of [default] in m_tex_res_classes; -1 = none (old behaviour: full unload)
 #endif
 	// misc
 	xrCriticalSection creationGuard;
@@ -295,7 +301,8 @@ public:
     // call; PostLoad() caches the result on each CTexture. TexResClassIdleSweep (periodic, from
     // ResidencyFrame) demotes classified textures idle past their class's age.
     void LoadTexResidencyClasses(); // caller must hold texResInitGuard
-    s8 ClassifyTexture(const shared_str& name);
+    // animated: video/sequence/gif texture, which has no mip chain to drop and never joins [default].
+    s8 ClassifyTexture(const shared_str& name, bool animated = false);
     void TexResClassIdleSweep();
 	void StoreNecessaryTextures();
 	void DestroyNecessaryTextures();
