@@ -745,6 +745,7 @@ u32 s_settle_until_ms = 0;       // no new episode before this
 u32 s_trim_backoff = 1;          // 1..8: multiplies the settle time while trimming doesn't move usage
 constexpr u32 kSettleMs = 60000;
 constexpr u32 kMaxUnloadsPerPass = 48; // each Unload() runs on the render thread
+constexpr u64 kTrimMinBytes = 1024 * 1024; // pressure trims never demote a class texture smaller than this
 
 // VRAM tiers (r__tex_res_preset, set from the MCM menu). Smaller cards start trimming earlier to
 // keep headroom for spikes, install swaps faster and demote idle class textures sooner; big cards
@@ -1017,16 +1018,39 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 		{
 			// Class textures follow their class's age and hold, whether or not they were ever promoted.
 			const TexResClass& cls = m_tex_res_classes[T->ResClass];
-			if (unused < cls.age_ms / 100 * s_params.age_pct * s_backoff)
+			const u32 age = cls.age_from_tier ? idle_ms : cls.age_ms / 100 * s_params.age_pct * s_backoff;
+			if (unused < age)
 				continue;
 			if (T->dwPromotedTime && now - T->dwPromotedTime < cls.hold_ms * s_backoff)
+				continue;
+			// A demote is a full reload from disk. Not worth it under 1 MB (in game, long trims
+			// ended up demoting dozens of tiny class textures for ~0 MB), and a texture with no
+			// mip below the floor (or a cube/array) would reload unchanged.
+			const D3D_TEXTURE2D_DESC& d = T->get_desc_nowait();
+			const u64 bytes = T->TrueBytes ? T->TrueBytes : T->flags.MemoryUsage;
+			if (bytes < kTrimMinBytes || d.ArraySize != 1 || d.MipLevels <= cls.floor_lod)
 				continue;
 		}
 		else if (unused < idle_ms)
 			continue;
 		idle.emplace_back(unused, T);
 	}
-	std::sort(idle.begin(), idle.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+	// Longest idle first, by whole minute; within the same minute, biggest first, so the
+	// episode's byte allowance is spent on fewer reloads.
+	std::sort(idle.begin(), idle.end(), [](const auto& a, const auto& b)
+	{
+		const u32 ma = a.first / 60000, mb_ = b.first / 60000;
+		if (ma != mb_)
+			return ma > mb_;
+		const u64 ba = a.second->TrueBytes ? a.second->TrueBytes : a.second->flags.MemoryUsage;
+		const u64 bb = b.second->TrueBytes ? b.second->TrueBytes : b.second->flags.MemoryUsage;
+		if (ba != bb)
+			return ba > bb;
+		return a.first > b.first;
+	});
+	// With a [default] class, nothing is ever fully unloaded in game: an unloaded texture draws
+	// nothing until its reload lands. Without one, unclassified textures unload as before.
+	const bool never_unload = m_tex_res_default >= 0;
 
 	u64 freed = 0;
 	u32 count = 0;
@@ -1045,14 +1069,14 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 		{
 			if (!QueueTextureSwap(ref_texture(T), m_tex_res_classes[T->ResClass].floor_lod))
 				continue;
-			// A floor-2 demote keeps about 1/16 of the bytes.
-			freed += bytes - bytes / 16;
+			// Each floor level keeps a quarter of the bytes (floor 1 ~1/4, floor 2 ~1/16).
+			freed += bytes - (bytes >> (2 * _min(m_tex_res_classes[T->ResClass].floor_lod, 8u)));
 			++demoted;
 		}
 		else
 		{
-			if (T->ResClass >= 0)
-				continue; // already at its floor: leave it drawing, don't unload a class texture
+			if (T->ResClass >= 0 || never_unload)
+				continue; // already at its floor (or [default] forbids unloads): leave it drawing
 			if (count - demoted >= kMaxUnloadsPerPass)
 				continue; // spread unloads over passes; demotes may still go
 			freed += bytes;
@@ -1068,7 +1092,9 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 			usage / mb, budget / mb, count - demoted, demoted, freed / mb, youngest / 1000,
 			idle.front().first / 1000);
 	else if (!s_pressure_warned)
-		Msg("! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle long enough to trim",
+		Msg(never_unload
+				? "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle left to demote: leaving it to the driver"
+				: "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle long enough to trim",
 			usage / mb, budget / mb, high_pct);
 	s_pressure_warned = !count;
 
@@ -1322,29 +1348,44 @@ void CResourceManager::LoadTexResidencyClasses()
 	CInifile* ini = CInifile::Create(fname);
 	for (auto& sect : ini->sections())
 	{
-		LPCSTR folders_str = nullptr;
-		if (!sect.line_exist("folders", &folders_str) || !folders_str || !folders_str[0])
-			continue;
-
 		TexResClass cls;
-		_ParseList(cls.folders, folders_str);
+		cls.is_default = _stricmp(sect.Name.c_str(), "default") == 0;
+		if (cls.is_default && m_tex_res_default >= 0)
+			continue; // only one [default]
+
+		LPCSTR folders_str = nullptr;
+		if (sect.line_exist("folders", &folders_str) && folders_str && folders_str[0])
+			_ParseList(cls.folders, folders_str);
+		else if (!cls.is_default)
+			continue;
 
 		LPCSTR val = nullptr;
 		if (sect.line_exist("age", &val) && val && val[0])
 			cls.age_ms = u32(atoi(val)) * 1000;
+		else if (cls.is_default)
+			cls.age_from_tier = true;
 		if (sect.line_exist("floor", &val) && val && val[0])
 			cls.floor_lod = u32(atoi(val));
 		if (sect.line_exist("hold", &val) && val && val[0])
 			cls.hold_ms = u32(atoi(val)) * 1000;
 
-		Msg("* [TexRes] class [%s]: %u folder(s), age %us, hold %us, floor lod %u", sect.Name.c_str(),
-			(u32)cls.folders.size(), cls.age_ms / 1000, cls.hold_ms / 1000, cls.floor_lod);
+		if (cls.is_default)
+		{
+			if (!cls.floor_lod)
+				cls.floor_lod = 1; // floor 0 would demote to nothing
+			m_tex_res_default = s8(m_tex_res_classes.size());
+			Msg("* [TexRes] class [%s]: all other unpinned textures, age %s, hold %us, floor lod %u, pressure trims only",
+				sect.Name.c_str(), cls.age_from_tier ? "from VRAM tier" : "set", cls.hold_ms / 1000, cls.floor_lod);
+		}
+		else
+			Msg("* [TexRes] class [%s]: %u folder(s), age %us, hold %us, floor lod %u", sect.Name.c_str(),
+				(u32)cls.folders.size(), cls.age_ms / 1000, cls.hold_ms / 1000, cls.floor_lod);
 		m_tex_res_classes.push_back(cls);
 	}
 	CInifile::Destroy(ini);
 }
 
-s8 CResourceManager::ClassifyTexture(const shared_str& name)
+s8 CResourceManager::ClassifyTexture(const shared_str& name, bool animated)
 {
 #ifdef USE_DX11
 	// Deliberately not creationGuard - see the field comment in ResourceManager.h. Once ready,
@@ -1389,6 +1430,9 @@ s8 CResourceManager::ClassifyTexture(const shared_str& name)
 			}
 		}
 	}
+	// No folder matched: [default], unless it is a texture pressure must never touch.
+	if (m_tex_res_default >= 0 && !animated && !residency_pinned(name.c_str()))
+		return m_tex_res_default;
 	return -1;
 #else
 	return -1;
@@ -1414,6 +1458,8 @@ void CResourceManager::TexResClassIdleSweep()
 		if (T->ResClass < 0 || T->swapQueued.load(std::memory_order_relaxed))
 			continue;
 		const TexResClass& cls = m_tex_res_classes[T->ResClass];
+		if (cls.is_default)
+			continue; // world textures demote only under real pressure (RelieveVramPressure)
 		if (T->RequestedLod >= cls.floor_lod)
 			continue; // already at or past floor
 		if (now - T->dwLastUsedTime < cls.age_ms / 100 * s_params.age_pct * s_backoff)

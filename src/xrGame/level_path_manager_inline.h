@@ -60,13 +60,22 @@ TEMPLATE_SPECIALIZATION
 IC void CLevelManagerTemplate::before_search(const _vertex_id_type start_vertex_id,
                                              const _vertex_id_type dest_vertex_id)
 {
-	// CLevelPathBuilder snapshots the restriction border into the evaluator
-	// before publishing the job. The shared level graph remains immutable here.
+	// Upstream behaviour restored: the Quark graft emptied this, expecting its level path builder
+	// to snapshot the border into the evaluator, but that builder was never merged, so level
+	// paths ignored space restrictors (stuck NPCs/mutants).
+	if (m_object)
+	{
+		m_object->add_border(start_vertex_id, dest_vertex_id);
+		VERIFY(!m_object->applied() || ai().level_graph().is_accessible(start_vertex_id));
+		VERIFY(!m_object->applied() || ai().level_graph().is_accessible(dest_vertex_id));
+	}
 }
 
 TEMPLATE_SPECIALIZATION
 IC void CLevelManagerTemplate::after_search()
 {
+	if (m_object)
+		m_object->remove_border();
 }
 
 TEMPLATE_SPECIALIZATION

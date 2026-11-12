@@ -319,6 +319,7 @@ public:
 	ref_shader s_svp_nearblur; // pip near-field defocus on the scope image (svpscope 2)
 	ref_shader s_svp_distort_stamp; // pip neutral distort-mask stamp over the composited lens
 	ref_shader s_svp_taa_stamp; // pip raw taa skip mask over the composited lens
+	ref_shader s_svp_lens_motion; // frame generation: the scope image's motion over the lens mesh
 	ref_shader s_svp_lens_stencil; // pip 3DSS lens stencil (254) stamp under the late-pass overlays
 	ref_shader s_svp_lens_stencil_glass; // pip the same stamp where deferred physical glass is the visible lens
 	bool m_scope_shaders_ready = false;
@@ -471,11 +472,11 @@ public:
 	ref_shader s_dlss_scope_resolve;
 	ref_rt rt_dlss_scope_mask;
 	ref_shader s_dlss_ui_depth;
-	// 3D shader scope lenses drawn after reconstruction; null without the copy shader.
-	// The display-resolution targets are created on the first scoped frame.
+	// 3D shader scope lenses and laser beams drawn after reconstruction; null without
+	// the copy shader. The display-resolution targets are created on first use.
 	ref_shader s_dlss_display_copy;
 	ref_rt rt_dlss_scope_color;
-	ref_rt rt_dlss_scope_position;
+	ref_rt rt_dlss_display_position;
 	ref_rt rt_dlss_scope_heat;
 	ref_texture t_dlss_scene_depth;
 	bool reported_native_ui = false; // One diagnostic per target lifetime.
@@ -489,6 +490,8 @@ public:
 	ref_rt rt_upscaler_camera_mv;
 	ref_shader s_upscaler_camera_mv;
 	bool reported_camera_mv = false;
+	const char* lens_motion_skipped = "";
+	u32 lens_motion_frame = u32(-1);
 	// Post chain after reconstruction: each scene target the chain uses has a
 	// display-size twin. Their storage is swapped for the chain, so the phases
 	// and shaders stay unchanged. Empty without the display copy shader, with MSAA or
@@ -524,6 +527,26 @@ public:
 	ref_shader s_dlss_sunshaft_mask;
 	u32 dlss_sunshaft_history = 0; // the target holding the latest mask
 	u32 dlss_sunshaft_frame = 0;
+	// Volumetric lights over time, with smoothed sunshafts after reconstruction.
+	// Created on first use: two display-size RGBA16F targets.
+	bool dlss_volumetric_history_available = false;
+	ref_rt rt_dlss_volumetric_history[2];
+	ref_shader s_dlss_volumetric_history;
+	u32 dlss_volumetric_history = 0; // the target holding the latest result
+	u32 dlss_volumetric_frame = 0;
+	// Frame generation's HUD-less image (DX12): the frame, and its copy with the
+	// r_fg_hudless_test square or the r_fg_laser_fill pixels filled. Created on
+	// first use, in the presentation surface's format.
+	ref_rt rt_fg_hudless[2];
+	ref_shader s_fg_hudless_test;
+	ref_shader s_fg_laser_fill;
+	int fg_hudless_test_state = 0; // 0 not created, 1 ready, -1 shader missing
+	int fg_laser_fill_state = 0;
+	int reported_fg_hudless_test = 0; // the size last logged
+	int reported_fg_laser_fill = 0; // the mode last logged
+	// r_fg_laser_fill: laser beams and reflex sight reticles drawn again over black.
+	ref_rt rt_fg_mask;
+	u32 fg_mask_frame = 0; // the frame the mask was cleared on
 	ref_shader s_postprocess_msaa;
 	ref_geom g_postprocess;
 	ref_shader s_menu;
@@ -661,6 +684,7 @@ public:
 	bool ScopeAfterUpscale() const;
 	void phase_dlss_native_depth(float jitterX, float jitterY, bool lens = false);
 	void phase_dlss_scope(float jitterX, float jitterY);
+	void dlss_display_position(float jitterX, float jitterY);
 	void phase_lut();
 	void phase_smaa();
 	void phase_scene_prepare();
@@ -739,13 +763,25 @@ public:
 	void phase_pp();
 	void phase_dlss_postprocess();
 	ref_rt& phase_upscaler_camera_mv();
-	void dlss_post_twin(ref_rt& scene, float divisor = 1.f, int resample = -1);
+	void phase_svp_lens_motion();	void dlss_post_twin(ref_rt& scene, float divisor = 1.f, int resample = -1);
 	bool DlssPostAfterUpscale() const;
+	bool DlssEffectsAfterUpscale() const;
 	void dlss_post_upscale();
+	void dlss_post_swap();
 	void dlss_post_restore();
-	void dlss_post_effects();
+	void dlss_post_effects(float jitterX, float jitterY);
 	bool DlssSunshaftMaskOverTime() const;
 	void dlss_sunshaft_mask(u32 Offset);
+	bool DlssVolumetricOverTime() const;
+	void dlss_volumetric_history_create();
+	ID3DBaseTexture* dlss_volumetric_over_time(float jitterX, float jitterY);
+	bool fg_hudless_create(D3DFORMAT format);
+	bool fg_hudless_test_create();
+	bool fg_laser_fill_create();
+	bool FgMaskWanted();
+	// Binds the mask for this frame's beams or reticles; false when not wanted.
+	bool fg_mask_begin();
+	ID3DTexture2D* fg_hudless_image();
 	void dlss_hdr_begin();
 	ID3DTexture2D* dlss_hdr_encode(u32 element);
 	void dlss_hdr_restore();

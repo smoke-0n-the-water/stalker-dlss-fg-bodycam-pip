@@ -60,6 +60,7 @@ public:
 private:
     bool Check(sl::Result result, const char* stage);
     void NoteOutOfVram(const char* stage);
+    void NoteFramesMax(UINT reported);
     void Log(const char* message) const;
     HMODULE m_module{};
     Logger m_logger{};
@@ -69,12 +70,12 @@ private:
     UINT m_minDimension{};
     UINT m_framesSet{1}, m_framesMax{};
     bool m_framesRefused{};
-    void NoteFramesMax(UINT reported);
     sl::FrameToken* m_frame{};
     UINT m_frameLimitUs{~0u}, m_presentedFrames{};
     UINT m_markerMask{}, m_frameNumber{}, m_tagFrame{}, m_presentNumber{};
     UINT m_diagnosticPresents{}; // Bounded snapshots of existing GetState results after mode changes.
     UINT m_missingFenceWarnings{}, m_markerGaps{};
+    bool m_vramPartialStateLogged{};
     std::wstring m_directory;
     const char* m_failureStage{"none"};
     sl::ViewportHandle m_viewport{0};

@@ -40,14 +40,14 @@ void CBastArtefact::ObjectContactCallback(bool& /**do_colide/**/, bool bo1, dCon
 	if (!l_pUD1 || !l_pUD2) return;
 
 	//определить кто есть кто, из двух столкнувшихся предметов
-	CBastArtefact* pBastArtefact = l_pUD1 ? smart_cast<CBastArtefact*>(l_pUD1->ph_ref_object) : NULL;
-	if (!pBastArtefact) pBastArtefact = l_pUD2 ? smart_cast<CBastArtefact*>(l_pUD2->ph_ref_object) : NULL;
+	CBastArtefact* pBastArtefact = l_pUD1 ? smart_cast<CBastArtefact*>(PHLiveRefObject(l_pUD1)) : NULL;
+	if (!pBastArtefact) pBastArtefact = l_pUD2 ? smart_cast<CBastArtefact*>(PHLiveRefObject(l_pUD2)) : NULL;
 	if (!pBastArtefact) return;
 	if (!pBastArtefact->IsAttacking()) return;
 
 	CEntityAlive* pEntityAlive = NULL;
-	pEntityAlive = l_pUD1 ? smart_cast<CEntityAlive*>(l_pUD1->ph_ref_object) : NULL;
-	if (!pEntityAlive) pEntityAlive = l_pUD2 ? smart_cast<CEntityAlive*>(l_pUD2->ph_ref_object) : NULL;
+	pEntityAlive = l_pUD1 ? smart_cast<CEntityAlive*>(PHLiveRefObject(l_pUD1)) : NULL;
+	if (!pEntityAlive) pEntityAlive = l_pUD2 ? smart_cast<CEntityAlive*>(PHLiveRefObject(l_pUD2)) : NULL;
 
 	pBastArtefact->BastCollision(pEntityAlive);
 }

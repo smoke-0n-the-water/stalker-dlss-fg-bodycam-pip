@@ -202,11 +202,11 @@ void CCustomRocket::ObjectContactCallback(bool& do_colide, bool bo1, dContact& c
 	l_pUD2 = PHRetrieveGeomUserData(c.geom.g2);
 
 	SGameMtl* material = 0;
-	CCustomRocket* l_this = l_pUD1 ? smart_cast<CCustomRocket*>(l_pUD1->ph_ref_object) : NULL;
+	CCustomRocket* l_this = l_pUD1 ? smart_cast<CCustomRocket*>(PHLiveRefObject(l_pUD1)) : NULL;
 	Fvector vUp;
 	if (!l_this)
 	{
-		l_this = l_pUD2 ? smart_cast<CCustomRocket*>(l_pUD2->ph_ref_object) : NULL;
+		l_this = l_pUD2 ? smart_cast<CCustomRocket*>(PHLiveRefObject(l_pUD2)) : NULL;
 		vUp.invert(*(Fvector*)&c.geom.normal);
 
 		//if(dGeomGetClass(c.geom.g1)==dTriListClass)
@@ -230,9 +230,9 @@ void CCustomRocket::ObjectContactCallback(bool& do_colide, bool bo1, dContact& c
 
 	if (!l_this || l_this->m_contact.contact) return;
 
-	CGameObject* l_pOwner = l_pUD1 ? smart_cast<CGameObject*>(l_pUD1->ph_ref_object) : NULL;
+	CGameObject* l_pOwner = l_pUD1 ? smart_cast<CGameObject*>(PHLiveRefObject(l_pUD1)) : NULL;
 	if (!l_pOwner || l_pOwner == (CGameObject*)l_this) l_pOwner = l_pUD2
-		                                                              ? smart_cast<CGameObject*>(l_pUD2->ph_ref_object)
+		                                                              ? smart_cast<CGameObject*>(PHLiveRefObject(l_pUD2))
 		                                                              : NULL;
 	if (!l_pOwner || l_pOwner != l_this->m_pOwner)
 	{

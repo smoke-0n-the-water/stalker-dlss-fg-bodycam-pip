@@ -345,7 +345,7 @@ void CPHCapture::object_contactCallbackFun(bool& do_colide, bool bo1, dContact& 
 	if (!l_pUD2) return;
 
 	//CEntityAlive* capturer=smart_cast<CEntityAlive*>(l_pUD1->ph_ref_object);
-	IPhysicsShellHolder* capturer = (l_pUD1->ph_ref_object);
+	IPhysicsShellHolder* capturer = PHLiveRefObject(l_pUD1);
 	if (capturer)
 	{
 		IPHCapture* icapture = capturer->PHCapture();
@@ -362,7 +362,7 @@ void CPHCapture::object_contactCallbackFun(bool& do_colide, bool bo1, dContact& 
 		}
 	}
 
-	capturer = l_pUD2->ph_ref_object;
+	capturer = PHLiveRefObject(l_pUD2);
 	if (capturer)
 	{
 		CPHCapture* capture = static_cast<CPHCapture*>(capturer->PHCapture());

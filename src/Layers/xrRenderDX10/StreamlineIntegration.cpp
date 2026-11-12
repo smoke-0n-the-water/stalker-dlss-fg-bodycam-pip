@@ -13,6 +13,13 @@ std::atomic<bool> s_attempted{};
 // so the options menu can hide multipliers the runtime will not accept. With an MFG
 // unlock loaded (OptiScaler [MFGUnlock]) the runtime reports the unlocked maximum.
 std::atomic<UINT> s_framesMax{};
+}
+
+// r_fg_dlss_frames_max, saved: the runtime's limit for sessions where Streamline does not start.
+extern int ps_r_fg_dlss_frames_max;
+
+namespace
+{
 void StreamlineLog(sl::LogType type, const char* message)
 {
     if (type == sl::LogType::eInfo) return; // Full details remain in sl.log.
@@ -32,6 +39,7 @@ void StreamlineIntegration::NoteFramesMax(UINT reported)
     if (reported < 1 || reported > 7 || reported == m_framesMax) return;
     m_framesMax = reported;
     s_framesMax.store(reported);
+    ps_r_fg_dlss_frames_max = int(reported);
     char message[128]{};
     snprintf(message, sizeof(message), "[DLSS FG] Runtime allows up to %ux frame generation.", reported + 1);
     Log(message);
@@ -232,7 +240,10 @@ bool StreamlineIntegration::SetEnabled(bool enabled, UINT framesToGenerate)
     options.flags = m_failed ? sl::DLSSGFlags{} : sl::DLSSGFlags::eRetainResourcesWhenOff;
     options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
     sl::Result result = m_slDLSSGSetOptions(m_viewport, options);
-    if (result != sl::Result::eOk && enabled && frames > 1)
+    // eWarnOutOfVRAM is a warning, not a refusal: the options were applied and Check() already
+    // treats it as non-fatal. Counting it as "refused" downgraded a selected 3x/4x to 2x for the
+    // rest of the process whenever VRAM was tight (seen 2026-11-10, result 39 with 4x selected).
+    if (result != sl::Result::eOk && result != sl::Result::eWarnOutOfVRAM && enabled && frames > 1)
     {
         // A multiplier the runtime refuses is not a failure: fall back to 2x and
         // remember it so the request is not repeated every frame.
@@ -242,6 +253,7 @@ bool StreamlineIntegration::SetEnabled(bool enabled, UINT framesToGenerate)
         m_framesRefused = true;
         m_framesMax = 1;
         s_framesMax.store(1);
+        ps_r_fg_dlss_frames_max = 1;
         frames = options.numFramesToGenerate = 1;
         result = m_slDLSSGSetOptions(m_viewport, options);
     }
@@ -349,15 +361,18 @@ bool StreamlineIntegration::AfterPresent(ID3D12Fence** inputFence, UINT64& input
             Log(diagnostic);
         }
     }
-    if (result == sl::Result::eWarnOutOfVRAM)
-    {
-        NoteOutOfVram("DLSS-G state");
-        if (state.status == static_cast<sl::DLSSGStatus>(~0u) || state.numFramesActuallyPresented == ~0u ||
-            state.lastPresentInputsProcessingCompletionFenceValue == ~UINT64(0) ||
-            (m_enabled && (!state.inputsProcessingCompletionFence || !state.lastPresentInputsProcessingCompletionFenceValue)))
-            return Check(sl::Result::eErrorInvalidState, "DLSS-G VRAM warning without usable state/input fence");
-    }
+    // A VRAM warning is not a failure, even when it leaves the state/fence fields unwritten
+    // (2026-11-12: 15.2 GB allocated vs a 14.3 GB budget turned FG off for the session). The
+    // missing-fence path below retires inputs in queue order; an unwritten status is not judged.
+    const bool vramWarning = result == sl::Result::eWarnOutOfVRAM;
+    if (vramWarning) NoteOutOfVram("DLSS-G state");
     else if (!Check(result, "DLSS-G state")) return false;
+    const bool statusUnwritten = state.status == static_cast<sl::DLSSGStatus>(~0u);
+    if (vramWarning && statusUnwritten && !m_vramPartialStateLogged)
+    {
+        m_vramPartialStateLogged = true;
+        Log("[DLSS FG] VRAM warning left the DLSS-G state unwritten; frame generation stays on (logged once).");
+    }
     // An unlock may patch the provider after SetDevice; pick up a raised maximum.
     if (state.numFramesToGenerateMax && !m_framesRefused) NoteFramesMax(state.numFramesToGenerateMax);
     ++m_presentNumber;
@@ -393,7 +408,7 @@ bool StreamlineIntegration::AfterPresent(ID3D12Fence** inputFence, UINT64& input
         (*inputFence)->AddRef();
         inputFenceValue = state.lastPresentInputsProcessingCompletionFenceValue;
     }
-    if (m_enabled && state.status != sl::DLSSGStatus::eOk)
+    if (m_enabled && !statusUnwritten && state.status != sl::DLSSGStatus::eOk)
     {
         char message[128]{};
         snprintf(message, sizeof(message), "[DLSS FG] Runtime status failure: 0x%X; requesting safe disable.", unsigned(state.status));

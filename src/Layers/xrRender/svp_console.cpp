@@ -159,6 +159,7 @@ int ps_r__svp_flat_window = 1; // svp flat-screen optics render the panel's see-
 float ps_r__svp_sharpen = 0.35f; // svp contrast-adaptive sharpen on the scope image (0 = off, 1 = max)
 float ps_r__svp_sharpen_falloff = 0.0f; // svp sharpen radial falloff toward the disc rim, crisp center soft edge (0 = uniform)
 float ps_r__svp_sharpen_inner = 0.0f; // svp sharpen inner crisp-zone radius before the falloff starts (0 = from center)
+float ps_r__svp_fg_lens_motion = 1.0f; // DLSS and frame generation: scale of the scope image's own motion written into the lens (0 = off, lens keeps the scope model's motion only)
 float ps_r__svp_nvg_bleach = 0.0f; // svp NVG highlight bleach roll-off, replaces the hard clamp so bright sources compress not clip (0 = off, stock)
 float ps_r__svp_nvg_sensitivity = 1.0f; // svp NVG bleach onset sensitivity, higher rolls off dimmer sources
 int ps_r__svp_nvg_objective = 1; // svp lens draws the centered tube class so wearer mask furniture stays off the glass
@@ -424,6 +425,7 @@ void svp_console_init()
 	CMD4(CCC_SvpInternalFloat, "r__svp_mirage", &ps_r__svp_mirage, 0.0f, 3.0f);
 	CMD4(CCC_SvpFixedInteger, "r__svp_flat_window", &ps_r__svp_flat_window, 0, 1);
 	CMD4(CCC_Float, "r__svp_sharpen", &ps_r__svp_sharpen, 0.0f, 1.0f); // svp contrast-adaptive sharpen (0 = off)
+	CMD4(CCC_Float, "r__svp_fg_lens_motion", &ps_r__svp_fg_lens_motion, 0.0f, 2.0f); // DLSS + frame generation lens motion (0 = off, 1 = exact)
 	CMD4(CCC_SvpInternalFloat, "r__svp_sharpen_falloff", &ps_r__svp_sharpen_falloff, 0.0f, 1.0f);
 	CMD4(CCC_SvpInternalFloat, "r__svp_sharpen_inner", &ps_r__svp_sharpen_inner, 0.0f, 1.0f);
 	CMD4(CCC_SvpInternalFloat, "r__svp_nvg_bleach", &ps_r__svp_nvg_bleach, 0.0f, 1.0f);

@@ -81,9 +81,11 @@ public:
     { return m_runtimeKind == PresentRuntime::Streamline ? m_streamline.FramesToGenerate() + 1 : 2; }
     bool VSyncBlocksGeneration() const { return m_vsyncBlocked; }
     StreamlineIntegration* GetStreamline() { return m_streamline.IsReady() ? &m_streamline : nullptr; }
-    HRESULT BeginFrame(UINT frameLimitUs, bool allowGeneration);
+    // framesToGenerate: 1 = 2x, 2 = 3x, 3 = 4x (DLSS-G); applied when this frame is submitted.
+    HRESULT BeginFrame(UINT frameLimitUs, bool allowGeneration, UINT framesToGenerate = 1);
     HRESULT CaptureScene(ID3D11Resource* depth, ID3D11Resource* motion, const FrameGenerationInputs& inputs);
-    HRESULT CaptureHudless(bool valid);
+    // source: an image to use instead of the presentation surface, same size and format.
+    HRESULT CaptureHudless(bool valid, ID3D11Texture2D* source = nullptr);
     bool NeedsFGInputs() const;
     // ReShade runs on this D3D12 device, which never sees the game's depth buffer. When
     // enabled (only with ReShade loaded), the scene depth captured for the frame is also
@@ -160,6 +162,7 @@ private:
     HRESULT CreateSharedFence(ComPtr<ID3D12Fence>& fence12, ComPtr<ID3D11Fence>& fence11);
     HRESULT CreateSharedTexture(UINT width, UINT height, DXGI_FORMAT format, bool unorderedAccess,
         ComPtr<ID3D12Resource>& texture12, ComPtr<ID3D11Texture2D>& texture11);
+    void KeepResident(ID3D12Resource* texture12, ID3D11Texture2D* texture11);
     HRESULT WaitFor(ID3D12Fence* fence, UINT64 value, bool allocatorReuse = false);
     HRESULT Check(HRESULT result, const char* stage);
     // Once per bridge: fence progress and device-removed reasons after a timeout or device loss.
@@ -227,10 +230,13 @@ private:
     bool m_diagnosticPending{}, m_fgFailed{};
     UINT64 m_diagnosticFrame{};
     FrameGenerationInputs m_inputs{};
+    UINT m_framesToGenerate{1};
     bool m_allowGeneration{}, m_sceneValid{}, m_hudlessValid{}, m_resetHistory{true};
     ComPtr<ID3D12Resource> m_depthExport12;
     UINT64 m_depthExportGeneration{};
     bool m_depthExportWanted{}, m_depthValid{}, m_depthExportFailed{};
+    // Logged once per bridge: whether the shared surfaces got their residency priority.
+    bool m_residencyLogged{}, m_residencyFailureLogged{};
     Statistics m_statistics{};
     bool m_profiling{};
     UINT64 m_generatedPresents{}, m_enabledPresents{}, m_totalPresented{}, m_markerFrames{};

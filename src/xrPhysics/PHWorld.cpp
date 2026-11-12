@@ -463,14 +463,18 @@ void CPHWorld::Step()
 	// worker and fan out only a genuinely heavy solver batch.
 	const u32 parallel_min_work = 96;
 	const u32 target_work_per_lane = 64;
-	// DISABLED (v0.5.1): stepping islands on several job lanes at once races inside
-	// ODE, which is not thread-safe (dGeomMoved edits the shared space dirty lists,
-	// contact joints share ContactGroup). Players crashed in NearCallback walking a
-	// corrupted geom list on heavy batches (hits, ragdolls). v0.4.1 stepped islands
-	// serially; this restores that. Kept compiled so the batch code stays reviewable.
-	const bool parallel_islands = false && psDeviceFlags.test(mtPhysics) &&
+	// Re-enabled (v0.5.2). v0.5.1 turned this off on the theory that ODE raced here,
+	// but the NearCallback crash still happened on v0.5.1 with islands stepped
+	// serially, so this was not its cause. Audit: islands share no ODE bodies or joints
+	// (cross-object contacts merge islands in NearCallback; the special one-body
+	// contacts in PHActorCharacter/ActorCameraCollision/StaticEnvironmentCB attach a
+	// single body), geom spaces are per shell with no shared parent space (dGeomMoved
+	// stays inside one object), the contact group is only filled during the serial
+	// collision pass, quickstep's shuffle RNG is thread_local, and the one shared
+	// dRand seed can only lose randomness, not memory. Console toggle
+	// ph_parallel_islands 0 restores the serial path if a player needs it.
+	const bool parallel_islands = ph_console::ph_parallel_islands && psDeviceFlags.test(mtPhysics) &&
 		xr_jobs::worker_count() > 1 && active_islands.size() > 1 && island_work >= parallel_min_work;
-	(void)island_work;
 	{
 
 		if (parallel_islands)

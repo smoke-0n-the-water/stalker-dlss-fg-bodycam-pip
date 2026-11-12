@@ -339,7 +339,7 @@ void CTexture::PostLoad()
 	// Phase 2: classify once per load. DEV->ClassifyTexture() lazy-loads tex_residency.ltx on
 	// its own first call; safe here since nothing on this thread already holds creationGuard.
 	if (ResClass == -2)
-		ResClass = DEV->ClassifyTexture(cName);
+		ResClass = DEV->ClassifyTexture(cName, pTheora || pAVI || !seqDATA.empty() || gifPlayer);
 
 	if (pTheora) bind = xr_make_delegate(this, &CTexture::apply_theora);
 	else if (pAVI) bind = xr_make_delegate(this, &CTexture::apply_avi);

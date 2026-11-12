@@ -178,8 +178,8 @@ static void play_object(dxGeomUserData* data, SGameMtlPair* mtl_pair, const dCon
 
 	try
 	{
-        if (data->ph_ref_object)
-		    sp = data->ph_ref_object->ObjectPhSoundPlayer();
+        if (IPhysicsShellHolder* owner = PHLiveRefObject(data))
+		    sp = owner->ObjectPhSoundPlayer();
 	}
 	catch (...)
 	{

@@ -20,9 +20,10 @@ void DamageReceiverCollisionCallback(bool& do_colide, bool bo1, dContact& c, SGa
 	SGameMtl* material_self = bo1 ? material_1 : material_2;
 	SGameMtl* material_damager = bo1 ? material_2 : material_1;
 	VERIFY(ud_self);
-	IPhysicsShellHolder* o_self = ud_self->ph_ref_object;
-	IPhysicsShellHolder* o_damager = NULL;
-	if (ud_damager)o_damager = ud_damager->ph_ref_object;
+	// The callback may sit on a shell that outlived its owner, so check both sides.
+	IPhysicsShellHolder* o_self = PHLiveRefObject(ud_self);
+	if (!o_self) return;
+	IPhysicsShellHolder* o_damager = PHLiveRefObject(ud_damager);
 	u16 source_id = o_damager ? o_damager->ObjectID() : u16(-1);
 
 	//CPHCollisionDamageReceiver	*dr	= static_cast<CPhysicsShellHolder*>( o_self )->PHCollisionDamageReceiver();
@@ -68,15 +69,17 @@ void BreakableObjectCollisionCallback(bool&/**do_colide/**/, bool bo1, dContact&
 
 	if (bo1)
 	{
-		if (!usr_data_1->ph_ref_object) return;
-		damag_receiver = usr_data_1->ph_ref_object->ObjectPhCollisionDamageReceiver();
+		IPhysicsShellHolder* self = PHLiveRefObject(usr_data_1);
+		if (!self) return;
+		damag_receiver = self->ObjectPhCollisionDamageReceiver();
 		body = dGeomGetBody(c.geom.g2);
 		norm_sign = -1.f;
 	}
 	else
 	{
-		if (!usr_data_2->ph_ref_object) return;
-		damag_receiver = usr_data_2->ph_ref_object->ObjectPhCollisionDamageReceiver();
+		IPhysicsShellHolder* self = PHLiveRefObject(usr_data_2);
+		if (!self) return;
+		damag_receiver = self->ObjectPhCollisionDamageReceiver();
 		body = dGeomGetBody(c.geom.g1);
 		norm_sign = 1.f;
 	}

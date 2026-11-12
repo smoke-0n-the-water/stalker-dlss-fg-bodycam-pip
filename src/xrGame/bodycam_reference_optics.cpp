@@ -156,7 +156,14 @@ bool Describe(CWeapon& weapon, SvpReferenceOpticsFrame& packet)
 void PublishOptics(CWeapon& weapon, std::optional<std::uint64_t>& failedRequest)
 {
 	static std::unique_ptr<SvpReferenceOpticsFrame> profile;
+	// A failure used to hold the optics off until the effects were toggled, leaving a black lens
+	// (2026-11-12). It now retries after a pause; the same error is logged once.
+	static u32 failedAt = 0;
+	static std::string lastError;
+	constexpr u32 retryMs = 3000;
 	const auto request = Bodycam::GetMotionSelection().Requests();
+	if (failedRequest == request && Device.dwTimeGlobal - failedAt >= retryMs)
+		failedRequest.reset();
 	if (!Bodycam::GetConfig().scope_effects_enable || failedRequest == request || !g_player_hud ||
 		!pSettings->section_exist(kEffectsSection))
 	{
@@ -178,7 +185,12 @@ void PublishOptics(CWeapon& weapon, std::optional<std::uint64_t>& failedRequest)
 	{
 		profile.reset();
 		failedRequest = request;
-		Msg("! Reference optics disabled: %s", error.what());
+		failedAt = Device.dwTimeGlobal;
+		if (lastError != error.what())
+		{
+			lastError = error.what();
+			Msg("! Reference optics failed, retrying every %u s: %s", retryMs / 1000, error.what());
+		}
 	}
 	svp_reference_optics_clear();
 }

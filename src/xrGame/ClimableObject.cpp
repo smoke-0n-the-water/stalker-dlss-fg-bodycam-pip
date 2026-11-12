@@ -362,7 +362,8 @@ void CClimableObject::ObjectContactCallback(bool& do_colide, bool bo1, dContact&
 	}
 	VERIFY(ch);
 	VERIFY(usr_data_lad);
-	this_object = static_cast<CClimableObject*>(usr_data_lad->ph_ref_object);
+	IPhysicsShellHolder* ladder = PHLiveRefObject(usr_data_lad);
+	this_object = ladder ? static_cast<CClimableObject*>(ladder) : nullptr;
     if (this_object)
     {
         if (!this_object->BeforeLadder(ch, -0.1f)) do_colide = false;

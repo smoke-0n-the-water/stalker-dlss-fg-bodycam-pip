@@ -375,8 +375,8 @@ void CPHActorCharacter::InitContact(dContact* c, bool& do_collide, u16 material_
 		dxGeomUserData* D2 = retrieveGeomUserData(c->geom.g2);
 		if (D1 && D2)
 		{
-			IPhysicsShellHolder* A1 = (D1->ph_ref_object);
-			IPhysicsShellHolder* A2 = (D2->ph_ref_object);
+			IPhysicsShellHolder* A1 = PHLiveRefObject(D1);
+			IPhysicsShellHolder* A2 = PHLiveRefObject(D2);
 			if (A1 && A2 && A1->IsActor() && A2->IsActor())
 			{
 				do_collide = do_collide && !b_restrictor && (A1->ObjectPPhysicsShell() == 0) == (A2->

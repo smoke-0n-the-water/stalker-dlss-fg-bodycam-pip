@@ -246,6 +246,7 @@ extern ECORE_API int ps_r__svp_flat_window;
 extern ECORE_API float ps_r__svp_sharpen;
 extern ECORE_API float ps_r__svp_sharpen_falloff;
 extern ECORE_API float ps_r__svp_sharpen_inner;
+extern ECORE_API float ps_r__svp_fg_lens_motion;
 extern ECORE_API float ps_r__svp_nvg_bleach;
 extern ECORE_API float ps_r__svp_nvg_sensitivity;
 extern ECORE_API int ps_r__svp_nvg_objective;

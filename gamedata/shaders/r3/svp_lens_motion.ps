@@ -1,0 +1,47 @@
+// Frame generation motion over a True PiP lens (r4_rendertarget_phase_PP.cpp phase_svp_lens_motion).
+// The main motion vectors hold the scope model's own motion there. The lens shows the scope view at
+// the mesh UV (true PiP has no parallax, scope_common.h new_Scope), so the scope view's motion,
+// current minus previous scope UV, maps to screen motion through the inverse of the mesh UV gradient.
+// The reticle and the eyebox shadow ride on the tube, not on the image, so they keep the tube's motion.
+#ifndef SCOPE_COLOR_WRITE_PHASES
+#define SCOPE_COLOR_WRITE_PHASES (SCOPE_PHASE_RETICLE | SCOPE_PHASE_SHADOW)
+#endif
+#define main scope_color_write_main
+#include "scope_color_write.ps"
+#undef main
+
+Texture2D s_lens_body_motion; // copy of the scene's motion vectors taken just before this pass
+Texture2D s_svp_motion; // the scope view's motion vectors
+uniform float4 svp_lens_motion; // xy: 1 / target size, z: r__svp_fg_lens_motion
+
+float4 main(v_out I) : SV_Target
+{
+    float4 body = s_lens_body_motion.Load(int3(int2(I.hpos.xy), 0));
+
+    // The image coordinate, as scope_custom_image.h takes it under true PiP: the mesh UV, V flipped
+    // on mesh-inverted lenses (svp_img_fix_flipped_lens).
+    float2 uv = I.tc0;
+    if (shader_scope_params.w < -1.5 && svp_env.w > 0.5 && ddy(I.tc0.y) < 0.0)
+        uv.y = 1.0 - uv.y;
+    float2 du_dx = ddx(uv), du_dy = ddy(uv);
+    float det = du_dx.x * du_dy.y - du_dy.x * du_dx.y;
+
+    scope = new_Scope(I);
+    float reticle = saturate(scope_custom_reticle(scope).a);
+    float shadow = saturate(scope_custom_shadow(I, scope));
+
+    if (abs(det) < 1.0e-12 || any(uv < 0.0) || any(uv > 1.0))
+        return body;
+
+    uint w, h;
+    s_svp_motion.GetDimensions(w, h);
+    int2 texel = clamp(int2(uv * float2(w, h)), int2(0, 0), int2(w, h) - 1);
+    float2 imageMotion = s_svp_motion.Load(int3(texel, 0)).xy;
+
+    // Screen pixels per image UV: the inverse of [du_dx du_dy].
+    float2 pixels = float2(du_dy.y * imageMotion.x - du_dy.x * imageMotion.y,
+                           du_dx.x * imageMotion.y - du_dx.y * imageMotion.x) / det;
+    float weight = (1.0 - reticle) * (1.0 - shadow) * svp_lens_motion.z;
+    body.xy += pixels * svp_lens_motion.xy * weight;
+    return body;
+}

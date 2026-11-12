@@ -435,7 +435,42 @@ HRESULT D3D12PresentBridge::CreateSharedTexture(UINT width, UINT height, DXGI_FO
     SharedHandle handle;
     BRIDGE_CHECK(m_device12->CreateSharedHandle(texture12.Get(), nullptr, GENERIC_ALL, nullptr, &handle.value));
     BRIDGE_CHECK(m_device11->OpenSharedResource1(handle.value, IID_PPV_ARGS(&texture11)));
+    KeepResident(texture12.Get(), texture11.Get());
     return S_OK;
+}
+
+// The frame copy and the frame generation inputs are used by both devices every frame.
+// Over the VRAM budget, Windows then moves the game's textures to system memory before
+// these. High, not maximum, so other programs keep their share. Only a hint: a failure
+// leaves the default priority and presentation goes on.
+void D3D12PresentBridge::KeepResident(ID3D12Resource* texture12, ID3D11Texture2D* texture11)
+{
+    HRESULT result12 = E_NOINTERFACE;
+    ComPtr<ID3D12Device1> device1;
+    if (SUCCEEDED(m_device12.As(&device1)))
+    {
+        ID3D12Pageable* pageable = texture12;
+        const D3D12_RESIDENCY_PRIORITY priority = D3D12_RESIDENCY_PRIORITY_HIGH;
+        result12 = device1->SetResidencyPriority(1, &pageable, &priority);
+    }
+    // The DX11 device has its own view of the shared texture.
+    texture11->SetEvictionPriority(DXGI_RESOURCE_PRIORITY_HIGH);
+    const bool kept11 = texture11->GetEvictionPriority() == DXGI_RESOURCE_PRIORITY_HIGH;
+    if (!m_logger) return;
+    char message[160]{};
+    if ((FAILED(result12) || !kept11) && !m_residencyFailureLogged)
+    {
+        m_residencyFailureLogged = true;
+        snprintf(message, sizeof(message),
+            "! [DX12 bridge] Shared surface residency priority not set (DX12 0x%08lX, DX11 %s); using the default",
+            static_cast<unsigned long>(result12), kept11 ? "ok" : "ignored");
+        m_logger(message);
+    }
+    else if (SUCCEEDED(result12) && kept11 && !m_residencyLogged)
+    {
+        m_residencyLogged = true;
+        m_logger("[DX12 bridge] Shared surfaces have high residency priority on both devices");
+    }
 }
 
 HRESULT D3D12PresentBridge::CreateSurfaces()
@@ -565,9 +600,8 @@ HRESULT D3D12PresentBridge::SubmitFrame()
     if (!m_acquired || m_submitted) return Check(E_UNEXPECTED, "Acquire/render/submit/present order");
     bool generate = NeedsFGInputs() && m_sceneValid && m_hudlessValid;
     const bool streamline = m_runtimeKind == PresentRuntime::Streamline && m_streamline.IsReady();
-    // r_frame_generation: dlss3x (3) = 2 generated frames, dlss4x (4) = 3, else 1.
-    extern unsigned int ps_r_frame_generation; // u32 in xrRender_console.cpp; xrCore types are not included here
-    const UINT framesToGenerate = ps_r_frame_generation == 4 ? 3 : ps_r_frame_generation == 3 ? 2 : 1;
+    // Chosen per frame in BeginFrame (r_frame_generation, or r_frame_generation_pip while scoped).
+    const UINT framesToGenerate = m_framesToGenerate;
     if (streamline && !m_streamline.SetEnabled(generate, framesToGenerate))
     {
         // Turn FG off and keep presenting; fatal only if DLSS-G cannot be disabled.
@@ -663,9 +697,10 @@ HRESULT D3D12PresentBridge::SubmitFrame()
     return S_OK;
 }
 
-HRESULT D3D12PresentBridge::BeginFrame(UINT frameLimitUs, bool allowGeneration)
+HRESULT D3D12PresentBridge::BeginFrame(UINT frameLimitUs, bool allowGeneration, UINT framesToGenerate)
 {
     m_allowGeneration = allowGeneration;
+    m_framesToGenerate = framesToGenerate < 1 ? 1 : framesToGenerate > 3 ? 3 : framesToGenerate;
     m_sceneValid = m_hudlessValid = m_depthValid = false;
     if (m_runtimeKind != PresentRuntime::Streamline || !m_streamline.IsReady() || m_fgFailed) return S_OK;
     return m_streamline.BeginFrame(frameLimitUs) ? S_OK : FailGeneration("Begin Reflex frame");
@@ -976,14 +1011,14 @@ HRESULT D3D12PresentBridge::PrepareDepthExport()
     return S_OK;
 }
 
-HRESULT D3D12PresentBridge::CaptureHudless(bool valid)
+HRESULT D3D12PresentBridge::CaptureHudless(bool valid, ID3D11Texture2D* source)
 {
     m_hudlessValid = NeedsFGInputs() && valid && m_sceneValid;
     if (m_hudlessValid)
     {
         if (!m_acquired || m_submitted) return Check(E_UNEXPECTED, "HUD-less capture outside acquired frame");
         auto& slot = m_slots[m_currentSlot];
-        m_context11->CopyResource(slot.inputs11[2].Get(), slot.shared11.Get());
+        m_context11->CopyResource(slot.inputs11[2].Get(), source ? source : slot.shared11.Get());
         ++m_statistics.hudlessCaptures;
         m_statistics.inputCopyBytes += UINT64(m_desc.Width) * m_desc.Height * 4;
     }

@@ -275,9 +275,8 @@ void CollisionCallbackDead(bool& do_colide, bool bo1, dContact& c, SGameMtl* mat
 {
 	do_colide = true;
 
-	CHelicopter* l_this = bo1
-		                      ? smart_cast<CHelicopter*>(PHRetrieveGeomUserData(c.geom.g1)->ph_ref_object)
-		                      : smart_cast<CHelicopter*>(PHRetrieveGeomUserData(c.geom.g2)->ph_ref_object);
+	IPhysicsShellHolder* owner = PHLiveRefObject(PHRetrieveGeomUserData(bo1 ? c.geom.g1 : c.geom.g2));
+	CHelicopter* l_this = owner ? smart_cast<CHelicopter*>(owner) : nullptr;
 
 	if (l_this && !l_this->m_exploded)
 		l_this->m_ready_explode = true;

@@ -383,7 +383,10 @@ void CRender::renderGBuffer(bool clearGraph)
 		{
 			GMBase.r_dsgraph_capture_hud();
 			if (dlss::Configured()) GMBase.r_dsgraph_extract_native_ui();
-			if (Target->DlssPostAfterUpscale()) GMBase.r_dsgraph_extract_dlss_effects();
+			if (Target->DlssEffectsAfterUpscale()) GMBase.r_dsgraph_extract_dlss_effects();
+#ifdef XR_DX12_BRIDGE
+			if (Target->FgMaskWanted()) GMBase.r_dsgraph_extract_fg_reticles();
+#endif
 			svp_stats::cpu_begin(svp_stats::CPU_HUD);
 			const bool svp_scope_aimed = g_pGamePersistent
 				&& (g_pGamePersistent->m_pGShaderConstants->hud_params.y > 0.005f
@@ -782,7 +785,7 @@ void CRender::render_forward()
 		CParticlesAsync::Wait();
 		GMBase.r_dsgraph_render_dynamic(1, fwd_clear);
 		// Effects held for after the upscaler, if this frame is not reconstructed after all
-		if (Target == TargetMain && !Target->DlssPostAfterUpscale())
+		if (Target == TargetMain && !Target->DlssEffectsAfterUpscale())
 			GMBase.r_dsgraph_render_dlss_effects();
 		GMBase.fade_render(); // faded-portals
 		GMBase.r_dsgraph_render_sorted(false); // strict-sorted geoms

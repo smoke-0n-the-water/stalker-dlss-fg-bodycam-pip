@@ -48,7 +48,8 @@ public:
     void ApplySwap();
 
     // Phase 2: tex_residency.ltx class index, cached once in PostLoad() via
-    // CResourceManager::ClassifyTexture(). -2 = not yet classified, -1 = no class matches.
+    // CResourceManager::ClassifyTexture(). -2 = not yet classified, -1 = no class matches
+    // (with a [default] class: pinned or animated textures only).
     s8 ResClass = -2;
     u32 dwPromotedTime = 0; // Device.dwTimeGlobal when a swap last raised detail; starts the class hold
     u32 dwDemotedTime = 0;  // when a swap last lowered detail; a promote soon after it counts as thrash

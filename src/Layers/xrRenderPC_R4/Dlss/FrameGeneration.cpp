@@ -4,8 +4,10 @@
 #include "../../../xrEngine/IGame_Persistent.h"
 #include "../../../xrEngine/IGame_Level.h"
 #include "../../../xrEngine/RendererError.h"
+#pragma comment(lib, "version.lib") // RuntimeVersions
 
 extern u32 ps_r_frame_generation;
+extern u32 ps_r_frame_generation_pip;
 extern int ps_r_fg_diagnostics;
 extern int ps_framelimiter;
 extern bool IsMainMenuActive();
@@ -41,9 +43,30 @@ bool RuntimeMatchesSetting(const D3D12PresentBridge& bridge)
     return ps_r_frame_generation == Fsr ? runtime == PresentRuntime::Fsr : runtime == PresentRuntime::Streamline;
 }
 
+// r_frame_generation, or r_frame_generation_pip's choice while a true-PiP scope is up.
+// Only DLSS-G can change multiplier; FSR frame generation is a fixed 2x, so there the
+// per-scope choice is limited to pausing it. The runtime (DLSS vs FSR) always follows
+// r_frame_generation, which is what vid_restart builds the bridge from.
+u32 EffectiveMode()
+{
+    const u32 pip = ps_r_frame_generation_pip;
+    if (!pip || !ps_r_frame_generation) return ps_r_frame_generation;
+    if (!Device.true_pip_on || !Device.m_SecondViewport.IsSVPActive()) return ps_r_frame_generation;
+    if (pip == 1) return Off;
+    if (ps_r_frame_generation == Fsr) return ps_r_frame_generation;
+    return pip == 2 ? u32(Dlss) : pip; // pip ids 3/4 are the same as Dlss3x/Dlss4x
+}
+
+// Generated frames per rendered frame for DLSS-G: 1 = 2x, 2 = 3x, 3 = 4x.
+UINT FramesToGenerate(u32 mode)
+{
+    return mode == Dlss4x ? 3 : mode == Dlss3x ? 2 : 1;
+}
+
 bool Eligible()
 {
     if (!ps_r_frame_generation) { Status("Off"); return false; }
+    if (!EffectiveMode()) { Status("Paused while scoped (r_frame_generation_pip off)."); return false; }
     auto* bridge = HW.PresentationBridge();
     if (!bridge) return false;
     if (!RuntimeMatchesSetting(*bridge))
@@ -98,7 +121,8 @@ void BeginSimulation()
     UINT limitUs = 0;
     if (ReflexLimitsFrames())
         limitUs = UINT(1e6f * FrameLimitScale() / float(ps_framelimiter));
-    R_CHK(bridge->BeginFrame(limitUs, ps_r_frame_generation != 0));
+    const u32 mode = EffectiveMode();
+    R_CHK(bridge->BeginFrame(limitUs, mode != Off, FramesToGenerate(mode)));
 }
 
 void EndSimulation()
@@ -234,13 +258,58 @@ void CaptureScene()
     sceneCaptured = true;
 }
 
-void CaptureHudless()
+bool NeedsSceneInputs()
+{
+    auto* bridge = HW.PresentationBridge();
+    return bridge && Eligible() && bridge->NeedsFGInputs();
+}
+
+void CaptureHudless(ID3D11Texture2D* source)
 {
     auto* bridge = HW.PresentationBridge();
     if (!bridge) return;
-    const HRESULT result = bridge->CaptureHudless(sceneCaptured);
+    const HRESULT result = bridge->CaptureHudless(sceneCaptured, source);
     sceneCaptured = false;
     if (FAILED(result)) R_CHK(bridge->FailGeneration(bridge->LastFailure()));
+}
+
+namespace
+{
+// File version of a loaded module, "none" when it is not loaded.
+void ModuleVersion(const wchar_t* module, char* out, size_t size)
+{
+    xr_strcpy(out, size, "none");
+    HMODULE handle = GetModuleHandleW(module);
+    wchar_t path[MAX_PATH]{};
+    if (!handle || !GetModuleFileNameW(handle, path, MAX_PATH)) return;
+    DWORD ignored = 0;
+    const DWORD bytes = GetFileVersionInfoSizeW(path, &ignored);
+    xr_vector<u8> data(bytes);
+    VS_FIXEDFILEINFO* info = nullptr;
+    UINT length = 0;
+    if (!bytes || !GetFileVersionInfoW(path, 0, bytes, data.data()) ||
+        !VerQueryValueW(data.data(), L"\\", (void**)&info, &length) || !info)
+    {
+        xr_strcpy(out, size, "loaded, no version");
+        return;
+    }
+    xr_sprintf(out, size, "%u.%u.%u.%u", HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS),
+        HIWORD(info->dwFileVersionLS), LOWORD(info->dwFileVersionLS));
+}
+}
+
+const char* RuntimeVersions()
+{
+    static string512 text;
+    auto* bridge = HW.PresentationBridge();
+    if (!bridge) return "no DX12 presentation bridge";
+    string64 dlssg, sl;
+    ModuleVersion(L"nvngx_dlssg.dll", dlssg, sizeof(dlssg));
+    ModuleVersion(L"sl.dlss_g.dll", sl, sizeof(sl));
+    const char* fsr = bridge->FsrFrameGenerationVersion();
+    xr_sprintf(text, "runtime %s, FSR frame generation %s, nvngx_dlssg %s, sl.dlss_g %s",
+        bridge->RuntimeName(), fsr && *fsr ? fsr : "none", dlssg, sl);
+    return text;
 }
 
 void Reset()

@@ -454,10 +454,10 @@ void CGrenade::GrenadeContactCallback(bool &do_colide, bool bo1, dContact &c, SG
 	Fvector pos;
 	Fvector nor;
 	pos.set(*(Fvector *)&c.geom.pos);
-	CGrenade *gnd = gd1 ? smart_cast<CGrenade *>(gd1->ph_ref_object) : nullptr;
+	CGrenade *gnd = gd1 ? smart_cast<CGrenade *>(PHLiveRefObject(gd1)) : nullptr;
 	if (!gnd)
 	{
-		gnd = gd2 ? smart_cast<CGrenade *>(gd2->ph_ref_object) : nullptr;
+		gnd = gd2 ? smart_cast<CGrenade *>(PHLiveRefObject(gd2)) : nullptr;
 		nor.invert(*(Fvector *)&c.geom.normal);
 		mtl = material_1;
 	}
@@ -474,10 +474,10 @@ void CGrenade::GrenadeContactCallback(bool &do_colide, bool bo1, dContact &c, SG
 	if (gnd == nullptr || gnd->m_contact.enabled != true || gnd->m_contact.contact == true)
 		return;
 
-	CGameObject *who = gd1 ? smart_cast<CGameObject *>(gd1->ph_ref_object) : NULL;
+	CGameObject *who = gd1 ? smart_cast<CGameObject *>(PHLiveRefObject(gd1)) : NULL;
 	if (!who || who == (CGameObject *)gnd)
 	{
-		who = gd2 ? smart_cast<CGameObject *>(gd2->ph_ref_object) : NULL;
+		who = gd2 ? smart_cast<CGameObject *>(PHLiveRefObject(gd2)) : NULL;
 	}
 
 	if (!who || who->ID() != gnd->CurrentParentID())
