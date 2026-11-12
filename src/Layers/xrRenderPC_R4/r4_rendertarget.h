@@ -490,7 +490,7 @@ public:
 	ref_rt rt_upscaler_camera_mv;
 	ref_shader s_upscaler_camera_mv;
 	bool reported_camera_mv = false;
-	bool reported_lens_motion = false;
+	const char* lens_motion_skipped = "";
 	// Post chain after reconstruction: each scene target the chain uses has a
 	// display-size twin. Their storage is swapped for the chain, so the phases
 	// and shaders stay unchanged. Empty without the display copy shader, with MSAA or

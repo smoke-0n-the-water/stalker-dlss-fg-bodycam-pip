@@ -177,14 +177,30 @@ ref_rt& CRenderTarget::phase_upscaler_camera_mv()
 void CRenderTarget::phase_svp_lens_motion()
 {
 #ifdef XR_DX12_BRIDGE
-	if (this != RImplementation.TargetMain || ps_r__svp_fg_lens_motion <= 0.f || !Device.true_pip_on ||
-		!Device.m_SecondViewport.IsSVPActive() || RImplementation.GMBase.RGraph.mapScopeHUDSorted.empty() ||
-		!RImplementation.TargetSVP || !fg::NeedsSceneInputs())
+	if (this != RImplementation.TargetMain || !Device.true_pip_on || !Device.m_SecondViewport.IsSVPActive())
 		return;
-	EnsureScopeShaders();
-	if (!s_svp_lens_motion || !rt_upscaler_camera_mv || !rt_ssfx_motion_vectors ||
-		rt_upscaler_camera_mv->dwWidth != rt_ssfx_motion_vectors->dwWidth ||
-		rt_upscaler_camera_mv->dwHeight != rt_ssfx_motion_vectors->dwHeight)
+	// Scoped frames only from here; the first reason the pass is skipped is logged on each change.
+	const char* skipped = nullptr;
+	if (ps_r__svp_fg_lens_motion <= 0.f) skipped = "r__svp_fg_lens_motion 0";
+	else if (RImplementation.GMBase.RGraph.mapScopeHUDSorted.empty()) skipped = "no lens mesh this frame";
+	else if (!RImplementation.TargetSVP) skipped = "no scope target";
+	else if (!fg::NeedsSceneInputs()) skipped = "frame generation takes no inputs";
+	else
+	{
+		EnsureScopeShaders();
+		if (!s_svp_lens_motion) skipped = "svp_lens_motion shader missing";
+		else if (!rt_upscaler_camera_mv || !rt_ssfx_motion_vectors) skipped = "no scratch motion target";
+		else if (rt_upscaler_camera_mv->dwWidth != rt_ssfx_motion_vectors->dwWidth ||
+			rt_upscaler_camera_mv->dwHeight != rt_ssfx_motion_vectors->dwHeight)
+			skipped = "scratch motion target size differs";
+	}
+	if (skipped != lens_motion_skipped)
+	{
+		lens_motion_skipped = skipped;
+		if (skipped) Msg("[DLSS FG] True PiP lens motion skipped: %s", skipped);
+		else Msg("[DLSS FG] True PiP lens motion active (r__svp_fg_lens_motion %.2f)", ps_r__svp_fg_lens_motion);
+	}
+	if (skipped)
 		return;
 
 	HW.pContext->CopyResource(rt_upscaler_camera_mv->pSurface, rt_ssfx_motion_vectors->pSurface);
@@ -206,12 +222,6 @@ void CRenderTarget::phase_svp_lens_motion()
 	});
 	HW.pContext->RSSetViewports(savedCount, saved);
 	u_setrt(rt_Color, nullptr, nullptr, nullptr);
-
-	if (!reported_lens_motion)
-	{
-		reported_lens_motion = true;
-		Msg("[DLSS FG] True PiP lens motion active (r__svp_fg_lens_motion %.2f)", scale);
-	}
 #endif
 }
 
