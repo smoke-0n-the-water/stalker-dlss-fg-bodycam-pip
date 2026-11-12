@@ -745,7 +745,7 @@ u32 s_settle_until_ms = 0;       // no new episode before this
 u32 s_trim_backoff = 1;          // 1..8: multiplies the settle time while trimming doesn't move usage
 constexpr u32 kSettleMs = 60000;
 constexpr u32 kMaxUnloadsPerPass = 48; // each Unload() runs on the render thread
-constexpr u64 kDefaultMinBytes = 1024 * 1024; // [default] textures smaller than this are never demoted
+constexpr u64 kTrimMinBytes = 1024 * 1024; // pressure trims never demote a class texture smaller than this
 
 // VRAM tiers (r__tex_res_preset, set from the MCM menu). Smaller cards start trimming earlier to
 // keep headroom for spikes, install swaps faster and demote idle class textures sooner; big cards
@@ -1023,15 +1023,13 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 				continue;
 			if (T->dwPromotedTime && now - T->dwPromotedTime < cls.hold_ms * s_backoff)
 				continue;
-			if (cls.is_default)
-			{
-				// A demote is a full reload from disk. Not worth it under 1 MB, and a texture
-				// with no mip below the floor (or a cube/array) would reload unchanged.
-				const D3D_TEXTURE2D_DESC& d = T->get_desc_nowait();
-				const u64 bytes = T->TrueBytes ? T->TrueBytes : T->flags.MemoryUsage;
-				if (bytes < kDefaultMinBytes || d.ArraySize != 1 || d.MipLevels <= cls.floor_lod)
-					continue;
-			}
+			// A demote is a full reload from disk. Not worth it under 1 MB (in game, long trims
+			// ended up demoting dozens of tiny class textures for ~0 MB), and a texture with no
+			// mip below the floor (or a cube/array) would reload unchanged.
+			const D3D_TEXTURE2D_DESC& d = T->get_desc_nowait();
+			const u64 bytes = T->TrueBytes ? T->TrueBytes : T->flags.MemoryUsage;
+			if (bytes < kTrimMinBytes || d.ArraySize != 1 || d.MipLevels <= cls.floor_lod)
+				continue;
 		}
 		else if (unused < idle_ms)
 			continue;
