@@ -235,7 +235,10 @@ IC void accumulate_contributors_avx2(const Pixel* raster, const CONTRIB* contrib
 	blue = 0.0f;
 	alpha = 0.0f;
 
+	// The AVX-only build (AnomalyDX11AVX, no AVX2 gather/FMA) always takes the scalar loop.
+#if defined(__AVX2__)
 	if (count < 16)
+#endif
 	{
 		for (int i = 0; i < count; ++i)
 		{
@@ -249,6 +252,7 @@ IC void accumulate_contributors_avx2(const Pixel* raster, const CONTRIB* contrib
 		return;
 	}
 
+#if defined(__AVX2__)
 	__m256 red_sum = _mm256_setzero_ps();
 	__m256 green_sum = _mm256_setzero_ps();
 	__m256 blue_sum = _mm256_setzero_ps();
@@ -290,6 +294,7 @@ IC void accumulate_contributors_avx2(const Pixel* raster, const CONTRIB* contrib
 		blue += weight * float(color_get_B(pixel));
 		alpha += weight * float(color_get_A(pixel));
 	}
+#endif
 }
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <immintrin.h>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -101,6 +102,44 @@ namespace xr_physics_simd
 
         constexpr int vertex_stride = static_cast<int>(sizeof(Vector) / sizeof(float));
 
+#if !defined(__AVX2__)
+        // AVX-only build (AnomalyDX11AVX): no AVX2 gathers, so the same tests one
+        // triangle at a time, in the same operation order as the AVX2 path below.
+        const float* scalar_vertices = reinterpret_cast<const float*>(vertex_array);
+        std::uint32_t mask = 0;
+        for (int lane = 0; lane < 8; ++lane)
+        {
+            const Triangle& t = triangle_array[triangle_ids[lane]];
+            float v[3][3];
+            for (int corner = 0; corner < 3; ++corner)
+                for (int axis = 0; axis < 3; ++axis)
+                    v[corner][axis] = scalar_vertices[static_cast<int>(t.verts[corner]) * vertex_stride + axis] - center[axis];
+
+            bool rejected = false;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const float extent = extents[axis];
+                const float neg_extent = 0.0f - extent;
+                const bool all_below = v[0][axis] < neg_extent && v[1][axis] < neg_extent && v[2][axis] < neg_extent;
+                const bool all_above = v[0][axis] > extent && v[1][axis] > extent && v[2][axis] > extent;
+                rejected = rejected || all_below || all_above;
+            }
+
+            const float e0x = v[1][0] - v[0][0], e0y = v[1][1] - v[0][1], e0z = v[1][2] - v[0][2];
+            const float e1x = v[2][0] - v[1][0], e1y = v[2][1] - v[1][1], e1z = v[2][2] - v[1][2];
+            const float normal_x = e0y * e1z - e0z * e1y;
+            const float normal_y = e0z * e1x - e0x * e1z;
+            const float normal_z = e0x * e1y - e0y * e1x;
+            const float plane_distance = 0.0f - ((normal_x * v[0][0] + normal_y * v[0][1]) + normal_z * v[0][2]);
+            const float projection_radius = (std::fabs(normal_x * extents[0]) + std::fabs(normal_y * extents[1]))
+                + std::fabs(normal_z * extents[2]);
+            const float negative_radius = 0.0f - projection_radius;
+
+            if (!rejected && plane_distance > negative_radius && plane_distance < projection_radius)
+                mask |= 1u << lane;
+        }
+        return mask;
+#else
         const Triangle& t0 = triangle_array[triangle_ids[0]];
         const Triangle& t1 = triangle_array[triangle_ids[1]];
         const Triangle& t2 = triangle_array[triangle_ids[2]];
@@ -196,5 +235,6 @@ namespace xr_physics_simd
         const __m256 axis_pass = _mm256_xor_ps(rejected, _mm256_castsi256_ps(_mm256_set1_epi32(-1)));
         const __m256 pass = _mm256_and_ps(axis_pass, plane_overlap);
         return static_cast<std::uint32_t>(_mm256_movemask_ps(pass));
+#endif
     }
 }

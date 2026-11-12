@@ -307,11 +307,13 @@ BOOL CAviPlayerCustom::DecompressFrame(DWORD dwFrameNum)
 		u32* dst = reinterpret_cast<u32*>(m_pDecompressedBuf);
 		const u32* src = reinterpret_cast<const u32*>(alpha_buf);
 		const u32 pixel_count = u32(m_dwWidth * m_dwHeight);
+		u32 i = 0;
+		// The AVX-only build (AnomalyDX11AVX, no AVX2 integer ops) uses only the scalar loop below.
+#if defined(__AVX2__)
 		const __m256i channel_mask = _mm256_set1_epi32(255);
 		const __m256i rgb_mask = _mm256_set1_epi32(0x00ffffff);
 		const __m256i divide_by_three = _mm256_set1_epi32(21846);
 
-		u32 i = 0;
 		for (; i + 8 <= pixel_count; i += 8)
 		{
 			const __m256i source = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
@@ -325,6 +327,7 @@ BOOL CAviPlayerCustom::DecompressFrame(DWORD dwFrameNum)
 				_mm256_slli_epi32(alpha_value, 24));
 			_mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i), result);
 		}
+#endif
 		for (; i < pixel_count; ++i)
 		{
 			const u32 source = src[i];

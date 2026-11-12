@@ -56,7 +56,10 @@ void transformed_bounds(const int quantity, const Fvector* points, const Fmatrix
 {
 	VERIFY(quantity > 0);
 
+	// The AVX-only build (AnomalyDX11AVX, no AVX2 gather) always takes the scalar loop.
+#if defined(__AVX2__)
 	if (quantity < 16)
+#endif
 	{
 		matrix.transform_tiny(minimum, points[0]);
 		maximum = minimum;
@@ -74,6 +77,7 @@ void transformed_bounds(const int quantity, const Fvector* points, const Fmatrix
 		return;
 	}
 
+#if defined(__AVX2__)
 	constexpr int point_stride = sizeof(Fvector) / sizeof(float);
 	const __m256i gather_indices = _mm256_setr_epi32(
 		0 * point_stride, 1 * point_stride, 2 * point_stride, 3 * point_stride,
@@ -132,6 +136,7 @@ void transformed_bounds(const int quantity, const Fvector* points, const Fmatrix
 		maximum.z = _max(maximum.z, transformed.z);
 	}
 	_mm256_zeroupper();
+#endif
 }
 }
 
