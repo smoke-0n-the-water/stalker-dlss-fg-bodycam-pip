@@ -200,15 +200,19 @@ void CRenderTarget::phase_svp_lens_motion()
 		if (skipped) Msg("[DLSS FG] True PiP lens motion skipped: %s", skipped);
 		else Msg("[DLSS FG] True PiP lens motion active (r__svp_fg_lens_motion %.2f)", ps_r__svp_fg_lens_motion);
 	}
-	if (skipped)
+	// Once per frame: a second run would copy the already-corrected vectors and add the motion twice.
+	if (skipped || lens_motion_frame == Device.dwFrame)
 		return;
+	lens_motion_frame = Device.dwFrame;
 
+	// Frame generation alone gets the lens motion (fg_motion_source): the scene's own consumers of
+	// the motion buffer (motion blur, TAA, the upscaler) keep it unchanged.
 	HW.pContext->CopyResource(rt_upscaler_camera_mv->pSurface, rt_ssfx_motion_vectors->pSurface);
 
 	D3D_VIEWPORT saved[1];
 	UINT savedCount = 1;
 	HW.pContext->RSGetViewports(&savedCount, saved);
-	u_setrt(rt_ssfx_motion_vectors, nullptr, nullptr, nullptr);
+	u_setrt(rt_upscaler_camera_mv, nullptr, nullptr, nullptr);
 	set_viewport_size(HW.pContext, float(rt_ssfx_motion_vectors->dwWidth), float(rt_ssfx_motion_vectors->dwHeight));
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
@@ -220,9 +224,16 @@ void CRenderTarget::phase_svp_lens_motion()
 		RCache.set_c("svp_lens_motion", iw, ih, scale, 0.f);
 		RCache.set_ColorWriteEnable();
 	});
+	// The caller (svp_optics.cpp lens composite) rebinds its targets.
 	HW.pContext->RSSetViewports(savedCount, saved);
-	u_setrt(rt_Color, nullptr, nullptr, nullptr);
 #endif
+}
+
+ID3DTexture2D* CRenderTarget::fg_motion_source() const
+{
+	// The lens-corrected copy, until phase_upscaler_camera_mv reuses that target after the capture.
+	return lens_motion_frame == Device.dwFrame && rt_upscaler_camera_mv ? rt_upscaler_camera_mv->pSurface
+		: rt_ssfx_motion_vectors->pSurface;
 }
 
 bool CRenderTarget::ScopeAfterUpscale() const
@@ -679,10 +690,7 @@ void CRenderTarget::phase_dlss_postprocess()
 		// it for the SVP/scope target - and that is a different test from the
 		// m_render_pass_is_svp one phase_combine uses to gate phase_pp.
 		if (m_is_main_target)
-		{
-			phase_svp_lens_motion();
 			fg::CaptureScene();
-		}
 #endif
 		sceneJitter = dlss::RasterJitter();
 		dlssOutput = dlss::Evaluate(hdrResolve ? dlss_hdr_encode(2) : rt_Color->pSurface, phase_upscaler_camera_mv()->pSurface);

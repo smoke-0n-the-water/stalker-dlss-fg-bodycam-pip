@@ -1030,6 +1030,11 @@ void CRenderTarget::phase_3DSSReticle(bool object_lens_pass)
 				RCache.set_ColorWriteEnable();
 				draw_reflex();
 			}
+
+			// Frame generation motion over the lens, while the lens meshes are still listed (they are
+			// consumed before the DLSS phase). Runs once per frame; the bindings are restored below.
+			if (svp)
+				M->phase_svp_lens_motion();
 		}
 
 		if (object_lens_pass)

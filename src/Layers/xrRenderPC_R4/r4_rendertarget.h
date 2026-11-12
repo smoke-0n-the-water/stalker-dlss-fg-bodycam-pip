@@ -491,6 +491,7 @@ public:
 	ref_shader s_upscaler_camera_mv;
 	bool reported_camera_mv = false;
 	const char* lens_motion_skipped = "";
+	u32 lens_motion_frame = u32(-1);
 	// Post chain after reconstruction: each scene target the chain uses has a
 	// display-size twin. Their storage is swapped for the chain, so the phases
 	// and shaders stay unchanged. Empty without the display copy shader, with MSAA or
@@ -763,6 +764,7 @@ public:
 	void phase_dlss_postprocess();
 	ref_rt& phase_upscaler_camera_mv();
 	void phase_svp_lens_motion();
+	ID3DTexture2D* fg_motion_source() const; // motion vectors frame generation captures this frame
 	void dlss_post_twin(ref_rt& scene, float divisor = 1.f, int resample = -1);
 	bool DlssPostAfterUpscale() const;
 	bool DlssEffectsAfterUpscale() const;
