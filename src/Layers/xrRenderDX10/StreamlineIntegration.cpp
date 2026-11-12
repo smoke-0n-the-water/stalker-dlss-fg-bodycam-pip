@@ -361,15 +361,18 @@ bool StreamlineIntegration::AfterPresent(ID3D12Fence** inputFence, UINT64& input
             Log(diagnostic);
         }
     }
-    if (result == sl::Result::eWarnOutOfVRAM)
-    {
-        NoteOutOfVram("DLSS-G state");
-        if (state.status == static_cast<sl::DLSSGStatus>(~0u) || state.numFramesActuallyPresented == ~0u ||
-            state.lastPresentInputsProcessingCompletionFenceValue == ~UINT64(0) ||
-            (m_enabled && (!state.inputsProcessingCompletionFence || !state.lastPresentInputsProcessingCompletionFenceValue)))
-            return Check(sl::Result::eErrorInvalidState, "DLSS-G VRAM warning without usable state/input fence");
-    }
+    // A VRAM warning is not a failure, even when it leaves the state/fence fields unwritten
+    // (2026-11-12: 15.2 GB allocated vs a 14.3 GB budget turned FG off for the session). The
+    // missing-fence path below retires inputs in queue order; an unwritten status is not judged.
+    const bool vramWarning = result == sl::Result::eWarnOutOfVRAM;
+    if (vramWarning) NoteOutOfVram("DLSS-G state");
     else if (!Check(result, "DLSS-G state")) return false;
+    const bool statusUnwritten = state.status == static_cast<sl::DLSSGStatus>(~0u);
+    if (vramWarning && statusUnwritten && !m_vramPartialStateLogged)
+    {
+        m_vramPartialStateLogged = true;
+        Log("[DLSS FG] VRAM warning left the DLSS-G state unwritten; frame generation stays on (logged once).");
+    }
     // An unlock may patch the provider after SetDevice; pick up a raised maximum.
     if (state.numFramesToGenerateMax && !m_framesRefused) NoteFramesMax(state.numFramesToGenerateMax);
     ++m_presentNumber;
@@ -405,7 +408,7 @@ bool StreamlineIntegration::AfterPresent(ID3D12Fence** inputFence, UINT64& input
         (*inputFence)->AddRef();
         inputFenceValue = state.lastPresentInputsProcessingCompletionFenceValue;
     }
-    if (m_enabled && state.status != sl::DLSSGStatus::eOk)
+    if (m_enabled && !statusUnwritten && state.status != sl::DLSSGStatus::eOk)
     {
         char message[128]{};
         snprintf(message, sizeof(message), "[DLSS FG] Runtime status failure: 0x%X; requesting safe disable.", unsigned(state.status));

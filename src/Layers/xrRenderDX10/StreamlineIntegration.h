@@ -75,6 +75,7 @@ private:
     UINT m_markerMask{}, m_frameNumber{}, m_tagFrame{}, m_presentNumber{};
     UINT m_diagnosticPresents{}; // Bounded snapshots of existing GetState results after mode changes.
     UINT m_missingFenceWarnings{}, m_markerGaps{};
+    bool m_vramPartialStateLogged{};
     std::wstring m_directory;
     const char* m_failureStage{"none"};
     sl::ViewportHandle m_viewport{0};
