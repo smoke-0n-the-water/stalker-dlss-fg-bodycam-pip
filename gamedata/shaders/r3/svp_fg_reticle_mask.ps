@@ -1,0 +1,18 @@
+// The 3DSS reticle's coverage, white over black, into frame generation's laser/reflex mask
+// (svp_optics.cpp, r__svp_fg_reticle_mask). dlss_fg_laser_fill.ps counts a pixel as covered by
+// its colour, and most reticles are black, so the coverage is written, not the reticle colour.
+#ifndef SCOPE_COLOR_WRITE_PHASES
+#define SCOPE_COLOR_WRITE_PHASES (SCOPE_PHASE_RETICLE)
+#endif
+#define main scope_color_write_main
+#include "scope_color_write.ps"
+#undef main
+
+float4 main(v_out I) : SV_Target
+{
+    scope = new_Scope(I);
+    float coverage = saturate(scope_custom_reticle(scope).a);
+    if (coverage < 0.02)
+        discard;
+    return float4(coverage, coverage, coverage, coverage);
+}

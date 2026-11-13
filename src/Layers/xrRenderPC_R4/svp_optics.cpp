@@ -199,6 +199,7 @@ void CRenderTarget::EnsureScopeShaders()
 	s_svp_distort_stamp.create("svp_distort_stamp");
 	s_svp_taa_stamp.create("svp_taa_stamp");
 	s_svp_lens_motion.create("svp_lens_motion");
+	s_svp_fg_reticle_mask.create("svp_fg_reticle_mask");
 	s_svp_lens_stencil.create("svp_lens_stencil");
 	s_svp_lens_stencil_glass.create("svp_lens_stencil_glass");
 	s_scope_glass_fallback.create("scope_glass_fallback");
@@ -1035,6 +1036,26 @@ void CRenderTarget::phase_3DSSReticle(bool object_lens_pass)
 			// consumed before the DLSS phase). Runs once per frame; the bindings are restored below.
 			if (svp)
 				M->phase_svp_lens_motion();
+#ifdef XR_DX12_BRIDGE
+			// r__svp_fg_reticle_mask: frame generation shows the 3DSS reticle as it is in the presented
+			// frame instead of moving it with the scope image. It goes into the same display-size mask
+			// as the laser beams and reflex dots (r_fg_laser_fill), which the HUD-less image fills from
+			// the pixels around it. The stock reticle's coverage (svp_fg_reticle_mask.ps), whichever
+			// lens path drew the image: the Reference and glass variants Load render-size targets by
+			// pixel, which a display-size draw cannot.
+			if (svp && ps_r__svp_fg_reticle_mask && s_svp_fg_reticle_mask && M->fg_mask_begin())
+			{
+				D3D_VIEWPORT saved[1];
+				UINT savedCount = 1;
+				HW.pContext->RSGetViewports(&savedCount, saved);
+				u_setrt(M->rt_fg_mask, nullptr, nullptr, nullptr);
+				set_viewport_size(HW.pContext, float(M->rt_fg_mask->dwWidth), float(M->rt_fg_mask->dwHeight));
+				RCache.set_CullMode(CULL_CCW);
+				RCache.set_Stencil(FALSE);
+				draw_scope(s_svp_fg_reticle_mask, []() { RCache.set_c("scope_phase", SCOPE_PHASE_RETICLE); });
+				HW.pContext->RSSetViewports(savedCount, saved);
+			}
+#endif
 		}
 
 		if (object_lens_pass)
