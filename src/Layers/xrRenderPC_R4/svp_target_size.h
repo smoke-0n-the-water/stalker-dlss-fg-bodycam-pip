@@ -10,6 +10,8 @@ struct TargetSettings
 	float adaptiveResolution;
 	float supersample;
 	float renderScale;
+	// Scope Resolution: share of the on-screen lens size in display px, 0 = the older sizing above.
+	float scopeResolution;
 };
 
 struct TargetFrame
@@ -18,6 +20,8 @@ struct TargetFrame
 	unsigned displayHeight;
 	float disc;
 	float panelAspect;
+	float displayDisc; // the lens disc in display px
+	unsigned displayCap; // display height, the largest scope image
 };
 
 struct TargetSize
@@ -28,6 +32,17 @@ struct TargetSize
 
 inline unsigned RenderExtent(const TargetSettings& settings, const TargetFrame& frame)
 {
+	// Scope Resolution sizes from the lens as shown, not from the render-size composite: the upscaler
+	// reconstructs the lens, so detail above render size still reaches the screen. It replaces the
+	// adaptive margin and the supersample factor. Flat windows keep their panel sizing.
+	if (!settings.upscale && !settings.flatWindow && settings.scopeResolution > 0.f && frame.displayDisc > 1.0f)
+	{
+		unsigned want = unsigned(frame.displayDisc * settings.scopeResolution) & ~1u;
+		if (want < 256) want = 256;
+		const unsigned cap = frame.displayCap & ~1u;
+		if (cap >= 256 && want > cap) want = cap;
+		return want;
+	}
 	if (!settings.upscale)
 	{
 		unsigned base = frame.baseHeight;

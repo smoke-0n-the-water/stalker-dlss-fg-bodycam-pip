@@ -156,9 +156,15 @@ int ps_r__svp_autoflip_reticle = 1; // svp auto-correct a mesh-inverted reticle 
 float ps_r__svp_coating = 0.0f; // svp lens coating, typical multi-coated glass transmission loss + faint warm tint (0 = off, 1 = physical)
 float ps_r__svp_mirage = 0.0f; // svp heat mirage on distant ground, grows with sun heat and magnification (0 = off)
 int ps_r__svp_flat_window = 1; // svp flat-screen optics render the panel's see-through window subtense so magnification tracks the stock look (1 = on)
-float ps_r__svp_sharpen = 0.35f; // svp contrast-adaptive sharpen on the scope image (0 = off, 1 = max)
+float ps_r__svp_sharpen = 0.0f; // svp contrast-adaptive sharpen on the scope image (0 = off, 1 = max); off by default, menu "Scope sharpening"
 float ps_r__svp_sharpen_falloff = 0.0f; // svp sharpen radial falloff toward the disc rim, crisp center soft edge (0 = uniform)
 float ps_r__svp_sharpen_inner = 0.0f; // svp sharpen inner crisp-zone radius before the falloff starts (0 = from center)
+// Scope Resolution: the scope image size as a share of the lens's on-screen (display) size, chosen
+// apart from the main upscaler. same = the older sizing (render-size base, r__svp_adaptive_res,
+// r__svp_supersample); any other value replaces those three.
+u32 ps_r__svp_scope_res = 0;
+xr_token svp_scope_res_token[] = {
+	{"same", 0}, {"performance", 1}, {"balanced", 2}, {"quality", 3}, {"native", 4}, {nullptr, 0}};
 float ps_r__svp_fg_lens_motion = 1.0f; // DLSS and frame generation: scale of the scope image's own motion written into the lens (0 = off, lens keeps the scope model's motion only)
 float ps_r__svp_nvg_bleach = 0.0f; // svp NVG highlight bleach roll-off, replaces the hard clamp so bright sources compress not clip (0 = off, stock)
 float ps_r__svp_nvg_sensitivity = 1.0f; // svp NVG bleach onset sensitivity, higher rolls off dimmer sources
@@ -425,6 +431,7 @@ void svp_console_init()
 	CMD4(CCC_SvpInternalFloat, "r__svp_mirage", &ps_r__svp_mirage, 0.0f, 3.0f);
 	CMD4(CCC_SvpFixedInteger, "r__svp_flat_window", &ps_r__svp_flat_window, 0, 1);
 	CMD4(CCC_Float, "r__svp_sharpen", &ps_r__svp_sharpen, 0.0f, 1.0f); // svp contrast-adaptive sharpen (0 = off)
+	CMD3(CCC_Token, "r__svp_scope_res", &ps_r__svp_scope_res, svp_scope_res_token); // scope image size vs the lens on screen
 	CMD4(CCC_Float, "r__svp_fg_lens_motion", &ps_r__svp_fg_lens_motion, 0.0f, 2.0f); // DLSS + frame generation lens motion (0 = off, 1 = exact)
 	CMD4(CCC_SvpInternalFloat, "r__svp_sharpen_falloff", &ps_r__svp_sharpen_falloff, 0.0f, 1.0f);
 	CMD4(CCC_SvpInternalFloat, "r__svp_sharpen_inner", &ps_r__svp_sharpen_inner, 0.0f, 1.0f);

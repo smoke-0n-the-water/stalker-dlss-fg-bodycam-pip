@@ -247,6 +247,13 @@ extern ECORE_API float ps_r__svp_sharpen;
 extern ECORE_API float ps_r__svp_sharpen_falloff;
 extern ECORE_API float ps_r__svp_sharpen_inner;
 extern ECORE_API float ps_r__svp_fg_lens_motion;
+extern ECORE_API u32 ps_r__svp_scope_res;
+// Scope Resolution share of the on-screen lens size; 0 for "same" (the older sizing).
+inline float svp_scope_res_scale()
+{
+	static const float scales[] = {0.f, .50f, .58f, .67f, 1.f};
+	return ps_r__svp_scope_res < 5 ? scales[ps_r__svp_scope_res] : 0.f;
+}
 extern ECORE_API float ps_r__svp_nvg_bleach;
 extern ECORE_API float ps_r__svp_nvg_sensitivity;
 extern ECORE_API int ps_r__svp_nvg_objective;
