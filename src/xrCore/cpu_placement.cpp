@@ -2,16 +2,19 @@
 #pragma hdrstop
 
 #include "cpu_placement.h"
+#include "cpu_placement_domain.h"
 
 #include <intrin.h>
 #include <algorithm>
 
 // Policy (Windows 10/11, one processor group):
 // - On every CPU the main thread opts out of power throttling (High QoS).
-// - Several last-level caches (multi-CCD Ryzen, X3D): the process default CPU Set is
-//   the domain with the largest L3, so the main thread and the pool share one L3. On
-//   X3D this is the V-Cache CCD, the one the AMD 3D V-Cache driver keeps unparked for
-//   games, so the hint agrees with the driver and Game Mode instead of fighting them.
+// - Several last-level caches and ONE of them larger (X3D: 7900X3D, 7950X3D, 9950X3D):
+//   the process default CPU Set is that domain, so the main thread and the pool share
+//   one L3. That is the V-Cache CCD, the one the AMD 3D V-Cache driver keeps unparked
+//   for games, so the hint agrees with the driver and Game Mode instead of fighting them.
+//   Equal L3s (5900X, 5950X, 7950X, 9950X): every core stays in, else the engine got half
+//   the CPU (low FPS on AMD, 2026-11-13).
 // - The main thread is placed only when Windows exposes a core ranking: EfficiencyClass
 //   (Intel P/E cores) or SchedulingClass (AMD CPPC preferred cores, Intel Turbo Boost
 //   Max 3.0). Without one (e.g. CPPC disabled in BIOS) Windows keeps full control.
@@ -359,33 +362,25 @@ void initialize()
         }
     }
 
-    // One cache domain for the whole engine: the largest L3, then the best ranked core,
-    // then the larger domain.
-    u64 best_domain = 0;
-    u32 best_lp = 0;
-    u8 best_rank = 0;
-    for (u32 lp = 0; lp < max_lps; ++lp)
+    // One cache domain for the whole engine only on X3D-style parts (one L3 larger than the
+    // rest); equal L3s (dual-CCD Ryzen without V-Cache) keep every core. cpu_placement_domain.h.
+    const domain_choice::result chosen = domain_choice::choose(usable, cache_of, l3_of, rank_of);
+    domain = chosen.domain;
+    const u32 best_lp = chosen.best_lp;
+    u32 llc_count = 0;
     {
-        if (!(usable & (1ull << lp)))
-            continue;
-        u64 mask = 0;
-        u8 rank = 0;
-        for (u32 other = 0; other < max_lps; ++other)
-            if ((usable & (1ull << other)) && cache_of[other] == cache_of[lp])
+        u64 counted = 0;
+        for (u32 lp = 0; lp < max_lps; ++lp)
+            if ((usable & (1ull << lp)) && !(counted & (1ull << lp)))
             {
-                mask |= 1ull << other;
-                rank = std::max(rank, rank_of[other]);
+                ++llc_count;
+                for (u32 other = lp; other < max_lps; ++other)
+                    if (cache_of[other] == cache_of[lp])
+                        counted |= 1ull << other;
             }
-        if (!best_domain || l3_of[lp] > l3_of[best_lp] ||
-            (l3_of[lp] == l3_of[best_lp] && (rank > best_rank || (rank == best_rank && lp_count(mask) > lp_count(best_domain)))))
-        {
-            best_domain = mask;
-            best_lp = lp;
-            best_rank = rank;
-        }
     }
-    // A small domain (Zen 5c cluster split, LP E-cores) would starve the pool: keep all.
-    domain = lp_count(best_domain) * 2 >= lp_count(usable) ? best_domain : usable;
+    if (llc_count > 1 && !chosen.confined)
+        Msg("* CPU placement: %u last-level caches, no single larger one holding half the CPU: engine on every core", llc_count);
 
     u8 top_efficiency = 0;
     for (u32 lp = 0; lp < max_lps; ++lp)

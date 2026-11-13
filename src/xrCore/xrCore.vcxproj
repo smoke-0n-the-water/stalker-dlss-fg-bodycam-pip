@@ -789,6 +789,7 @@
     <ClInclude Include="DateTime.hpp" />
     <ClInclude Include="RingBuffer.h" />
     <ClInclude Include="cpu_placement.h" />
+    <ClInclude Include="cpu_placement_domain.h" />
     <ClInclude Include="diagnostic_privacy.h" />
     <ClInclude Include="engine_error_logger.h" />
     <ClInclude Include="job_system.h" />

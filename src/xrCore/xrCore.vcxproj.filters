@@ -644,6 +644,7 @@
     <ClInclude Include="..\3rd party\fastdelegate\fastdelegate.h" />
     <ClInclude Include="..\3rd party\robin_hood\robin_hood.h" />
     <ClInclude Include="cpu_placement.h" />
+    <ClInclude Include="cpu_placement_domain.h" />
     <ClInclude Include="diagnostic_privacy.h" />
     <ClInclude Include="engine_error_logger.h" />
     <ClInclude Include="job_system.h" />
