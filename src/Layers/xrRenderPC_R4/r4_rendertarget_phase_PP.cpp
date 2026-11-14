@@ -218,12 +218,12 @@ void CRenderTarget::phase_svp_lens_motion()
 	set_viewport_size(HW.pContext, float(rt_ssfx_motion_vectors->dwWidth), float(rt_ssfx_motion_vectors->dwHeight));
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
-	const float scale = ps_r__svp_fg_lens_motion;
+	const float scale = ps_r__svp_fg_lens_motion, body = ps_r__svp_lens_body_motion;
 	const float iw = 1.f / float(rt_ssfx_motion_vectors->dwWidth), ih = 1.f / float(rt_ssfx_motion_vectors->dwHeight);
-	draw_scope(s_svp_lens_motion, [scale, iw, ih]()
+	draw_scope(s_svp_lens_motion, [scale, body, iw, ih]()
 	{
 		RCache.set_c("scope_phase", 0);
-		RCache.set_c("svp_lens_motion", iw, ih, scale, 0.f);
+		RCache.set_c("svp_lens_motion", iw, ih, scale, body);
 		RCache.set_ColorWriteEnable();
 	});
 	// The caller (svp_optics.cpp lens composite) rebinds its targets.

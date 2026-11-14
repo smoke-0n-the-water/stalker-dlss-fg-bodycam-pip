@@ -12,7 +12,7 @@
 
 Texture2D s_lens_body_motion; // copy of the scene's motion vectors taken just before this pass
 Texture2D s_svp_motion; // the scope view's motion vectors
-uniform float4 svp_lens_motion; // xy: 1 / target size, z: r__svp_fg_lens_motion
+uniform float4 svp_lens_motion; // xy: 1 / target size, z: r__svp_fg_lens_motion, w: r__svp_lens_body_motion
 
 float4 main(v_out I) : SV_Target
 {
@@ -41,7 +41,10 @@ float4 main(v_out I) : SV_Target
     // Screen pixels per image UV: the inverse of [du_dx du_dy].
     float2 pixels = float2(du_dy.y * imageMotion.x - du_dy.x * imageMotion.y,
                            du_dx.x * imageMotion.y - du_dx.y * imageMotion.x) / det;
-    float weight = (1.0 - reticle) * (1.0 - shadow) * svp_lens_motion.z;
-    body.xy += pixels * svp_lens_motion.xy * weight;
+    // The image takes the scope body's motion scaled by w plus its own; the reticle and the eyebox
+    // shadow keep the body's motion unchanged.
+    float image = (1.0 - reticle) * (1.0 - shadow);
+    float2 imageMotion2 = body.xy * svp_lens_motion.w + pixels * svp_lens_motion.xy * svp_lens_motion.z;
+    body.xy = lerp(body.xy, imageMotion2, image);
     return body;
 }

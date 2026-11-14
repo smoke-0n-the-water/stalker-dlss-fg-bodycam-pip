@@ -166,6 +166,7 @@ u32 ps_r__svp_scope_res = 0;
 xr_token svp_scope_res_token[] = {
 	{"same", 0}, {"performance", 1}, {"balanced", 2}, {"quality", 3}, {"native", 4}, {nullptr, 0}};
 int ps_r__svp_fg_reticle_mask = 1; // frame generation takes the 3DSS reticle from the presented frame (needs r_fg_laser_fill; 0 = interpolate it)
+float ps_r__svp_lens_body_motion = 1.0f; // share of the scope body's motion the lens IMAGE keeps on top of its own (reticle always keeps it); diagnostic A/B
 float ps_r__svp_fg_lens_motion = 1.0f; // DLSS and frame generation: scale of the scope image's own motion written into the lens (0 = off, lens keeps the scope model's motion only)
 float ps_r__svp_nvg_bleach = 0.0f; // svp NVG highlight bleach roll-off, replaces the hard clamp so bright sources compress not clip (0 = off, stock)
 float ps_r__svp_nvg_sensitivity = 1.0f; // svp NVG bleach onset sensitivity, higher rolls off dimmer sources
@@ -432,6 +433,7 @@ void svp_console_init()
 	CMD4(CCC_SvpInternalFloat, "r__svp_mirage", &ps_r__svp_mirage, 0.0f, 3.0f);
 	CMD4(CCC_SvpFixedInteger, "r__svp_flat_window", &ps_r__svp_flat_window, 0, 1);
 	CMD4(CCC_Float, "r__svp_sharpen", &ps_r__svp_sharpen, 0.0f, 1.0f); // svp contrast-adaptive sharpen (0 = off)
+	CMD4(CCC_Float, "r__svp_lens_body_motion", &ps_r__svp_lens_body_motion, 0.0f, 1.0f); // lens image: scope body motion share (A/B)
 	CMD4(CCC_Integer, "r__svp_fg_reticle_mask", &ps_r__svp_fg_reticle_mask, 0, 1); // FG shows the scope reticle from the real frame
 	CMD3(CCC_Token, "r__svp_scope_res", &ps_r__svp_scope_res, svp_scope_res_token); // scope image size vs the lens on screen
 	CMD4(CCC_Float, "r__svp_fg_lens_motion", &ps_r__svp_fg_lens_motion, 0.0f, 2.0f); // DLSS + frame generation lens motion (0 = off, 1 = exact)
