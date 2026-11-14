@@ -869,7 +869,12 @@ void CRenderTarget::phase_combine()
 
 	// pip the SVP runs TAA before motion blur + the lens paint so it reprojects with the SVP's own
 	// motion vectors, the main view keeps its TAA at the end (below)
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 &&
+	// r__svp_taa: with an upscaler, ssfx_taa is normally off (DLSS replaces the main TAA), which
+	// left the scope view with no anti-aliasing at all. DLSS reconstructs the lens but cannot
+	// stabilise aliasing inside the scope image, so wide fields (low effective magnification)
+	// smeared while moving (2026-11-15). The scope view keeps its own TAA then.
+	const bool svp_taa = ps_ssfx_taa.x > 0 || (ps_r__svp_taa && dlss::Configured());
+	if (RImplementation.o.ssfx_taa && svp_taa &&
 		Device.true_pip_on && Device.m_SecondViewport.m_render_pass_is_svp && !svp_dlss_skip_aa)
 	{
 		phase_ssfx_taa();

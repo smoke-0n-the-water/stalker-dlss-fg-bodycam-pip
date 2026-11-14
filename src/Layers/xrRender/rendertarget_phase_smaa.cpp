@@ -227,7 +227,12 @@ void CRenderTarget::phase_ssfx_taa()
 	// Draw COLOR
 	RCache.set_Element(s_ssfx_taa->E[2]);
 	
-	RCache.set_c("taa_setup", ps_ssfx_taa);
+	// The scope view may run TAA while ssfx_taa is off (r__svp_taa under an upscaler); its
+	// enable component must still read as on for the resolve.
+	Fvector4 taa_setup = ps_ssfx_taa;
+	if (Device.true_pip_on && Device.m_SecondViewport.m_render_pass_is_svp && taa_setup.x <= 0.f)
+		taa_setup.x = 1.f;
+	RCache.set_c("taa_setup", taa_setup);
 
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);

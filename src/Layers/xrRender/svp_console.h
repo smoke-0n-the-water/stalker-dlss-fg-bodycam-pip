@@ -250,6 +250,7 @@ extern ECORE_API float ps_r__svp_fg_lens_motion;
 extern ECORE_API u32 ps_r__svp_scope_res;
 extern ECORE_API int ps_r__svp_fg_reticle_mask;
 extern ECORE_API float ps_r__svp_lens_body_motion;
+extern ECORE_API int ps_r__svp_taa;
 // Scope Resolution share of the on-screen lens size; 0 for "same" (the older sizing).
 inline float svp_scope_res_scale()
 {
