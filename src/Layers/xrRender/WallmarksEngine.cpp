@@ -574,7 +574,7 @@ void CWallmarksEngine::Render()
                     FVF::LIT* w_save = w_verts;
                     try
                     {
-                        W->Parent()->RenderWallmark(W, w_verts);
+                        W->Parent()->RenderWallmark(W, w_verts, w_start + max_verts);
                     }
                     catch (...)
                     {
