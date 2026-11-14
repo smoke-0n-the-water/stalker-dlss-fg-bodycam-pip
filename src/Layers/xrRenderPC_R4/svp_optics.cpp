@@ -1043,11 +1043,14 @@ void CRenderTarget::phase_3DSSReticle(bool object_lens_pass)
 			// the pixels around it. The stock reticle's coverage (svp_fg_reticle_mask.ps), whichever
 			// lens path drew the image: the Reference and glass variants Load render-size targets by
 			// pixel, which a display-size draw cannot.
+			// Save the viewport BEFORE fg_mask_begin: its rmNormal() sets the mask's display size, and
+			// restoring that left every later pass drawing into the top-left of the render-size
+			// targets, which the upscaler showed magnified (Corner Zoom, 2026-11-14).
+			D3D_VIEWPORT saved[1];
+			UINT savedCount = 1;
+			HW.pContext->RSGetViewports(&savedCount, saved);
 			if (svp && ps_r__svp_fg_reticle_mask && s_svp_fg_reticle_mask && M->fg_mask_begin())
 			{
-				D3D_VIEWPORT saved[1];
-				UINT savedCount = 1;
-				HW.pContext->RSGetViewports(&savedCount, saved);
 				u_setrt(M->rt_fg_mask, nullptr, nullptr, nullptr);
 				set_viewport_size(HW.pContext, float(M->rt_fg_mask->dwWidth), float(M->rt_fg_mask->dwHeight));
 				RCache.set_CullMode(CULL_CCW);
