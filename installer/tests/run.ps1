@@ -444,6 +444,74 @@ $scenarios['S16_zip_slip_and_junction'] = {
     Check ((Diff $pre (Snap $s.Root)).Count -eq 0) "undone"
 }
 
+# MSAA is not a preference: the upscaler and the night vision shaders break with it, so
+# every run puts it back off, while the player's other settings are still kept.
+$scenarios['S18_msaa_forced_off_every_run'] = {
+    $s = New-Scenario 'S18_msaa_forced_off_every_run'
+    $ltxp = "$($s.Root)\Anomaly\appdata\user.ltx"
+    $orig = T $ltxp
+    [void](Install $s)
+    Check ((T $ltxp) -match '(?m)^r3_msaa st_opt_off\s*$') "first install sets MSAA off"
+    # the player (or a settings change) turns MSAA on again, and changes vsync
+    W $ltxp (((T $ltxp) -replace 'r3_msaa st_opt_off', 'r3_msaa 8x') -replace 'rs_v_sync off', 'rs_v_sync on')
+    $c = Install $s
+    Check ($c -eq 0) "second run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    $t = T $ltxp
+    Check ($t -match '(?m)^r3_msaa st_opt_off\s*$') "re-run puts MSAA back off"
+    Check ($t -notmatch 'r3_msaa 8x') "no 8x left"
+    Check ($t -match 'rs_v_sync on' -and $t -match 'mouse_sens 0\.12') "other settings kept"
+    Check ($script:lastOut -match 'r3_msaa st_opt_off') "the run says it set MSAA"
+    [void](Uninstall $s)
+    Check ((T $ltxp) -eq $orig) "uninstall restores the original MSAA line and user.ltx"
+}
+
+# GAMMA directly on a drive ("C:\Anomaly" + "C:\GAMMA"): the root is trimmed to "C:",
+# which .NET reads as "the current directory on drive C". Reproduced with a SUBST
+# drive whose root is the fake game, started from a folder on that same drive (a pack
+# unzipped on the game's drive, as a double-click does).
+$scenarios['S17_game_on_drive_root'] = {
+    $s = New-Scenario 'S17_game_on_drive_root'
+    $used = [IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpper() }
+    $letter = ([char[]](90..68) | Where-Object { "$_" -notin $used } | Select-Object -First 1)
+    if (-not $letter) { Write-Host "    SKIP: no free drive letter for subst"; return }
+    $drv = "${letter}:"
+    $real = $s.Root
+    Copy-Item -LiteralPath $s.Pack -Destination "$real\_pack" -Recurse
+    cmd /c subst $drv "$real" | Out-Null
+    try {
+        $pre = Snap $real
+        $log = "$base\S17_out.txt"
+        $args17 = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$drv\_pack\install.ps1`"",
+                    '-Yes', '-GpuName', "`"NVIDIA GeForce RTX 3060`"")      # no -GamePath: found from the pack's parent, as for a player
+        # the same drive typed or passed as -GamePath ("C:\" at the prompt)
+        $p = Start-Process powershell.exe -WorkingDirectory "$drv\_pack" -Wait -PassThru -NoNewWindow `
+             -RedirectStandardOutput $log -ArgumentList ($args17 + @('-GamePath', $drv, '-DryRun'))
+        $script:lastOut = Get-Content -LiteralPath $log -Raw
+        Check ($p.ExitCode -eq 0) "-GamePath on a drive root dry run exit 0 (got $($p.ExitCode))"; Show-OnFail ($p.ExitCode -eq 0)
+        # a real drive root lets a normal user create folders but not files (C:\ does)
+        $who = "$env:USERDOMAIN\$env:USERNAME"
+        icacls "$real" /deny "${who}:(WD)" | Out-Null
+        $p = Start-Process powershell.exe -ArgumentList $args17 -WorkingDirectory "$drv\_pack" -Wait -PassThru `
+             -NoNewWindow -RedirectStandardOutput $log
+        $script:lastOut = Get-Content -LiteralPath $log -Raw
+        Check ($p.ExitCode -eq 0) "install on a drive root exit 0 (got $($p.ExitCode))"; Show-OnFail ($p.ExitCode -eq 0)
+        Check (Test-Path -LiteralPath "$real\.slopray\tool\UNINSTALL - Slop-Ray Engine.bat") "the uninstaller bat is in .slopray\tool"
+        Check (Test-Path -LiteralPath "$real\.slopray\record.json") "record lives in the game folder"
+        Check (-not (Test-Path -LiteralPath "$real\_pack\.slopray")) "nothing written into the pack folder"
+        Check ((T "$real\Anomaly\bin\AnomalyDX11AVX.exe") -eq 'SR dx11 v0.5.2') "dx11 exe installed in the game folder"
+        Check ((T "$real\.slopray\backup\Anomaly\bin\AnomalyDX11AVX.exe") -eq 'GAMMA original dx11') "original saved"
+        $p = Start-Process powershell.exe -WorkingDirectory "$drv\_pack" -Wait -PassThru -NoNewWindow `
+             -RedirectStandardOutput $log -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+             "`"$drv\.slopray\tool\uninstall.ps1`"", '-Yes')
+        $script:lastOut = Get-Content -LiteralPath $log -Raw
+        Check ($p.ExitCode -eq 0) "uninstall on a drive root exit 0 (got $($p.ExitCode))"; Show-OnFail ($p.ExitCode -eq 0)
+        Assert-BackToOriginal $pre $real "uninstall on a drive root restores everything"
+    } finally {
+        if ($who) { icacls "$real" /remove:d "$who" | Out-Null }
+        cmd /c subst $drv /d | Out-Null
+    }
+}
+
 # --- run ---------------------------------------------------------------------
 Write-Host "Slop-Ray installer tests in $base"
 foreach ($k in $scenarios.Keys) {

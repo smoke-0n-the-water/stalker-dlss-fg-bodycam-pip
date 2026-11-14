@@ -62,7 +62,8 @@ function Test-GammaRoot ($root) {
 function Resolve-GammaRoot ($typed) {
     if ([string]::IsNullOrWhiteSpace($typed)) { return $null }
     $t = $typed.Trim().Trim('"').Trim().TrimEnd('\')
-    foreach ($try in @($t, (Split-Path -Parent $t))) {
+    # Split-Path -Parent throws on a bare drive ("C:"): a drive has no parent to try
+    foreach ($try in @($t, $(if ($t -notmatch '^[A-Za-z]:$') { Split-Path -Parent $t }))) {
         if (Test-GammaRoot $try) { return $try }
     }
     return $null
@@ -140,7 +141,9 @@ function Get-VolumeSerial ([string]$Root) {
 
 # --- the install record ----------------------------------------------------
 function Open-SlopRay ([string]$Root, [string]$Catalogue) {
-    $r = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    # a game on a drive root arrives as "C:", which .NET reads as "the current directory
+    # on C:" (the pack folder, or System32 when elevated). Put the backslash back first.
+    $r = [IO.Path]::GetFullPath($(if ($Root -match '^[A-Za-z]:$') { "$Root\" } else { $Root })).TrimEnd('\')
     $ctx = @{
         Root = $r; Dir = "$r\.slopray"; Record = $null; WasNew = $true; Run = $null
         Cat = New-Object 'System.Collections.Generic.HashSet[string]'

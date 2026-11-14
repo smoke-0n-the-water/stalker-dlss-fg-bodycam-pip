@@ -2,12 +2,12 @@
 #  Slop-Ray Engine uninstaller. PLAIN TEXT, read it in Notepad first.
 #
 #  Puts your GAMMA install back the way it was before Slop-Ray, using the
-#  record the installer wrote (GAMMA\.slopray\record.json). For every file:
+#  record the installer wrote (<game folder>\.slopray\record.json). For every file:
 #    - ours and unchanged since install       -> your original is put back
 #                                                (or the file removed, if
 #                                                there was none before)
 #    - changed by you after install           -> left as is, or moved to
-#                                                GAMMA\.slopray\recovery
+#                                                <game folder>\.slopray\recovery
 #    - original backup missing or damaged     -> left as is, reported
 #  MO2 mod list, launch entry and user.ltx: only what the installer set, and
 #  only where you have not changed it since. Your backups are kept.

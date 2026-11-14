@@ -6,7 +6,7 @@
 #     1. finds your GAMMA folder and checks everything BEFORE changing anything
 #     2. shows what it will do and asks once
 #     3. copies the engine (DX11 + DX12) and verifies every copy by SHA-256.
-#        Every file of yours it replaces is MOVED into GAMMA\.slopray\backup
+#        Every file of yours it replaces is MOVED into <game folder>\.slopray\backup
 #        first (never deleted, never overwritten). The first backup of a file
 #        is kept forever, so updates never lose your real original.
 #     4. unpacks the MO2 mods + the add-ons your mod list needs
@@ -15,11 +15,11 @@
 #     6. adds "Anomaly (DX12 + Frame Gen)" to MO2's launch dropdown
 #     7. RTX 20/30/40 only: installs OptiScaler (STEP 6) with its built-in
 #        frame gen unlock, so DLSS 2x/3x/4x shows up in the game menu
-#     8. first install only: sets MSAA off, VSync off, upscaler on (DLSS on
+#     8. every run: MSAA off (the upscaler needs it). first install only: VSync off, upscaler on (DLSS on
 #        RTX, FSR otherwise), frame gen on for RTX 40/50
 #     9. moves the shader cache aside (not deleted)
 #    10. puts "UNINSTALL - Slop-Ray Engine.bat" in your GAMMA folder
-#  Everything it does is written to GAMMA\.slopray\record.json, so the
+#  Everything it does is written to <game folder>\.slopray\record.json, so the
 #  uninstaller can put your files back. If it fails or is stopped part-way,
 #  it undoes what it did (or offers to on the next run).
 #  Never touches the internet, never writes outside your STALKER folder.
@@ -554,7 +554,8 @@ if (-not (Test-Path -LiteralPath $ini)) {
 # --- 9. video settings ---------------------------------------------------
 # frame gen on by default only where it is native (RTX 40/50); RTX 20/30 can pick it
 # in the menu through the unlock, but it may cost FPS there, so they opt in.
-# Set on the first install only: a re-run never undoes your own choices.
+# Set on the first install only: a re-run never undoes your own choices
+# (except MSAA, which must stay off and is checked on every run, below).
 $want = [ordered]@{
     'r3_msaa'            = 'st_opt_off'
     'rs_v_sync'          = 'off'
@@ -565,8 +566,17 @@ $ltx = "$anomaly\appdata\user.ltx"
 $ltxRel = 'Anomaly\appdata\user.ltx'
 $ltxSet = [ordered]@{}
 if (Test-Path -LiteralPath $ltx) {
+    $ltxNow = [IO.File]::ReadAllLines($ltx)
     foreach ($k in $want.Keys) {
+        # MSAA is not a preference (the upscaler and the night vision shaders break with it):
+        # it is put back off on every run. The other settings are set once.
         $e = $(if ($sr.Record) { $sr.Record.keys["$ltxRel|$k"] } else { $null })
+        if ($k -eq 'r3_msaa') {
+            $cur = $ltxNow | Where-Object { $_ -match '^r3_msaa\s' } | Select-Object -First 1
+            # also when it is already off but not recorded yet, so the uninstaller knows the original line
+            if ("$cur".Trim() -ne "r3_msaa $($want[$k])" -or -not ($e -and $null -ne $e.written)) { $ltxSet[$k] = $want[$k] }
+            continue
+        }
         if ($e -and $null -ne $e.written) { continue }
         $ltxSet[$k] = $want[$k]
     }
@@ -598,7 +608,7 @@ foreach ($p in $place) {
     if (-not (Test-Path -LiteralPath $d)) { $newN++ } elseif ((Get-Sha $d) -eq (Get-Sha $p.Src)) { $sameN++ } else { $replaceN++ }
 }
 Say "  game folder : $root"
-Say "  engine files: $newN new, $replaceN replaced (yours are moved to GAMMA\.slopray\backup first), $sameN already up to date"
+Say "  engine files: $newN new, $replaceN replaced (yours are moved to $root\.slopray\backup first), $sameN already up to date"
 Say "  MO2 mods    : $($installed -join ', ')"
 if ($leftovers.Count) { Say "  removing old Slop-Ray mods: $($leftovers -join ', ')" }
 if ($modlist) {
@@ -772,10 +782,18 @@ try {
     foreach ($f in 'SlopRay.psm1', 'uninstall.ps1', 'cleanup_backups.ps1', 'catalogue.json', 'UNINSTALL - Slop-Ray Engine.bat', 'CLEAN UP BACKUPS - Slop-Ray Engine.bat') {
         if (Test-Path -LiteralPath "$pack\$f") { Copy-Item -LiteralPath "$pack\$f" "$tool\$f" -Force }
     }
-    foreach ($b in 'UNINSTALL - Slop-Ray Engine.bat', 'CLEAN UP BACKUPS - Slop-Ray Engine.bat') {
-        if (Test-Path -LiteralPath "$pack\$b") { Put $b "$pack\$b" -Keep }
+    # a game on a drive root (C:\GAMMA): Windows lets a normal user make folders there, not files.
+    # The same two .bat files are in .slopray\tool, so the root copies are skipped then.
+    $rootTest = "$root\.sr-write-test"
+    $rootWritable = try { [IO.File]::WriteAllText($rootTest, ''); [IO.File]::Delete($rootTest); $true } catch { $false }
+    if ($rootWritable) {
+        foreach ($b in 'UNINSTALL - Slop-Ray Engine.bat', 'CLEAN UP BACKUPS - Slop-Ray Engine.bat') {
+            if (Test-Path -LiteralPath "$pack\$b") { Put $b "$pack\$b" -Keep }
+        }
+        Good "'UNINSTALL - Slop-Ray Engine.bat' is in $root"
+    } else {
+        Good "'UNINSTALL - Slop-Ray Engine.bat' is in $tool (Windows does not allow new files in $root)"
     }
-    Good "'UNINSTALL - Slop-Ray Engine.bat' is in $root"
 
     Head "Checking the install"
     $bad = 0
