@@ -228,10 +228,16 @@ void CRenderTarget::phase_ssfx_taa()
 	RCache.set_Element(s_ssfx_taa->E[2]);
 	
 	// The scope view may run TAA while ssfx_taa is off (r__svp_taa under an upscaler); its
-	// enable component must still read as on for the resolve.
+	// enable component must still read as on for the resolve. The scope view is drawn without
+	// jitter, and its sharpening is r__svp_sharpen, so jitter (y) and sharpness (z) are 0 there.
 	Fvector4 taa_setup = ps_ssfx_taa;
-	if (Device.true_pip_on && Device.m_SecondViewport.m_render_pass_is_svp && taa_setup.x <= 0.f)
-		taa_setup.x = 1.f;
+	if (Device.true_pip_on && Device.m_SecondViewport.m_render_pass_is_svp)
+	{
+		if (taa_setup.x <= 0.f)
+			taa_setup.x = 1.f;
+		taa_setup.y = 0.f;
+		taa_setup.z = 0.f;
+	}
 	RCache.set_c("taa_setup", taa_setup);
 
 	RCache.set_Geometry(g_combine);
