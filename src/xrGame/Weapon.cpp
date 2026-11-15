@@ -1247,7 +1247,8 @@ BOOL CWeapon::net_Spawn(CSE_Abstract* DC)
 	SetState(E->wpn_state);
 	SetNextState(E->wpn_state);
 
-    if (!m_ammoTypes[m_ammoType].c_str())
+    // the saved index may be past ammo_class: a mod shortened the list or a script set a wrong type
+    if (m_ammoType >= m_ammoTypes.size() || !m_ammoTypes[m_ammoType].c_str())
     {
         Msg("![%s] ERROR: CWeapon::net_Spawn: m_ammoTypes[m_ammoType] is invalid, m_ammoTypes.size %d, m_ammoType %d", Name(), m_ammoTypes.size(), m_ammoType);
         m_ammoType = 0;
