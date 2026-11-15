@@ -157,6 +157,8 @@ public:
 		xrCriticalSectionGuard guard(csUi);
 		return m_ChildWndList.size();
 	}
+	// Detaches the children a script attached (m_attached_by_script) into out without destroying them
+	void DetachScriptChildren(xr_vector<CUIWindow*>& out);
 
 	void SetParent(CUIWindow* pNewParent);
 	CUIWindow* GetParent() const { return m_pParentWnd; }
@@ -415,6 +417,11 @@ protected:
 	//флаг автоматического удаления во время вызова деструктора
 	bool m_bAutoDelete;
 
+public:
+	// attached by a script (xml:Init* with a parent, AttachChild): the script may keep it after the parent is rebuilt
+	bool m_attached_by_script = false;
+
+protected:
 	bool m_bPP;
 	bool m_bIsEnabled;
 
