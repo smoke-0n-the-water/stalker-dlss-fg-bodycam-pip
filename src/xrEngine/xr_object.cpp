@@ -52,7 +52,11 @@ void CObject::MakeMeCrow()
 
 	VERIFY(dwFrame_AsCrow == device_frame_id);
 
-	Props.crow = 1;
+	// The render marks it while other threads may write the other bits of this word (an NPC's item activated in its
+	// inventory): a plain bitfield store would write back their old values
+	ObjectProperties crow = {};
+	crow.crow = 1;
+	_InterlockedOr(reinterpret_cast<volatile long*>(&Props.storage), long(crow.storage));
 	g_pGameLevel->Objects.o_crow(this);
 }
 
