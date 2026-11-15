@@ -26,6 +26,7 @@ public:
 	NET_Buffer B;
 	u32 r_pos;
 	u32 timeReceive;
+	bool w_overflow = false; // a write did not fit: the writer rolls its record back
 public:
 	NET_Packet() = default;
 
@@ -33,18 +34,25 @@ public:
 	IC void write_start()
 	{
 		B.count = 0;
+		w_overflow = false;
 	}
 
 	IC void w_begin(u16 type)
 	{
 		B.count = 0;
+		w_overflow = false;
 		w(&type, sizeof(u16));
 	}
 
 	IC void w(const void* p, u32 count)
 	{
 		VERIFY(p && count);
-		VERIFY(B.count + count < NET_PacketSizeLimit);
+		// Past the buffer lie its count and then anything: an object's save with big mod data wrote there in release.
+		if (count > NET_PacketSizeLimit - B.count)
+		{
+			w_overflow = true;
+			return;
+		}
 		CopyMemory(&B.data[B.count], p, count);
 		B.count += count;
 		VERIFY(B.count < NET_PacketSizeLimit);
