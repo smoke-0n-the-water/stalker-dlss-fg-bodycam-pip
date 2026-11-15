@@ -271,7 +271,7 @@ CSE_Abstract* CALifeSimulator__spawn_item2(CALifeSimulator* self, LPCSTR section
 
 	CSE_Abstract* item = self->spawn_item(section, position, level_vertex_id, game_vertex_id, id_parent, false);
 	item->Spawn_Write(packet,FALSE);
-	self->server().FreeID(item->ID, 0);
+	self->server().FreeID(item->ID, Device.TimerAsync());
 	F_entity_Destroy(item);
 
 	ClientID clientID;
@@ -390,7 +390,7 @@ CSE_Abstract* CALifeSimulator__spawn_ammo(CALifeSimulator* self, LPCSTR section,
 	ammo->a_elapsed = (u16)ammo_to_spawn;
 
 	item->Spawn_Write(packet,FALSE);
-	self->server().FreeID(item->ID, 0);
+	self->server().FreeID(item->ID, Device.TimerAsync());
 	F_entity_Destroy(item);
 
 	ClientID clientID;
@@ -533,7 +533,7 @@ CSE_Abstract* reprocess_spawn(CALifeSimulator* self, CSE_Abstract* object)
 	packet.w_stringZ(object->s_name);
 
 	object->Spawn_Write(packet, FALSE);
-	self->server().FreeID(object->ID, 0);
+	self->server().FreeID(object->ID, Device.TimerAsync());
 	F_entity_Destroy(object);
 
 	ClientID clientID;
