@@ -250,6 +250,7 @@ u32 CLevel::Objects_net_Save(NET_Packet* _Packet, u32 start, u32 max_object_size
 		//		Msg			("save:iterating:%d:%s, size[%d]",P->ID(),*P->cName(), Packet.w_tell() );
 		if (P && !P->getDestroy() && P->net_SaveRelevant())
 		{
+			const u32 record = Packet.w_tell();
 			Packet.w_u16(u16(P->ID()));
 			Packet.w_chunk_open16(position);
 			//			Msg						("save:saving:%d:%s",P->ID(),*P->cName());
@@ -263,7 +264,17 @@ u32 CLevel::Objects_net_Save(NET_Packet* _Packet, u32 start, u32 max_object_size
 			}
 #endif
 			Packet.w_chunk_close16(position);
-			//			if (0==(--count))		
+			if (Packet.w_overflow)
+			{
+				Packet.B.count = record;
+				Packet.w_overflow = false;
+				if (record > sizeof(u16))
+					return start; // first in the next packet
+				Msg("! [save] %s [%u]: more save data than a net packet holds (%u bytes), its client data is not saved",
+					*P->cName(), P->ID(), NET_PacketSizeLimit);
+				continue;
+			}
+			//			if (0==(--count))
 			//				break;
 			if (max_object_size >= (NET_PacketSizeLimit - Packet.w_tell()))
 				break;
