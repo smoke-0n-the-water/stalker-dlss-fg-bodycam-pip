@@ -530,6 +530,10 @@ Fvector CObject::get_last_local_point_on_mesh(Fvector const& local_point, u16 co
 {
 	VERIFY(bone_id == u16(-1));
 
+	// An item whose section has no cform line (FDDA items_anm_dummy, device_flare) has no collision form: nothing to aim at
+	if (!CFORM())
+		return Position();
+
 	Fvector result;
 	// Fetch data
 	Fmatrix mE;
