@@ -532,6 +532,7 @@ void CInifile::LTXLoad (
 	static shared_str DLTX_DELETE = "DLTX_DELETE";
 	Sect* CurrentBase = 0;
 	Sect* CurrentOverride = 0;
+	shared_str itemFilename; // one per file: building it per line took a stream split and three string copies
 	MezzStringBuffer str;
 	MezzStringBuffer str2;
 
@@ -919,8 +920,9 @@ void CInifile::LTXLoad (
 			}
 			I.second = bIsDelete ? DLTX_DELETE.c_str() : (str2[0] ? str2.GetBuffer() : NULL);
 
-			auto fname = toLowerCaseCopy(trimCopy(getFilename(std::string(currentFileName))));
-			I.filename = fname.c_str();
+			if (!itemFilename)
+				itemFilename = toLowerCaseCopy(trimCopy(getFilename(std::string(currentFileName)))).c_str();
+			I.filename = itemFilename;
 			I.depth = depth;
 
 			if (*I.first || *I.second)
