@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "../xrCore/engine_error_logger.h"
 #include "igame_level.h"
 #include "igame_persistent.h"
 
@@ -130,7 +131,10 @@ void CObjectList::SingleUpdate(CObject* O)
 
 	// Msg ("[%d][0x%08x]IAmNotACrowAnyMore (CObjectList::SingleUpdate)", Device.dwFrame, fast_dynamic_cast<void*>(O));
 
-	O->UpdateCL();
+	{
+		const EngineErrorLogger::ObjectScope diagnostic_object("UpdateCL", O, &CObject::describe_for_log);
+		O->UpdateCL();
+	}
 #ifdef DEBUG
 	VERIFY3(O->dbg_update_cl == Device.dwFrame, "Broken sequence of calls to 'UpdateCL'", *O->cName());
 #endif
@@ -312,7 +316,10 @@ void CObjectList::ProcessDestroyQueueImpl(Objects& queue)
                 Msg("Destroying object[%x][%x] [%d][%s] frame[%d]", fast_dynamic_cast<void*>(obj), obj, obj->ID(), *obj->cName(), Device.dwFrame);
 #endif // DEBUG
 
-            obj->net_Destroy();
+            {
+                const EngineErrorLogger::ObjectScope diagnostic_object("net_Destroy", obj, &CObject::describe_for_log);
+                obj->net_Destroy();
+            }
             Destroy(obj);
         }
 
@@ -463,7 +470,10 @@ void CObjectList::Unload()
         if (debug_destroy)
             Msg("Destroying object [%d][%s]", O->ID(), *O->cName());
 #endif
-		O->net_Destroy();
+		{
+			const EngineErrorLogger::ObjectScope diagnostic_object("net_Destroy", O, &CObject::describe_for_log);
+			O->net_Destroy();
+		}
 		Destroy(O);
 	}
 	while (objects_active.size())
@@ -476,7 +486,10 @@ void CObjectList::Unload()
         if (debug_destroy)
             Msg("Destroying object [%d][%s]", O->ID(), *O->cName());
 #endif
-		O->net_Destroy();
+		{
+			const EngineErrorLogger::ObjectScope diagnostic_object("net_Destroy", O, &CObject::describe_for_log);
+			O->net_Destroy();
+		}
 		Destroy(O);
 	}
 

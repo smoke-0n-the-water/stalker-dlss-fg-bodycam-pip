@@ -530,6 +530,14 @@ Fvector CObject::get_new_local_point_on_mesh(u16& bone_id) const
 	return Fvector().random_dir().mul(.7f);
 }
 
+void CObject::describe_for_log(const void* object, char* output, size_t capacity)
+{
+	const CObject* O = static_cast<const CObject*>(object);
+	LPCSTR name = O->NameObject.c_str(), section = O->NameSection.c_str();
+	_snprintf_s(output, capacity, _TRUNCATE, "%s [%s] id %u", name ? name : "<no name>", section ? section : "<no section>",
+		u32(O->ID()));
+}
+
 Fvector CObject::get_last_local_point_on_mesh(Fvector const& local_point, u16 const bone_id) const
 {
 	VERIFY(bone_id == u16(-1));

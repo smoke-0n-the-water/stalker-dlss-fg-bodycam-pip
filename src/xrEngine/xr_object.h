@@ -347,6 +347,8 @@ public:
 
 public:
 	virtual Fvector get_new_local_point_on_mesh(u16& bone_id) const;
+	// EngineErrorLogger::ObjectDescriber: "name [section] id N" from the fields, no shared_str copies (read across threads)
+	static void describe_for_log(const void* object, char* output, size_t capacity);
 	virtual Fvector get_last_local_point_on_mesh(Fvector const& last_point, u16 bone_id) const;
 
 #ifdef CBULLETMANAGER_EX
