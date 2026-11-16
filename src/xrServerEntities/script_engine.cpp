@@ -2444,9 +2444,79 @@ namespace
 {
 constexpr LPCSTR kQuarkAlifeObjectFallbackRegistryKey = "QUARK_ENGINE.alife_object_fallback";
 
+// str_explode of _G.script, for a separator that is plain text. Mods call it for every line of their configs, on a save too.
+// Anything else (a pattern, numbers, wrong arguments) goes to the script version in the upvalue.
+int quark_str_explode(lua_State* L)
+{
+	size_t length = 0, separator_length = 0;
+	const char* text = lua_type(L, 1) == LUA_TSTRING ? lua_tolstring(L, 1, &length) : nullptr;
+	const char* separator = lua_type(L, 2) == LUA_TSTRING ? lua_tolstring(L, 2, &separator_length) : nullptr;
+	bool plain = text && separator && separator_length && strlen(separator) == separator_length;
+	if (plain && !lua_toboolean(L, 3))
+		plain = !strpbrk(separator, "^$()%.[]*+-?");
+	if (!plain)
+	{
+		lua_pushvalue(L, lua_upvalueindex(1));
+		lua_insert(L, 1);
+		lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
+		return lua_gettop(L);
+	}
+
+	const char* const end = text + length;
+	const auto find_separator = [&](const char* from) -> const char*
+	{
+		for (const char* at = from; size_t(end - at) >= separator_length; ++at)
+		{
+			at = static_cast<const char*>(memchr(at, separator[0], end - at));
+			if (!at || size_t(end - at) < separator_length)
+				return nullptr;
+			if (!memcmp(at, separator, separator_length))
+				return at;
+		}
+		return nullptr;
+	};
+
+	int parts = 1;
+	for (const char* at = find_separator(text); at; at = find_separator(at + separator_length))
+		++parts;
+
+	lua_createtable(L, parts, 0);
+	if (parts == 1)
+	{
+		lua_pushvalue(L, 1); // not trimmed, as in the script
+		lua_rawseti(L, -2, 1);
+		return 1;
+	}
+
+	const auto is_space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
+	const char* from = text;
+	for (int part = 1; part <= parts; ++part)
+	{
+		const char* const at = part < parts ? find_separator(from) : end;
+		const char* first = from;
+		const char* last = at;
+		while (first < last && is_space(*first))
+			++first;
+		while (last > first && is_space(last[-1]))
+			--last;
+		lua_pushlstring(L, first, last - first);
+		lua_rawseti(L, -2, part);
+		from = at + separator_length;
+	}
+	return 1;
+}
+
 void install_quark_hot_global_fast_paths(lua_State* L)
 {
 	const int stack_top = lua_gettop(L);
+
+	lua_getglobal(L, "str_explode");
+	if (lua_isfunction(L, -1) && !lua_iscfunction(L, -1))
+	{
+		lua_pushcclosure(L, &quark_str_explode, 1);
+		lua_setglobal(L, "str_explode");
+	}
+	lua_settop(L, stack_top);
 
 	// _G.script owns the public compatibility wrapper. Preserve it in the Lua
 	// registry so the native fast path can delegate every non-hot/invalid case
