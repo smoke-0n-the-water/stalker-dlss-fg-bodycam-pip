@@ -95,19 +95,19 @@ if ($busy) {
     }
 } else { Good "closed" }
 
-# --- 1b. CPU: the DX12 exe is built for AVX2 -----------------------------
-Head "Checking CPU (DX12 exe needs AVX2)"
-$avx2 = $null
+# --- 1b. CPU: the DX12 exe is built for AVX (not AVX2) --------------------
+Head "Checking CPU (DX12 exe needs AVX)"
+$avx = $null
 try {
     Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(uint f);' -Name K -Namespace GammaCpu -ErrorAction Stop
-    $avx2 = [GammaCpu.K]::IsProcessorFeaturePresent(40)   # PF_AVX2_INSTRUCTIONS_AVAILABLE
+    $avx = [GammaCpu.K]::IsProcessorFeaturePresent(39)   # PF_AVX_INSTRUCTIONS_AVAILABLE
 } catch { }
-if ($avx2 -eq $true) { Good "AVX2 supported" }
-elseif ($avx2 -eq $false) {
-    Warn "your CPU has NO AVX2. 'Anomaly (DX12 + Frame Gen)' will crash at start."
+if ($avx -eq $true) { Good "AVX supported" }
+elseif ($avx -eq $false) {
+    Warn "your CPU has NO AVX. 'Anomaly (DX12 + Frame Gen)' will crash at start."
     Warn "use the normal DX11 entry instead (no frame gen). See README: HARD REQUIREMENT."
-    $todo.Add("Your CPU has no AVX2: launch the normal DX11 entry, NOT 'Anomaly (DX12 + Frame Gen)'")
-} else { Warn "could not check AVX2 - see README: HARD REQUIREMENT" }
+    $todo.Add("Your CPU has no AVX: launch the normal DX11 entry, NOT 'Anomaly (DX12 + Frame Gen)'")
+} else { Warn "could not check AVX - see README: HARD REQUIREMENT" }
 
 # --- 2. find the game ----------------------------------------------------
 Head "Finding your STALKER GAMMA folder"
