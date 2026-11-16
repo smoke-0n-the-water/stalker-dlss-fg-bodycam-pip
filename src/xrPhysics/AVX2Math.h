@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 
-// SIMD helpers local to xrPhysics. The project is built with /arch:AVX2.
+// SIMD helpers local to xrPhysics. AVX only (no AVX2): the DX11-AVX build runs them too.
 // Unaligned loads/stores are intentional: ODE and X-Ray math objects are not
 // guaranteed to start on a 32-byte boundary.
 namespace xr_physics_simd
@@ -102,9 +102,9 @@ namespace xr_physics_simd
 
         constexpr int vertex_stride = static_cast<int>(sizeof(Vector) / sizeof(float));
 
-#if !defined(__AVX2__)
-        // AVX-only build (AnomalyDX11AVX): no AVX2 gathers, so the same tests one
-        // triangle at a time, in the same operation order as the AVX2 path below.
+#if !defined(__AVX__)
+        // No AVX at all: the same tests one triangle at a time, in the same
+        // operation order as the AVX path below.
         const float* scalar_vertices = reinterpret_cast<const float*>(vertex_array);
         std::uint32_t mask = 0;
         for (int lane = 0; lane < 8; ++lane)
@@ -149,52 +149,31 @@ namespace xr_physics_simd
         const Triangle& t6 = triangle_array[triangle_ids[6]];
         const Triangle& t7 = triangle_array[triangle_ids[7]];
 
-#define XR_PHYSICS_VERTEX_INDICES(corner) \
-        _mm256_setr_epi32( \
-            static_cast<int>(t0.verts[corner]) * vertex_stride, \
-            static_cast<int>(t1.verts[corner]) * vertex_stride, \
-            static_cast<int>(t2.verts[corner]) * vertex_stride, \
-            static_cast<int>(t3.verts[corner]) * vertex_stride, \
-            static_cast<int>(t4.verts[corner]) * vertex_stride, \
-            static_cast<int>(t5.verts[corner]) * vertex_stride, \
-            static_cast<int>(t6.verts[corner]) * vertex_stride, \
-            static_cast<int>(t7.verts[corner]) * vertex_stride)
-
-        const __m256i vertex0_indices = XR_PHYSICS_VERTEX_INDICES(0);
-        const __m256i vertex1_indices = XR_PHYSICS_VERTEX_INDICES(1);
-        const __m256i vertex2_indices = XR_PHYSICS_VERTEX_INDICES(2);
-#undef XR_PHYSICS_VERTEX_INDICES
-
         const float* vertices = reinterpret_cast<const float*>(vertex_array);
-        const __m256i component_y = _mm256_set1_epi32(1);
-        const __m256i component_z = _mm256_set1_epi32(2);
+        const auto component = [&](const int corner, const int axis)
+        {
+            return _mm256_setr_ps(
+                vertices[static_cast<int>(t0.verts[corner]) * vertex_stride + axis],
+                vertices[static_cast<int>(t1.verts[corner]) * vertex_stride + axis],
+                vertices[static_cast<int>(t2.verts[corner]) * vertex_stride + axis],
+                vertices[static_cast<int>(t3.verts[corner]) * vertex_stride + axis],
+                vertices[static_cast<int>(t4.verts[corner]) * vertex_stride + axis],
+                vertices[static_cast<int>(t5.verts[corner]) * vertex_stride + axis],
+                vertices[static_cast<int>(t6.verts[corner]) * vertex_stride + axis],
+                vertices[static_cast<int>(t7.verts[corner]) * vertex_stride + axis]);
+        };
 
-        const __m256 v0x = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, vertex0_indices, sizeof(float)), _mm256_set1_ps(center[0]));
-        const __m256 v0y = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, _mm256_add_epi32(vertex0_indices, component_y), sizeof(float)),
-            _mm256_set1_ps(center[1]));
-        const __m256 v0z = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, _mm256_add_epi32(vertex0_indices, component_z), sizeof(float)),
-            _mm256_set1_ps(center[2]));
+        const __m256 v0x = _mm256_sub_ps(component(0, 0), _mm256_set1_ps(center[0]));
+        const __m256 v0y = _mm256_sub_ps(component(0, 1), _mm256_set1_ps(center[1]));
+        const __m256 v0z = _mm256_sub_ps(component(0, 2), _mm256_set1_ps(center[2]));
 
-        const __m256 v1x = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, vertex1_indices, sizeof(float)), _mm256_set1_ps(center[0]));
-        const __m256 v1y = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, _mm256_add_epi32(vertex1_indices, component_y), sizeof(float)),
-            _mm256_set1_ps(center[1]));
-        const __m256 v1z = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, _mm256_add_epi32(vertex1_indices, component_z), sizeof(float)),
-            _mm256_set1_ps(center[2]));
+        const __m256 v1x = _mm256_sub_ps(component(1, 0), _mm256_set1_ps(center[0]));
+        const __m256 v1y = _mm256_sub_ps(component(1, 1), _mm256_set1_ps(center[1]));
+        const __m256 v1z = _mm256_sub_ps(component(1, 2), _mm256_set1_ps(center[2]));
 
-        const __m256 v2x = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, vertex2_indices, sizeof(float)), _mm256_set1_ps(center[0]));
-        const __m256 v2y = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, _mm256_add_epi32(vertex2_indices, component_y), sizeof(float)),
-            _mm256_set1_ps(center[1]));
-        const __m256 v2z = _mm256_sub_ps(
-            _mm256_i32gather_ps(vertices, _mm256_add_epi32(vertex2_indices, component_z), sizeof(float)),
-            _mm256_set1_ps(center[2]));
+        const __m256 v2x = _mm256_sub_ps(component(2, 0), _mm256_set1_ps(center[0]));
+        const __m256 v2y = _mm256_sub_ps(component(2, 1), _mm256_set1_ps(center[1]));
+        const __m256 v2z = _mm256_sub_ps(component(2, 2), _mm256_set1_ps(center[2]));
 
         const __m256 extent_x = _mm256_set1_ps(extents[0]);
         const __m256 extent_y = _mm256_set1_ps(extents[1]);
