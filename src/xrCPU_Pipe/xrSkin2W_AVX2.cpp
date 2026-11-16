@@ -11,6 +11,17 @@ namespace
 static_assert(sizeof(Fvector) == 12, "Unexpected Fvector layout");
 static_assert(sizeof(Fmatrix) == 64, "Unexpected Fmatrix layout");
 static_assert(sizeof(vertRender) == 32, "AVX2 output store requires a 32-byte vertRender");
+
+// a * b + c. FMA on the AVX2 build (DX12); multiply and add on the AVX-only build (DX11-AVX), whose CPUs may
+// lack FMA (Sandy Bridge, Ivy Bridge): these routines are bound without a CPU check.
+__forceinline __m256 multiply_add(const __m256 a, const __m256 b, const __m256 c)
+{
+#if defined(__AVX2__)
+    return _mm256_fmadd_ps(a, b, c);
+#else
+    return _mm256_add_ps(_mm256_mul_ps(a, b), c);
+#endif
+}
 static_assert(sizeof(vertBoned1W) == 60, "Unexpected vertBoned1W layout");
 static_assert(sizeof(vertBoned2W) == 64, "Unexpected vertBoned2W layout");
 static_assert(sizeof(vertBoned3W) == 70, "Unexpected vertBoned3W layout");
@@ -47,9 +58,9 @@ __forceinline __m256 transform_position_normal(const __m256 positionNormal, cons
     const __m256 row3 = _mm256_broadcast_ps(reinterpret_cast<const __m128*>(&matrix._41));
 
     __m256 result = _mm256_mul_ps(x, row0);
-    result = _mm256_fmadd_ps(y, row1, result);
-    result = _mm256_fmadd_ps(z, row2, result);
-    return _mm256_fmadd_ps(w, row3, result);
+    result = multiply_add(y, row1, result);
+    result = multiply_add(z, row2, result);
+    return multiply_add(w, row3, result);
 }
 
 template <typename TVertex>
@@ -148,7 +159,7 @@ void __stdcall xrSkin2W_AVX2(vertRender* D, vertBoned2W* S, u32 vCount, CBoneIns
         {
             const __m256 transformed1 = transform_position_normal(positionNormal, bones[vertex.matrix1].mRenderTransform);
             const __m256 weight = _mm256_set1_ps(vertex.w);
-            transformed = _mm256_fmadd_ps(_mm256_sub_ps(transformed1, transformed), weight, transformed);
+            transformed = multiply_add(_mm256_sub_ps(transformed1, transformed), weight, transformed);
         }
 
         const __m256 output = pack_render_vertex(transformed, load_uv(vertex));
@@ -182,8 +193,8 @@ void __stdcall xrSkin3W_AVX2(vertRender* D, vertBoned3W* S, u32 vCount, CBoneIns
         // T2 + w0 * (T0 - T2) + w1 * (T1 - T2).
         // This removes one weight broadcast and one vector multiply.
         __m256 transformed = transformed2;
-        transformed = _mm256_fmadd_ps(_mm256_sub_ps(transformed0, transformed2), _mm256_set1_ps(w0), transformed);
-        transformed = _mm256_fmadd_ps(_mm256_sub_ps(transformed1, transformed2), _mm256_set1_ps(w1), transformed);
+        transformed = multiply_add(_mm256_sub_ps(transformed0, transformed2), _mm256_set1_ps(w0), transformed);
+        transformed = multiply_add(_mm256_sub_ps(transformed1, transformed2), _mm256_set1_ps(w1), transformed);
 
         const __m256 output = pack_render_vertex(transformed, load_uv(vertex));
         store_render_vertex(destination + i, output, streaming);
@@ -218,9 +229,9 @@ void __stdcall xrSkin4W_AVX2(vertRender* D, vertBoned4W* S, u32 vCount, CBoneIns
         // T3 + sum(wi * (Ti - T3), i=0..2).
         // This removes the derived fourth weight, one broadcast and one multiply.
         __m256 transformed = transformed3;
-        transformed = _mm256_fmadd_ps(_mm256_sub_ps(transformed0, transformed3), _mm256_set1_ps(w0), transformed);
-        transformed = _mm256_fmadd_ps(_mm256_sub_ps(transformed1, transformed3), _mm256_set1_ps(w1), transformed);
-        transformed = _mm256_fmadd_ps(_mm256_sub_ps(transformed2, transformed3), _mm256_set1_ps(w2), transformed);
+        transformed = multiply_add(_mm256_sub_ps(transformed0, transformed3), _mm256_set1_ps(w0), transformed);
+        transformed = multiply_add(_mm256_sub_ps(transformed1, transformed3), _mm256_set1_ps(w1), transformed);
+        transformed = multiply_add(_mm256_sub_ps(transformed2, transformed3), _mm256_set1_ps(w2), transformed);
 
         const __m256 output = pack_render_vertex(transformed, load_uv(vertex));
         store_render_vertex(destination + i, output, streaming);
