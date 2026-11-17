@@ -568,6 +568,11 @@ void CRenderTarget::draw_scope(ref_shader se, std::function<void()> bind, bool o
 				DEV->QueueTextureLoad(ref_texture(tex));
 			tex->dwLastUsedFrame = Device.dwFrame;
 			tex->dwLastUsedTime = Device.dwTimeGlobal;
+			// residency never touches a lens texture from here on; one demoted before its first
+			// aim goes back to full detail (surface_get never promotes, only Apply does)
+			tex->ResPinned = true;
+			if (tex->RequestedLod && tex->flags.bLoaded && !tex->swapQueued.load(std::memory_order_relaxed))
+				DEV->QueueTextureSwap(ref_texture(tex), 0);
 			// surface_get AddRefs (and services staging), release the ref once the alias holds its own
 			ID3DBaseTexture* s = tex->surface_get();
 			t_reticle->surface_set(s);

@@ -54,6 +54,9 @@ public:
     u32 dwPromotedTime = 0; // Device.dwTimeGlobal when a swap last raised detail; starts the class hold
     u32 dwDemotedTime = 0;  // when a swap last lowered detail; a promote soon after it counts as thrash
     bool PendingDemote = false; // the queued swap lowers detail (counts against r__tex_res_demotes_inflight)
+    // Never demoted, unloaded or trimmed by residency. Set by the PiP scope pass on every lens texture
+    // it samples through surface_get() (no Apply(), so a demote there would never promote back).
+    bool ResPinned = false;
 #endif
     bool IsLoading() const {
 #if defined(USE_DX10) || defined(USE_DX11)
