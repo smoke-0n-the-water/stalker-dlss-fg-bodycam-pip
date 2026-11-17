@@ -161,7 +161,7 @@ float ps_r__svp_sharpen_falloff = 0.0f; // svp sharpen radial falloff toward the
 float ps_r__svp_sharpen_inner = 0.0f; // svp sharpen inner crisp-zone radius before the falloff starts (0 = from center)
 // Scope Resolution: the scope image size as a share of the lens's on-screen (display) size, chosen
 // apart from the main upscaler. same = the older sizing (render-size base, r__svp_adaptive_res,
-// r__svp_supersample); any other value replaces those three.
+// r__svp_supersample); any other value replaces the first two and is multiplied by r__svp_supersample.
 u32 ps_r__svp_scope_res = 0;
 xr_token svp_scope_res_token[] = {
 	{"same", 0}, {"performance", 1}, {"balanced", 2}, {"quality", 3}, {"native", 4}, {nullptr, 0}};

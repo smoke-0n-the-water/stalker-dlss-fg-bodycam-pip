@@ -34,12 +34,17 @@ inline unsigned RenderExtent(const TargetSettings& settings, const TargetFrame& 
 {
 	// Scope Resolution sizes from the lens as shown, not from the render-size composite: the upscaler
 	// reconstructs the lens, so detail above render size still reaches the screen. It replaces the
-	// adaptive margin and the supersample factor. Flat windows keep their panel sizing.
+	// adaptive margin. Flat windows keep their panel sizing. r__svp_supersample renders it larger than
+	// the lens on screen (SSAA): the lens shader averages the texels each screen pixel covers, so thin
+	// foliage stays stable while the magnified view moves, with no temporal blur. The cap grows with it.
 	if (!settings.upscale && !settings.flatWindow && settings.scopeResolution > 0.f && frame.displayDisc > 1.0f)
 	{
-		unsigned want = unsigned(frame.displayDisc * settings.scopeResolution) & ~1u;
+		float ss = settings.supersample;
+		if (ss < 1.0f) ss = 1.0f;
+		if (ss > 2.0f) ss = 2.0f;
+		unsigned want = unsigned(frame.displayDisc * settings.scopeResolution * ss) & ~1u;
 		if (want < 256) want = 256;
-		const unsigned cap = frame.displayCap & ~1u;
+		const unsigned cap = unsigned(frame.displayCap * ss) & ~1u;
 		if (cap >= 256 && want > cap) want = cap;
 		return want;
 	}
