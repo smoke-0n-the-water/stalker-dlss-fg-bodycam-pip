@@ -8,7 +8,23 @@ outside the player's GAMMA folder.
 
 **Install:** double-click `INSTALL - double-click me.bat` in the pack folder.
 It finds GAMMA, checks everything, shows what it will do, and asks once.
-Nothing is changed before you answer Y.
+Nothing is changed before you answer Y. The first lines show the pack
+version and the installer's SHA-256 (the release notes list the same, so you
+can tell an old zip from the current one).
+
+**More than one GAMMA, or the wrong one found?** The installer lists every
+install it finds and asks which one. To skip the search, use
+`INSTALL - choose folder.bat` and paste the folder that has `Anomaly` and
+`GAMMA` in it (or either of those two). Anomaly and the GAMMA (MO2) folder in
+different places also works: give it the GAMMA folder, MO2's own game path
+leads to Anomaly.
+
+**Before installing it warns about** things only you can decide on, and
+changes none of them: mods with old bodycam/PiP shaders (`svp_*`), night
+vision mods other than Beef's / Better Beef's, and loose shader files in
+`Anomaly\gamedata\shaders`. One exception: when G.A.M.M.A.'s
+`453- Items Model Drop` and another mod define the same Model Drop sections
+(the game stops at start), 453 is unticked; the uninstaller ticks it again.
 
 **Uninstall:** double-click `UNINSTALL - Slop-Ray Engine.bat`. The installer
 puts a copy in your GAMMA folder, so you don't need the pack any more. It
@@ -97,10 +113,20 @@ runtimes, `nvngx_dlss.dll`).
 the drive's serial number. A `.slopray` folder copied along with the game to
 another place is refused.
 
+**Anomaly and MO2 in different folders** (e.g. `E:\Anomaly` + `E:\GAMMA\GAMMA RC3`):
+the record keeps the same logical paths (`Anomaly\...`, `GAMMA\...`) and names
+both real folders; `.slopray` and the uninstaller then sit in the Anomaly folder.
+
+**The final check** re-hashes every file this run placed (not files from an
+earlier run that this one did not touch), names any that are missing or
+different, and looks again after 2 seconds before giving up and undoing the run.
+
 ## Switches
 
 `install.ps1`: `-DryRun` (show the plan, change nothing), `-Dlss5`,
-`-GamePath "<folder>"`, `-Yes` (don't ask), `-GpuName` (testing).
+`-GamePath "<folder>"` (the folder with Anomaly + GAMMA, or either of them),
+`-AskPath` (don't search, ask), `-Yes` (don't ask; more than one install
+found is then an error), `-GpuName` (testing).
 `uninstall.ps1`: `-DryRun`, `-GamePath`, `-Yes`. `cleanup_backups.ps1`:
 `-GamePath`, `-Yes`.
 
@@ -108,16 +134,16 @@ another place is refused.
 
 Copy into the pack root, next to the `STEP` folders: `install.ps1`,
 `uninstall.ps1`, `cleanup_backups.ps1`, `SlopRay.psm1`, `catalogue.json` and
-the four `.bat` files. After a release, rebuild the catalogue so the next
+the five `.bat` files. After a release, rebuild the catalogue so the next
 version recognises its files:
 
 ```bash
 python -I installer/tools/build_catalogue.py "C:\Users\Walter\Tools" installer/catalogue.json
 ```
 
-It reads every `*Full Pack*.zip` and `*UPDATE*.zip` under `share_pack_*`.
-A release that isn't on disk any more isn't in the catalogue, and its files
-are then treated as the player's (kept, never deleted).
+It reads every `*Full Pack*.zip` and `*UPDATE*.zip` under `share_pack_*` that
+the catalogue doesn't list yet, and only ever adds: old `share_pack_*` folders
+can be deleted after a run without losing their hashes.
 
 ## Tests
 
@@ -147,9 +173,17 @@ installer output.
 | S12 | custom files in 410 untouched; v0.5.0-dev `3DSS_backup` swapped back |
 | S14 | uninstall killed half-way: next run finishes it |
 | S16 | a mod zip that climbs out of its folder, and a junction in `Anomaly\bin`: both refused and undone |
+| S17-S29 | game on a drive root, MSAA forced off every run, the SSS24 revert (see `tests\SSS_REVERT_TEST_PLAN.md`) |
+| S30 | DLSS 5 install, OptiScaler files deleted by hand, plain re-run on RTX 50 and RTX 3060: no false "did not verify" |
+| S31 | Anomaly and MO2 in different folders: refused with a clear message from the Anomaly folder alone, installed from the MO2 folder, re-run and uninstall back to the original |
+| S32 | two installs found: listed and refused under `-Yes`; one found: used |
+| S33 | Anomaly without G.A.M.M.A.: "install G.A.M.M.A. first", nothing written |
+| S34 | Model Drop duplicate: 453 unticked and ticked again by uninstall; the same pair from other mods only warned |
+| S35 | warnings for an old PiP mod, another NVG mod and a loose shader file; Beef's NVG and 3DSS not flagged; nothing changed |
 
 Test hooks (only used by the tests): `SLOPRAY_TEST_NO_PROCESS_CHECK`,
-`SLOPRAY_TEST_FAIL_AFTER=N`, `SLOPRAY_TEST_KILL_AFTER=N`.
+`SLOPRAY_TEST_FAIL_AFTER=N`, `SLOPRAY_TEST_KILL_AFTER=N`,
+`SLOPRAY_TEST_SEARCH_ONLY=<folder>;<folder>` (search only these, no drive scan).
 
 ## Known limits
 
@@ -163,3 +197,8 @@ Test hooks (only used by the tests): `SLOPRAY_TEST_NO_PROCESS_CHECK`,
   treats it as yours and keeps a copy in `backup\`.
 - Tested on fake GAMMA folders and with the real v0.5.2-dev pack contents on a
   fake GAMMA folder. Not yet run on a real GAMMA install or with real MO2.
+- Split layout across two drives: file backups work (a file move falls back to
+  copy + delete), but the v0.5.0-dev 3DSS swap-back is skipped then (a folder
+  can't be moved between drives). Not tested on two real drives.
+- The Model Drop rule is built from one player's error message: which mod ships
+  `items_model_drop_physc_mre.ltx` vs `_newfddaanim.ltx` is not confirmed.
