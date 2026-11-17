@@ -4,6 +4,24 @@
 #include "IGame_Level.h"
 
 #include "../xrCore/profiler.h"
+#include "../xrCore/engine_error_logger.h"
+
+// EngineErrorLogger::ObjectDescriber: a game object by name, anything else by its C++ type (RTTI, no allocation).
+static void describe_sheduled(const void* object, char* output, size_t capacity)
+{
+	const ISheduled* sheduled = static_cast<const ISheduled*>(object);
+	if (const CObject* game_object = dynamic_cast<const CObject*>(sheduled))
+	{
+		CObject::describe_for_log(game_object, output, capacity);
+		return;
+	}
+	LPCSTR name = typeid(*sheduled).raw_name(); // ".?AVCALifeSimulator@@"
+	const size_t length = strlen(name);
+	if (length > 6 && name[0] == '.' && name[1] == '?')
+		_snprintf_s(output, capacity, _TRUNCATE, "%.*s", int(length - 6), name + 4);
+	else
+		_snprintf_s(output, capacity, _TRUNCATE, "%s", name);
+}
 
 float psShedulerCurrent = 10.f;
 float psShedulerTarget = 10.f;
@@ -397,6 +415,7 @@ void CSheduler::ProcessStep()
 			u32 dwUpdate = dwMin + iFloor(float(dwMax - dwMin) * scale);
 			clamp(dwUpdate, u32(_max(dwMin, u32(20))), dwMax);
 
+			const EngineErrorLogger::ObjectScope diagnostic_object("shedule_Update", T.Object, &describe_sheduled);
 			T.Object->shedule_Update(clampr(Elapsed, u32(1), u32(_max(u32(T.Object->shedule.t_max), u32(1000)))));
 
 			// Fill item structure
@@ -508,7 +527,10 @@ void CSheduler::UpdateRT()
 		VERIFY(T.Object->dbg_startframe != Device.dwFrame);
 		T.Object->dbg_startframe = Device.dwFrame;
 #endif
-		T.Object->shedule_Update(Elapsed);
+		{
+			const EngineErrorLogger::ObjectScope diagnostic_object("shedule_Update", T.Object, &describe_sheduled);
+			T.Object->shedule_Update(Elapsed);
+		}
 		T.dwTimeOfLastExecute = dwTime;
 	}
 	m_processing_nowRT = false;

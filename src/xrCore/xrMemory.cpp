@@ -77,7 +77,7 @@ void xrMemory::_initialize(BOOL bDebug)
 	stat_counter = 0;
 
 #ifdef _M_AMD64
-	// Release-AVX|x64 is an AVX2-only target. Bind the explicit kernels instead
+	// Release-AVX|x64 targets AVX (these kernels use AVX only, despite the name). Bind the explicit kernels instead
 	// of the legacy x64 aliases that merely forward to memcpy/memset.
 	mem_copy = xrMemCopy_AVX2;
 	mem_fill = xrMemFill_AVX2;

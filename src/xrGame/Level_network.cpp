@@ -250,6 +250,7 @@ u32 CLevel::Objects_net_Save(NET_Packet* _Packet, u32 start, u32 max_object_size
 		//		Msg			("save:iterating:%d:%s, size[%d]",P->ID(),*P->cName(), Packet.w_tell() );
 		if (P && !P->getDestroy() && P->net_SaveRelevant())
 		{
+			const u32 record = Packet.w_tell();
 			Packet.w_u16(u16(P->ID()));
 			Packet.w_chunk_open16(position);
 			//			Msg						("save:saving:%d:%s",P->ID(),*P->cName());
@@ -263,7 +264,17 @@ u32 CLevel::Objects_net_Save(NET_Packet* _Packet, u32 start, u32 max_object_size
 			}
 #endif
 			Packet.w_chunk_close16(position);
-			//			if (0==(--count))		
+			if (Packet.w_overflow)
+			{
+				Packet.B.count = record;
+				Packet.w_overflow = false;
+				if (record > sizeof(u16))
+					return start; // first in the next packet
+				Msg("! [save] %s [%u]: more save data than a net packet holds (%u bytes), its client data is not saved",
+					*P->cName(), P->ID(), NET_PacketSizeLimit);
+				continue;
+			}
+			//			if (0==(--count))
 			//				break;
 			if (max_object_size >= (NET_PacketSizeLimit - Packet.w_tell()))
 				break;
@@ -324,7 +335,19 @@ void CLevel::Send(NET_Packet& P, u32 dwFlags, u32 dwTimeout)
 void CLevel::net_Update()
 {
 	PROF_EVENT("net_Update");
-	if (game_configured)
+	// The server copies of the online objects take their states at most 100 times a second in a single player game,
+	// as at 100 FPS: above that the export of every object each frame only costs time, nothing reads the states in
+	// between. A save and a level change call ClientSend themselves, always; multiplayer exports every frame.
+	bool export_due = true;
+	if (game_configured && IsGameTypeSingle())
+	{
+		static u64 last_export = 0;
+		const u64 now = CPU::QPC();
+		export_due = now - last_export >= CPU::qpc_freq / 100;
+		if (export_due)
+			last_export = now;
+	}
+	if (game_configured && export_due)
 	{
 		// If we have enought bandwidth - replicate client data on to server
 		Device.Statistic->netClient2.Begin();

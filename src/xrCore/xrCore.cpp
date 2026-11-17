@@ -58,6 +58,7 @@ void xrCore::_initialize(LPCSTR _ApplicationName, xrLogger::LogCallback cb, BOOL
 
 		EngineErrorLogger::SetEnabled(strstr(Params, "-no_engine_error_log") == nullptr);
 		EngineErrorLogger::Initialize();
+		EngineErrorLogger::SetDumpsEnabled(strstr(Params, "-no_crash_dump") == nullptr);
 		if (!strstr(Params, "-editor"))
 			CoInitializeEx(NULL, COINIT_MULTITHREADED);
 

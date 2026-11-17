@@ -25,8 +25,13 @@ namespace
 
 }
 
+// use_time_limit must stay false. Nothing gives this registry a time budget or
+// deadline (CALifeUpdateManager::set_process_time only budgets graph()), so with
+// true, time_over() is true from the second pass on and no offline squad or
+// smart terrain is ever updated again (GitHub issue 2). objects_per_update is
+// the only limit, as in 0.4.1.
 class CALifeScheduleRegistry : public CSafeMapIterator<
-		ALife::_OBJECT_ID, CSE_ALifeSchedulable, std::less<ALife::_OBJECT_ID>, true>
+		ALife::_OBJECT_ID, CSE_ALifeSchedulable, std::less<ALife::_OBJECT_ID>, false>
 {
 private:
 	struct CUpdatePredicate
@@ -63,7 +68,7 @@ private:
 	};
 
 protected:
-	typedef CSafeMapIterator<ALife::_OBJECT_ID, CSE_ALifeSchedulable, std::less<ALife::_OBJECT_ID>, true> inherited;
+	typedef CSafeMapIterator<ALife::_OBJECT_ID, CSE_ALifeSchedulable, std::less<ALife::_OBJECT_ID>, false> inherited;
 
 private:
 	struct SSmartRuntime

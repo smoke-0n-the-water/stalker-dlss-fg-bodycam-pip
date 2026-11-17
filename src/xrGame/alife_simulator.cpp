@@ -77,6 +77,7 @@ CALifeSimulator::CALifeSimulator(xrServer* server, shared_str* command_line) :
 	R_ASSERT2(ai().script_engine().functor(start_game_callback,functor), "failed to get start game callback");
 	functor();
 
+	EngineErrorLogger::SetContext(EngineErrorLogger::Context::Save, !xr_strcmp(p.m_new_or_load, "load") ? p.m_game_or_spawn : "<new game>");
 	load(p.m_game_or_spawn, !xr_strcmp(p.m_new_or_load, "load") ? false : true, !xr_strcmp(p.m_new_or_load, "new"));
 }
 

@@ -694,6 +694,18 @@ void CLevel::ProcessSpawnEvents()
 			goto spawn;
 		}
 
+		// Gone from the server while its spawn waited: its destroy event found no client object, so this one would
+		// never be destroyed, and its net export breaks the server when the ID goes to another object.
+		if (Server)
+		{
+			const CSE_Abstract* entity = Server->ID_to_entity(obj_id);
+			if (!entity || entity->s_name != section)
+			{
+				if (spawn_antifreeze_debug) Msg("![ProcessSpawnEvents] server entity gone or replaced, do not spawn, section %s, obj_id %d", section.c_str(), obj_id);
+				continue;
+			}
+		}
+
         if (spawn_data_it != spawn_events_data_copy.end())
         {
             if (spawn_data_it->second.hasAlifeObject)

@@ -9,7 +9,10 @@
 #include "stdafx.h"
 #include "alife_schedule_registry.h"
 
-int psALifeSmartTailQos = 1;
+// Off by default: this smart-terrain throttling never ran while the scheduler
+// was stuck (GitHub issue 2), so it is untested in play. With it off the
+// scheduler behaves as in 0.4.1.
+int psALifeSmartTailQos = 0;
 int psALifeSmartSlowThresholdMs = 8;
 int psALifeSmartCooldownMs = 250;
 int psALifeSmartMaxCooldownMs = 30000;

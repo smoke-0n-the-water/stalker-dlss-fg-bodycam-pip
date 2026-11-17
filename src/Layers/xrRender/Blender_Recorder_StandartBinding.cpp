@@ -1250,6 +1250,13 @@ static class ssfx_jitter : public R_constant_setup
 			JitterX = TAA_Offset[ Device.dwFrame % 4 ].x / Device.dwWidth;
 			JitterY = TAA_Offset[ Device.dwFrame % 4 ].y / Device.dwHeight;
 		}
+		// The scope pass is drawn unjittered under an upscaler too (dlss::RasterJitter is {0,0}
+		// while it is bound), so its TAA gets no jitter either.
+		if (Device.true_pip_on && Device.m_SecondViewport.m_render_pass_is_svp)
+		{
+			RCache.set_c(C, 0.0f, 0.0f, 0.0f, 0.0f);
+			return;
+		}
 		if (dlss::Configured())
 		{
 			const auto jitter = dlss::ClipJitter(dlss::RasterJitter(), {dlss::RenderWidth(), dlss::RenderHeight()});

@@ -1651,6 +1651,8 @@ void CApplication::LoadEnd()
 		}
 
 		g_appLoaded = TRUE;
+		if (g_pGameLevel)
+			EngineErrorLogger::SetContext(EngineErrorLogger::Context::Level, g_pGameLevel->name().c_str());
 		QUARK_DIAGNOSTIC_BREADCRUMB("loading finished");
 		// DUMP_PHASE;
 	}

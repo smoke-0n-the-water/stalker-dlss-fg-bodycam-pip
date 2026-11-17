@@ -25,8 +25,8 @@ extern "C" {
 //__declspec(dllexport)
 void __cdecl xrBind_PSGP(xrDispatchTable* T, _processor_info* ID)
 {
-	// This target is built specifically for AVX2-capable x64 CPUs.
-	// Keep scalar routines linked as a diagnostic fallback, but bind the hot skinning path to AVX2.
+	// This target is built for AVX-capable x64 CPUs; the *_AVX2 routines use AVX only (FMA only when built for AVX2).
+	// Keep scalar routines linked as a diagnostic fallback, but bind the hot skinning path to them.
 	T->skin1W = xrSkin1W_AVX2;
 	T->skin2W = xrSkin2W_AVX2;
 	T->skin3W = xrSkin3W_AVX2;

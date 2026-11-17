@@ -16,7 +16,7 @@ svp::TargetSettings target_settings()
 {
 	return {ps_r__svp_dlss != 0, ps_r__svp_flat_window && (int)ps_s3ds_param_3.y == 8,
 		ps_r__svp_adaptive_grow != 0, ps_r__svp_adaptive_res,
-		ps_r__svp_supersample, ps_r__svp_render_scale};
+		ps_r__svp_supersample, ps_r__svp_render_scale, svp_scope_res_scale()};
 }
 
 // pip the lens composite lands in the MAIN target's rt_Color, and with an upscaler that target
@@ -44,7 +44,9 @@ svp::TargetFrame target_frame()
 	const u32 composite_h = svp_composite_height();
 	return {composite_h >> 1, composite_h,
 		Device.m_SecondViewport.svp_disc_applied * svp_composite_scale(),
-		Device.m_SecondViewport.svp_panel_aspect};
+		Device.m_SecondViewport.svp_panel_aspect,
+		Device.m_SecondViewport.svp_disc_applied,
+		RImplementation.TargetMain ? RImplementation.TargetMain->Height : Device.dwHeight};
 }
 }
 

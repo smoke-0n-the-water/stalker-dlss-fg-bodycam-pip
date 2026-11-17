@@ -183,6 +183,9 @@ u32 CTheoraSurface::Height(bool bRealSize)
 }
 
 
+// AVX2 fast paths. The AVX-only build (AnomalyDX11AVX) has no AVX2 integer ops or
+// gathers, so there the scalar loops below handle every pixel.
+#if defined(__AVX2__)
 namespace
 {
 IC __m256i load_8_luma(const u8* source)
@@ -250,6 +253,7 @@ IC __m256i pack_yuv420_shader8(const u8* y_source, const u8* u_source, const u8*
             _mm256_or_si256(_mm256_slli_epi32(u, 8), v)));
 }
 }
+#endif
 
 void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 {
@@ -284,11 +288,13 @@ void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 				u32* destination = data + h * destination_stride;
 
 				u32 w = 0;
+#if defined(__AVX2__)
 				for (; w + 8 <= width; w += 8)
 				{
 					const __m256i rgba = yuv420_to_rgba8(Y + w, U + (w >> 1), V + (w >> 1));
 					_mm256_storeu_si256(reinterpret_cast<__m256i*>(destination + w), rgba);
 				}
+#endif
 
 				for (; w < width; ++w)
 				{
@@ -320,6 +326,7 @@ void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 				u32* destination1 = destination0 + buff_step;
 
 				u32 y_w = 0;
+#if defined(__AVX2__)
 				for (; y_w + 8 <= width; y_w += 8)
 				{
 					const u32 uv_w = y_w >> 1;
@@ -328,6 +335,7 @@ void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 					_mm256_storeu_si256(reinterpret_cast<__m256i*>(destination1 + y_w),
 						pack_yuv420_shader8(Y1 + y_w, U + uv_w, V + uv_w));
 				}
+#endif
 
 				for (; y_w < width; y_w += 2)
 				{
@@ -347,6 +355,7 @@ void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 	// alpha
 	if (yuv_alpha)
 	{
+#if defined(__AVX2__)
 		static const std::array<u32, 256> alpha_table = []
 		{
 			std::array<u32, 256> table{};
@@ -356,14 +365,16 @@ void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 			return table;
 		}();
 
-		yuv_buffer& yuv = *yuv_alpha;
 		const __m256i rgb_mask = _mm256_set1_epi32(0x00ffffff);
+#endif
+		yuv_buffer& yuv = *yuv_alpha;
 		u32 pos = 0;
 		for (u32 h = 0; h < height; ++h)
 		{
 			const u8* Y = yuv.y + yuv.y_stride * h;
 			u32* destination = data + pos + 1;
 			u32 w = 0;
+#if defined(__AVX2__)
 			for (; w + 8 <= width; w += 8)
 			{
 				const __m256i indices = load_8_luma(Y + w);
@@ -373,6 +384,7 @@ void CTheoraSurface::DecompressFrame(u32* data, u32 _width, int& _pos)
 				_mm256_storeu_si256(reinterpret_cast<__m256i*>(destination + w),
 					_mm256_or_si256(_mm256_and_si256(colors, rgb_mask), alpha_values));
 			}
+#endif
 			for (; w < width; ++w)
 				destination[w] = subst_alpha(destination[w], iFloor(float((Y[w] - 16)) / K));
 			pos += width;
