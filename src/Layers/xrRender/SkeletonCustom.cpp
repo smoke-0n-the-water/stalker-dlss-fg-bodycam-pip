@@ -861,7 +861,23 @@ void CKinematics::CalculateWallmarks()
 	}
 }
 
-void CKinematics::RenderWallmark(intrusive_ptr<CSkeletonWallmark> wm, FVF::LIT* & V)
+// The bones a wallmark vertex really uses (same branches as the skinning below):
+// 1-link uses [0], 2-link [0..1], 3-link [0..2], 4-link all four. Release builds only
+// check a bone id in VERIFY, so a stale id would read past the bone array.
+static bool wallmark_face_bones_ok(const CSkeletonWallmark::WMFace& F, u32 bone_count)
+{
+	for (u32 k = 0; k < 3; ++k)
+	{
+		const u16* id = F.bone_id[k];
+		const u32 used = (id[0] == id[1]) ? 1 : (id[1] == id[2]) ? 2 : (id[2] == id[3]) ? 3 : 4;
+		for (u32 i = 0; i < used; ++i)
+			if (id[i] >= bone_count) return false;
+	}
+	return true;
+}
+
+// V_end: one past the last vertex the caller's locked stream can take.
+void CKinematics::RenderWallmark(intrusive_ptr<CSkeletonWallmark> wm, FVF::LIT* & V, FVF::LIT* V_end)
 {
 	PROF_EVENT("CKinematics::RenderWallmark");
 	VERIFY(wm);
@@ -869,12 +885,18 @@ void CKinematics::RenderWallmark(intrusive_ptr<CSkeletonWallmark> wm, FVF::LIT* 
 	VERIFY2(bones, "Invalid visual. Bones already released.");
 	VERIFY2(bone_instances, "Invalid visual. bone_instances already deleted.");
 
-	if ((wm == 0) || (0 == bones) || (0 == bone_instances)) return;
+	if ((wm == 0) || (0 == bones) || (0 == bone_instances) || !V || !wm->XFORM()) return;
+
+	const u32 bone_count = LL_BoneCount();
+	u32 skipped_bones = 0, skipped_room = 0;
 
 	// skin vertices
 	for (u32 f_idx = 0; f_idx < wm->m_Faces.size(); f_idx++)
 	{
 		CSkeletonWallmark::WMFace F = wm->m_Faces[f_idx];
+		// A face is drawn whole or not at all.
+		if (V_end && V + 3 > V_end) { ++skipped_room; continue; }
+		if (!wallmark_face_bones_ok(F, bone_count)) { ++skipped_bones; continue; }
 		float w = wm->TimeEnd() == -1.f ? 0.f : (RDEVICE.fTimeGlobal - wm->TimeStart()) / wm->TimeEnd();
 		for (u32 k = 0; k < 3; k++)
 		{
@@ -945,6 +967,18 @@ void CKinematics::RenderWallmark(intrusive_ptr<CSkeletonWallmark> wm, FVF::LIT* 
 		}
 	}
 	wm->XFORM()->transform_tiny(wm->m_Bounds.P, wm->m_LocalBounds.P);
+
+	if (skipped_bones || skipped_room)
+	{
+		// first few times only: this is a repair, not a per-frame message
+		static u32 s_logged = 0;
+		if (s_logged < 3)
+		{
+			++s_logged;
+			Msg("! [Wallmark] skipped %u face(s) with a bone id outside the model's %u bones, and %u with no room left in the vertex stream.",
+				skipped_bones, bone_count, skipped_room);
+		}
+	}
 }
 
 void CKinematics::ClearWallmarks()

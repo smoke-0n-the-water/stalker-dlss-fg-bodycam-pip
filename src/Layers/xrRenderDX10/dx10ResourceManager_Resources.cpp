@@ -831,11 +831,21 @@ bool query_local_vram(DXGI_QUERY_VIDEO_MEMORY_INFO& local)
 	return s_adapter3 && SUCCEEDED(s_adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local));
 }
 
-// Textures VRAM pressure must never unload: sky and weather, engine lookup tables, UI, render targets.
+// Textures residency must never demote or unload: sky and weather, engine lookup tables, UI, render
+// targets, and the PiP scope's own textures (reflection, dirt, inside, heat map, rain), which sit
+// under wpn\ and would otherwise fall in the [weapon] class and drop while the player isn't aiming.
 bool residency_pinned(LPCSTR name)
 {
-	return strncmp(name, "sky", 3) == 0 || strncmp(name, "shaders", 7) == 0 || strncmp(name, "ui\\", 3) == 0 ||
-		strncmp(name, "ui/", 3) == 0 || strchr(name, '$') != nullptr;
+	if (!name)
+		return true;
+	string_path n;
+	xr_strcpy(n, name);
+	strlwr(n);
+	for (char* c = n; *c; ++c)
+		if (*c == '/')
+			*c = '\\';
+	return strncmp(n, "sky", 3) == 0 || strncmp(n, "shaders", 7) == 0 || strncmp(n, "ui\\", 3) == 0 ||
+		strchr(n, '$') != nullptr || strncmp(n, "wpn\\scope_utility\\", 18) == 0 || strncmp(n, "fx\\svp_", 7) == 0;
 }
 #endif
 }
@@ -905,7 +915,9 @@ void CResourceManager::ResidencyFrame()
 	const bool near_budget = s_last_budget && s_last_usage * 100 >= s_last_budget * u64(s_params.low_pct);
 	if (!m_tex_res_classes.empty() && now >= s_class_sweep_next_ms)
 	{
-		if (near_budget || s_trim_active)
+		// Residency off in the menu (r__tex_res_budget_target 0) stops idle demotes too, not just
+		// the pressure trims; near_budget would otherwise stay latched at its last value.
+		if (ps_r__tex_res_budget_target && (near_budget || s_trim_active))
 			TexResClassIdleSweep();
 		s_class_sweep_next_ms = now + 5000;
 	}
@@ -1009,7 +1021,7 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 	{
 		CTexture* T = entry.second;
 		// Not drawn yet (staging) means system RAM; unloading it frees no VRAM.
-		if (!T->flags.bLoaded || T->flags.bLoadedAsStaging || T->flags.bUser || T->IsLoading())
+		if (!T->flags.bLoaded || T->flags.bLoadedAsStaging || T->flags.bUser || T->ResPinned || T->IsLoading())
 			continue;
 		if (residency_pinned(entry.first))
 			continue;
@@ -1147,10 +1159,15 @@ bool CResourceManager::QueueTextureSwap(const ref_texture& texture, u32 new_lod)
 		PROF_THREAD("X-Ray PPL Thread")
 
 		u32 mem = 0;
-		ID3DBaseTexture* surf = ::RImplementation.texture_load(*texture->cName, mem, true, int(new_lod));
+		// Never staging: ApplySwap installs this surface as the live one and nothing converts it
+		// afterwards. With r__no_ram_textures off a staging load had no shader view, so every
+		// swapped texture drew black until restart (scope reflection included).
+		ID3DBaseTexture* surf = ::RImplementation.texture_load(*texture->cName, mem, false, int(new_lod));
 		ID3DShaderResourceView* srv = nullptr;
-		if (surf)
-			HW.pDevice->CreateShaderResourceView(surf, NULL, &srv);
+		if (surf && FAILED(HW.pDevice->CreateShaderResourceView(surf, NULL, &srv)))
+			srv = nullptr;
+		if (!srv)
+			_RELEASE(surf); // no view = nothing drawable: drop the swap, keep the live texture
 
 		texture->PendingSurface = surf;
 		texture->PendingSRView = srv;
@@ -1192,9 +1209,10 @@ void CResourceManager::ApplyTextureSwaps()
 		xr_vector<ref_texture> deferred;
 		for (const auto& texture : batch)
 		{
-			if (!texture->PendingSurface)
+			if (!texture->PendingSurface || !texture->PendingSRView)
 			{
-				// The worker's load failed: nothing to install, release the request.
+				// The worker's load failed (or made no view): nothing to install, release the request.
+				_RELEASE(texture->PendingSurface);
 				_RELEASE(texture->PendingSRView);
 				if (texture->PendingDemote)
 					s_demotes_in_flight.fetch_sub(1, std::memory_order_relaxed);
@@ -1303,7 +1321,7 @@ void CResourceManager::TexResSelftest(u32 count)
 		for (const auto& entry : m_textures)
 		{
 			CTexture* T = entry.second;
-			if (!T->flags.bLoaded || T->flags.bLoadedAsStaging || T->flags.bUser || T->IsLoading())
+			if (!T->flags.bLoaded || T->flags.bLoadedAsStaging || T->flags.bUser || T->ResPinned || T->IsLoading())
 				continue;
 			if (residency_pinned(entry.first))
 				continue;
@@ -1403,6 +1421,9 @@ s8 CResourceManager::ClassifyTexture(const shared_str& name, bool animated)
 
 	if (m_tex_res_classes.empty() || !name.c_str())
 		return -1;
+	// Pinned before any folder class: wpn\scope_utility\ would otherwise match [weapon] via "wpn".
+	if (residency_pinned(name.c_str()))
+		return -1;
 
 	// folders are lowercased by _ParseList; match against a lowercased copy of the name too
 	// (cName isn't guaranteed lowercase - texture_load() only lowercases its own local copy).
@@ -1431,7 +1452,7 @@ s8 CResourceManager::ClassifyTexture(const shared_str& name, bool animated)
 		}
 	}
 	// No folder matched: [default], unless it is a texture pressure must never touch.
-	if (m_tex_res_default >= 0 && !animated && !residency_pinned(name.c_str()))
+	if (m_tex_res_default >= 0 && !animated)
 		return m_tex_res_default;
 	return -1;
 #else
@@ -1453,7 +1474,7 @@ void CResourceManager::TexResClassIdleSweep()
 		if (queued >= max_per_sweep)
 			break;
 		CTexture* T = entry.second;
-		if (!T->flags.bLoaded || T->flags.bLoadedAsStaging || T->flags.bUser || T->IsLoading())
+		if (!T->flags.bLoaded || T->flags.bLoadedAsStaging || T->flags.bUser || T->ResPinned || T->IsLoading())
 			continue;
 		if (T->ResClass < 0 || T->swapQueued.load(std::memory_order_relaxed))
 			continue;
