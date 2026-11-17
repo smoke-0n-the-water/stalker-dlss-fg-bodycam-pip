@@ -51,6 +51,9 @@ function New-Pack ($dir) {
     W "$dir\STEP 6 - OptiScaler\README.md" 'readme'
     W "$dir\STEP 6 - OptiScaler\OptiScaler\libxess.dll" 'xess'
     W "$dir\STEP 6 - OptiScaler\nvngx_dlssnr.dll" 'dlss 5 model'
+    # another F5 version: only the files that differ, in "STEP 6\F5 <version>"
+    W "$dir\STEP 6 - OptiScaler\F5 0.1.38\dxgi.dll" 'optiscaler 0138'
+    W "$dir\STEP 6 - OptiScaler\F5 0.1.38\OptiScaler.ini" "[DlssNr]`r`nEnabled=false`r`n[FrameGen]`r`nFGOutput=auto`r`n"
     New-Zip "$dir\STEP 2 - MO2 mods\1 - Test Patch.zip" @{ 'gamedata\configs\a.ltx' = 'patch a'; 'meta.ini' = "[General]`r`nversion=1`r`n" }
     New-Zip "$dir\STEP 2 - MO2 mods\3 - Test Compat (0.721).zip" @{ 'gamedata\shaders\r3\x.ps' = 'compat 0.721' }
     New-Zip "$dir\STEP 3 - Optional\Add-on - stock Atmospherics (no RC7).zip" @{ 'gamedata\shaders\r3\ssfx.h' = 'stock atmos' }
@@ -663,6 +666,35 @@ $scenarios['S35_preflight_warnings'] = {
     $ml = ML $s
     Check ($ml -contains '+Old PiP Mod' -and $ml -contains '+Real_NVGs_TEST') "warned mods stay ticked"
     Check ((T "$r\Anomaly\gamedata\shaders\r3\scope_old.ps") -eq 'loose') "loose file left where it is"
+}
+
+$scenarios['S36_optiscaler_version'] = {
+    # OptiScaler F5 0.1.35 (default, in STEP 6) or 0.1.38 (overlay "STEP 6\F5 0.1.38"), per .bat
+    $s = New-Scenario 'S36_optiscaler_version'
+    $bin = "$($s.Root)\Anomaly\bin"
+    $c = Install $s
+    Check ($c -eq 0 -and (T "$bin\dxgi.dll") -eq 'optiscaler dll') "default = 0.1.35 (got $c)"; Show-OnFail ($c -eq 0)
+    Check (-not (Test-Path -LiteralPath "$bin\F5 0.1.38")) "the version folder itself is not copied into bin"
+    $c = Install $s @('-OptiScaler', '0.1.38')
+    Check ($c -eq 0 -and (T "$bin\dxgi.dll") -eq 'optiscaler 0138') "re-run with 0.1.38 swaps dxgi.dll (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T "$bin\OptiScaler.ini") -match 'FGOutput=auto') "0.1.38's own ini placed"
+    Check ((T "$bin\OptiScaler\libxess.dll") -eq 'xess') "files 0.1.38 does not change stay the shared ones"
+    Check ($script:lastOut -match 'OptiScaler F5 0\.1\.38') "the run says which version"
+    $c = Install $s @('-Dlss5', '-OptiScaler', '0.1.38')
+    $ini = T "$bin\OptiScaler.ini"
+    Check ($c -eq 0 -and $ini -match 'FGOutput=auto' -and $ini -match '(?m)^Enabled=true') "DLSS 5 on 0.1.38: its ini with DLSS 5 switched on (got $c)"; Show-OnFail ($c -eq 0)
+    Check (Test-Path -LiteralPath "$bin\nvngx_dlssnr.dll") "DLSS 5 model placed"
+    $c = Install $s
+    Check ($c -eq 0 -and (T "$bin\dxgi.dll") -eq 'optiscaler dll') "back to 0.1.35 (got $c)"; Show-OnFail ($c -eq 0)
+    Check (-not (Get-ChildItem -LiteralPath "$($s.Root)\.slopray\recovery" -Recurse -Filter 'dxgi.dll' -ErrorAction SilentlyContinue)) "swapping never treats our own dxgi.dll as yours"
+    $c = Uninstall $s
+    Check (-not (Test-Path -LiteralPath "$bin\dxgi.dll")) "uninstall removes OptiScaler (got $c)"
+    # a pack without the 0.1.38 folder: stop before changing anything
+    $s = New-Scenario 'S36b_optiscaler_version_missing'
+    Remove-Item -LiteralPath "$($s.Pack)\STEP 6 - OptiScaler\F5 0.1.38" -Recurse -Force      # test fixture only
+    $c = Install $s @('-OptiScaler', '0.1.38')
+    Check ($c -eq 1 -and $script:lastOut -match 'OptiScaler 0\.1\.38 is not in this pack') "missing version: clear stop (got $c)"; Show-OnFail ($c -eq 1)
+    Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "nothing written"
 }
 
 $scenarios['S17_game_on_drive_root'] = {

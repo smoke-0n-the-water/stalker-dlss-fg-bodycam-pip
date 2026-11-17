@@ -27,6 +27,8 @@
 #  Safe to run again.
 #     -DryRun     show what would happen, change nothing
 #     -Dlss5      also install DLSS 5 / Neural Rendering (STEP 6, RTX only)
+#     -OptiScaler 0.1.38   OptiScaler F5 version (STEP 6). Default 0.1.35, the one
+#                 played since v0.5; 0.1.38 adds DLSS 5 "Model resolution", untested
 #     -GamePath "D:\Games\S.T.A.L.K.E.R. GAMMA"   skip auto-detection (the folder
 #                 with Anomaly + GAMMA in it, or either of those two)
 #     -AskPath    don't search, ask for the folder (INSTALL - choose folder.bat)
@@ -39,6 +41,7 @@ param(
     [switch]$AskPath,
     [switch]$DryRun,
     [switch]$Dlss5,
+    [ValidateSet('0.1.35', '0.1.38')][string]$OptiScaler = '0.1.35',
     [switch]$Yes,
     [string]$GpuName
 )
@@ -47,6 +50,7 @@ $ErrorActionPreference = 'Stop'
 $pack = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module "$pack\SlopRay.psm1" -Force -DisableNameChecking
 $PackVersion = 'v0.7-dev'
+$OptiDefault = '0.1.35'      # the F5 version in STEP 6 itself; others are "STEP 6\F5 <version>"
 $fail = 0
 $todo = New-Object System.Collections.Generic.List[string]
 $utf8 = New-Object System.Text.UTF8Encoding($false)   # MO2 files have no BOM
@@ -217,14 +221,30 @@ if (-not $doOpti) {
         Warn "No frame gen unlock: on RTX 20/30 the game menu will show no DLSS frame gen."
         $ok = $false
     }
+    # STEP 6 holds the default F5 version; another version is a folder "F5 <version>" inside
+    # it with only the files that differ (dxgi.dll, its ini, ...). -OptiScaler picks it.
+    $s6v = $null
+    if ($ok -and $OptiScaler -ne $OptiDefault) {
+        $s6v = Get-ChildItem -LiteralPath $s6.FullName -Directory | Where-Object { $_.Name -eq "F5 $OptiScaler" } | Select-Object -First 1
+        if (-not $s6v) { Bad "OptiScaler $OptiScaler is not in this pack (STEP 6\F5 $OptiScaler missing)"; $ok = $false }
+    }
     if ($ok) {
-        # licences stay in the pack, not in the game folder
-        $skip = @('README.md', 'TROUBLESHOOTING.md', 'LICENSE', 'Licenses\*')
+        # licences stay in the pack, not in the game folder; the version folders are overlays
+        $skip = @('README.md', 'TROUBLESHOOTING.md', 'LICENSE', 'Licenses\*', 'F5 *\*')
         if (-not $Dlss5) { $skip += 'nvngx_dlssnr.dll' }   # 276 MB NR model, DLSS 5 only
         if ($Dlss5) { $skip += 'OptiScaler.ini'; $optiIni = "$($s6.FullName)\OptiScaler.ini" }   # edited copy added below
         Add-Set "OptiScaler" $s6.FullName "Anomaly\bin" $skip
+        if ($s6v) {
+            foreach ($p in $place) {
+                if ($p.Set -ne 'OptiScaler') { continue }
+                $o = "$($s6v.FullName)\$($p.Rel.Substring('Anomaly\bin\'.Length))"
+                if (Test-Path -LiteralPath $o -PathType Leaf) { $p.Src = $o }
+            }
+            if ($optiIni -and (Test-Path -LiteralPath "$($s6v.FullName)\OptiScaler.ini")) { $optiIni = "$($s6v.FullName)\OptiScaler.ini" }
+        }
+        Good "OptiScaler F5 $OptiScaler$(if ($OptiScaler -eq $OptiDefault) { ' (default)' })"
         if ($needsUnlk) { Good "frame gen unlock will be ready: pick DLSS 2x/3x/4x in Settings > Video > Basic" }
-        $optiNote = "OptiScaler: installed in Anomaly\bin (INS opens its menu in game)" + $(if ($Dlss5) { ", DLSS 5 on" } else { "" })
+        $optiNote = "OptiScaler F5 $($OptiScaler): installed in Anomaly\bin (INS opens its menu in game)" + $(if ($Dlss5) { ", DLSS 5 on" } else { "" })
     }
 }
 

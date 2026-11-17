@@ -123,7 +123,7 @@ different, and looks again after 2 seconds before giving up and undoing the run.
 
 ## Switches
 
-`install.ps1`: `-DryRun` (show the plan, change nothing), `-Dlss5`,
+`install.ps1`: `-DryRun` (show the plan, change nothing), `-Dlss5`, `-OptiScaler 0.1.35|0.1.38` (default 0.1.35),
 `-GamePath "<folder>"` (the folder with Anomaly + GAMMA, or either of them),
 `-AskPath` (don't search, ask), `-Yes` (don't ask; more than one install
 found is then an error), `-GpuName` (testing).
@@ -134,7 +134,7 @@ found is then an error), `-GpuName` (testing).
 
 Copy into the pack root, next to the `STEP` folders: `install.ps1`,
 `uninstall.ps1`, `cleanup_backups.ps1`, `SlopRay.psm1`, `catalogue.json` and
-the five `.bat` files. After a release, rebuild the catalogue so the next
+the six `.bat` files. STEP 6 holds the default OptiScaler F5 (0.1.35); another version sits in `STEP 6\F5 <version>` with only the files that differ (`dxgi.dll`, `nvngx.dll_dlssnr.dll`, `OptiScaler\libxess_fg.dll`, `OptiScaler.ini`), picked by `-OptiScaler`. After a release, rebuild the catalogue so the next
 version recognises its files:
 
 ```bash
@@ -179,6 +179,7 @@ installer output.
 | S32 | two installs found: listed and refused under `-Yes`; one found: used |
 | S33 | Anomaly without G.A.M.M.A.: "install G.A.M.M.A. first", nothing written |
 | S34 | Model Drop duplicate: 453 unticked and ticked again by uninstall; the same pair from other mods only warned |
+| S36 | OptiScaler 0.1.35 by default, 0.1.38 swapped in and back by re-runs, DLSS 5 on 0.1.38 uses its own ini, uninstall removes it, a pack without the 0.1.38 folder stops cleanly |
 | S35 | warnings for an old PiP mod, another NVG mod and a loose shader file; Beef's NVG and 3DSS not flagged; nothing changed |
 
 Test hooks (only used by the tests): `SLOPRAY_TEST_NO_PROCESS_CHECK`,
