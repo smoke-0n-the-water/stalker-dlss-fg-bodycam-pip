@@ -9,6 +9,10 @@ Usage:  python -I build_catalogue.py <folder with share_pack_* dirs> <out catalo
 Reads every "*Full Pack*.zip" and "*UPDATE*.zip" under share_pack_* folders.
 Only files under a "STEP ..." folder are counted (that is what got installed),
 plus every file inside the STEP 2 / STEP 3 mod zips.
+
+Append-only: it starts from the existing <out catalogue.json> and only adds.
+Old share_pack folders can be deleted afterwards without losing their hashes;
+a zip already listed in "releases" is not read again.
 """
 import hashlib
 import io
@@ -44,7 +48,13 @@ def walk(zf, label, hashes, mods):
 def main():
     top, out = sys.argv[1], sys.argv[2]
     hashes, mods, releases = {}, set(), []
+    if os.path.exists(out):
+        with open(out, encoding="utf-8") as fh:
+            old = json.load(fh)
+        hashes, mods, releases = dict(old["hashes"]), set(old["modNames"]), list(old["releases"])
+    before = (len(releases), len(mods), len(hashes))
     seen = set()
+    listed = set(releases)
     for d in sorted(os.listdir(top)):
         if not d.lower().startswith("share_pack"):
             continue
@@ -54,16 +64,18 @@ def main():
                     continue
                 p = os.path.join(base, f)
                 key = (f, os.path.getsize(p))
-                if key in seen:
+                if key in seen or f in listed:
                     continue
                 seen.add(key)
+                listed.add(f)
                 print("reading", p, flush=True)
                 with zipfile.ZipFile(p) as zf:
                     walk(zf, f, hashes, mods)
                 releases.append(f)
     with open(out, "w", encoding="utf-8", newline="\n") as fh:
         json.dump({"releases": releases, "modNames": sorted(mods), "hashes": hashes}, fh, indent=0, sort_keys=True)
-    print(len(releases), "zips,", len(mods), "mod names,", len(hashes), "hashes ->", out)
+    print(len(releases), "zips,", len(mods), "mod names,", len(hashes), "hashes ->", out,
+          "(was %d / %d / %d)" % before)
 
 
 if __name__ == "__main__":

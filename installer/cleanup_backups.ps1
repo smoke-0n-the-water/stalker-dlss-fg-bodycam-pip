@@ -16,7 +16,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module "$here\SlopRay.psm1" -Force -DisableNameChecking
 function Done ($code) { if (-not $Yes) { try { Read-Host "Press Enter to close" | Out-Null } catch { } }; exit $code }
 
-try { $root = (Find-GammaRoot $GamePath $here).TrimEnd('\'); $sr = Open-SlopRay $root $null }
+try { $inst = Select-GammaInstall $GamePath $here -NoPrompt:$Yes; $sr = Open-SlopRay $inst $null }
 catch { Write-Host "  [STOP] $($_.Exception.Message)" -ForegroundColor Red; Done 1 }
 
 $last = @($sr.Record.history | Where-Object { $_.kind -eq 'uninstall' }) | Select-Object -Last 1
@@ -30,7 +30,7 @@ foreach ($f in @(Get-ChildItem -LiteralPath $bdir -Recurse -File -Force -ErrorAc
     $rel = $f.FullName.Substring($bdir.Length + 1)
     $e = $sr.Record.files[$rel]
     $h = Get-Sha $f.FullName
-    $live = "$root\$rel"
+    $live = Resolve-Rel $sr $rel
     if ($e -and $e.baselineHash -eq $h -and (Test-Path -LiteralPath $live -PathType Leaf) -and (Get-Sha $live) -eq $h) { $del += $f.FullName }
     else { $keep++ }
 }

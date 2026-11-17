@@ -70,14 +70,15 @@ if ($busy) {
 } else { Good "closed" }
 
 Head "Finding your STALKER GAMMA folder"
-try { $root = (Find-GammaRoot $GamePath $here).TrimEnd('\') } catch { Bad $_.Exception.Message; Pause-End 1 }
-Good "found: $root"
-$modsDir = "$root\GAMMA\mods"
-try { $sr = Open-SlopRay $root "$here\catalogue.json" } catch { Bad $_.Exception.Message; Pause-End 1 }
+try { $inst = Select-GammaInstall $GamePath $here -NoPrompt:$Yes } catch { Bad $_.Exception.Message; Pause-End 1 }
+$root = $inst.Home
+if ($inst.Split) { Good "found Anomaly: $($inst.Anomaly)   G.A.M.M.A. (MO2): $($inst.Mo2)" } else { Good "found: $root" }
+$modsDir = "$($inst.Mo2)\mods"
+try { $sr = Open-SlopRay $inst "$here\catalogue.json" } catch { Bad $_.Exception.Message; Pause-End 1 }
 
 if ($sr.WasNew -or $sr.Record.state -eq 'new') {
     $old = @('Anomaly\bin\AnomalyDX12.exe', 'Anomaly\bin\AnomalyDX11AVX.exe') |
-           Where-Object { (Test-Path -LiteralPath "$root\$_") -and $sr.Cat.Contains((Get-Sha "$root\$_")) }
+           Where-Object { (Test-Path -LiteralPath (Resolve-Rel $sr $_)) -and $sr.Cat.Contains((Get-Sha (Resolve-Rel $sr $_))) }
     if ($old) {
         Warn "Slop-Ray files are here, but no install record (an older pack installed them)."
         Say "  Run the new installer once: it takes over the old install safely and"
@@ -121,7 +122,7 @@ foreach ($ml in $sr.Record.modlist.Keys) { foreach ($n in $sr.Record.modlist[$ml
 $swap = $null
 $legacy = $sr.Record.legacy3dss
 if ($legacy -and -not $legacy.swapped) {
-    $bk = "$root\$($legacy.backup)"
+    $bk = Resolve-Rel $sr $legacy.backup
     $src = $null
     if (Test-Path -LiteralPath "$bk\gamedata") { $src = $bk }
     else {
@@ -129,7 +130,9 @@ if ($legacy -and -not $legacy.swapped) {
         if ($subs.Count -eq 1) { $src = $subs[0].FullName }
     }
     $cur = Get-ChildItem -LiteralPath $modsDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '410- 3DSS for GAMMA*' } | Select-Object -First 1
-    if ($src -and $cur -and (Test-Path -LiteralPath "$($cur.FullName)\gamedata\scripts\z_3dss_lens_hider.script") -and
+    # the merged folder is parked in .slopray\recovery: a folder can't move across drives
+    $sameDrive = $cur -and ([IO.Path]::GetPathRoot($cur.FullName) -eq [IO.Path]::GetPathRoot($sr.Dir))
+    if ($src -and $cur -and $sameDrive -and (Test-Path -LiteralPath "$($cur.FullName)\gamedata\scripts\z_3dss_lens_hider.script") -and
         (Test-Path -LiteralPath "$src\gamedata\scripts\lewd_lens_hider.script")) {
         $swap = @{ Src = $src; Cur = $cur.FullName; Name = $cur.Name; Bk = $bk }
     }

@@ -48,81 +48,207 @@ function Write-FileAtomic ([string]$Path, [string]$Text) {
 }
 
 # --- finding the game ------------------------------------------------------
-# Join-Path THROWS on a drive letter that does not exist; build plain strings
-# and wrap the test so a missing D: is just "false".
-function Test-GammaRoot ($root) {
-    if ([string]::IsNullOrWhiteSpace($root)) { return $false }
-    try {
-        $r = $root.Trim().TrimEnd('\')
-        (Test-Path -LiteralPath "$r\Anomaly\bin\AnomalyDX11AVX.exe") -and
-        (Test-Path -LiteralPath "$r\Anomaly\db")
-    } catch { $false }
-}
-# accept the root, the Anomaly folder or the GAMMA folder
-function Resolve-GammaRoot ($typed) {
-    if ([string]::IsNullOrWhiteSpace($typed)) { return $null }
-    $t = $typed.Trim().Trim('"').Trim().TrimEnd('\')
-    # Split-Path -Parent throws on a bare drive ("C:"): a drive has no parent to try
-    foreach ($try in @($t, $(if ($t -notmatch '^[A-Za-z]:$') { Split-Path -Parent $t }))) {
-        if (Test-GammaRoot $try) { return $try }
+# An install is two folders: Anomaly (bin\AnomalyDX11AVX.exe + db) and the
+# G.A.M.M.A. MO2 folder (ModOrganizer.ini + mods + profiles). Usually they sit
+# side by side as <folder>\Anomaly + <folder>\GAMMA ("standard"). Some players
+# keep them apart ("split", e.g. E:\Anomaly + E:\GAMMA\GAMMA RC3); MO2's own
+# gamePath setting says where its Anomaly is.
+# Join-Path THROWS on a drive letter that does not exist: build plain strings
+# and wrap every test, so a missing D: is just "no".
+
+# selected_profile / gamePath are stored by Qt as @ByteArray(...) with \xHH escapes
+# for non-ASCII bytes (e.g. a Greek letter becomes \xce\x94) and \\ for a backslash.
+function Decode-QtValue ($v) {
+    $v = $v.Trim()
+    if ($v -match '^@ByteArray\((.*)\)$') { $v = $Matches[1] }
+    $bytes = New-Object System.Collections.Generic.List[byte]
+    $i = 0
+    while ($i -lt $v.Length) {
+        $c = $v[$i]
+        if ($c -eq '\' -and $i + 1 -lt $v.Length) {
+            $n = $v[$i + 1]
+            if ($n -eq 'x') {
+                $hex = ''
+                $j = $i + 2
+                while ($j -lt $v.Length -and $hex.Length -lt 2 -and "$($v[$j])" -match '^[0-9a-fA-F]$') { $hex += $v[$j]; $j++ }
+                if ($hex.Length -gt 0) { $bytes.Add([Convert]::ToByte($hex, 16)); $i = $j; continue }
+            }
+            if ($n -eq '\' -or $n -eq '"') { $bytes.Add([byte][char]$n); $i += 2; continue }
+        }
+        foreach ($b in $Utf8.GetBytes("$c")) { $bytes.Add($b) }
+        $i++
     }
+    $Utf8.GetString($bytes.ToArray())
+}
+
+# full path without a trailing backslash; a drive root is "C:" (never ".NET's current dir on C:")
+function Get-NormPath ([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    try {
+        $t = $Path.Trim().Trim('"').Trim().Replace('/', '\')
+        if ($t -match '^[A-Za-z]:$') { $t = "$t\" }
+        return [IO.Path]::GetFullPath($t).TrimEnd('\')
+    } catch { return $null }
+}
+function Get-ParentPath ([string]$Path) {
+    if (-not $Path -or $Path -match '^[A-Za-z]:$') { return $null }     # a drive has no parent
+    Get-NormPath (Split-Path -Parent "$Path\")
+}
+function Test-AnomalyDir ($d) {
+    if (-not $d) { return $false }
+    try { (Test-Path -LiteralPath "$d\bin\AnomalyDX11AVX.exe") -and (Test-Path -LiteralPath "$d\db") } catch { $false }
+}
+function Test-Mo2Dir ($d) {
+    if (-not $d) { return $false }
+    try { (Test-Path -LiteralPath "$d\ModOrganizer.ini") -and (Test-Path -LiteralPath "$d\mods") -and (Test-Path -LiteralPath "$d\profiles") } catch { $false }
+}
+function Get-Mo2GamePath ($Mo2) {
+    try {
+        $line = [IO.File]::ReadAllLines("$Mo2\ModOrganizer.ini", $Utf8) | Where-Object { $_ -match '^gamePath=' } | Select-Object -First 1
+        if ($line) { return Get-NormPath (Decode-QtValue $line.Substring('gamePath='.Length)) }
+    } catch { }
     return $null
 }
-# returns the GAMMA root, or throws. $From = the folder this script runs from.
-function Find-GammaRoot ([string]$GamePath, [string]$From) {
-    if ($GamePath) {
-        # an explicit path is never second-guessed: a typo must not land in another install
-        $r = Resolve-GammaRoot $GamePath
-        if (-not $r) { throw "-GamePath '$GamePath' has no Anomaly\bin\AnomalyDX11AVX.exe" }
-        return $r
-    }
-    $candidates = @($From, (Split-Path -Parent $From), (Split-Path -Parent (Split-Path -Parent $From)))
-    $drives = @()
+# Home = where .slopray and the uninstaller .bat live: the shared folder in the
+# standard layout, the Anomaly folder in a split one.
+function New-GammaInstall ([string]$Anomaly, [string]$Mo2) {
+    $a = Get-NormPath $Anomaly; $m = Get-NormPath $Mo2
+    $pa = Get-ParentPath $a
+    $standard = $pa -and ($pa -ieq (Get-ParentPath $m)) -and ((Split-Path -Leaf $a) -ieq 'Anomaly') -and ((Split-Path -Leaf $m) -ieq 'GAMMA')
+    @{ Anomaly = $a; Mo2 = $m; Home = $(if ($standard) { $pa } else { $a }); Split = -not $standard }
+}
+# A typed folder can be the shared folder, the Anomaly folder, the MO2 folder, or a
+# folder with a Slop-Ray record. Returns an install, or $null.
+function Resolve-GammaInstall ([string]$Path) {
+    $x = Get-NormPath $Path
+    if (-not $x) { return $null }
     try {
-        $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Root -match '^[A-Za-z]:\\$' } |
-                  ForEach-Object { $_.Root.TrimEnd('\') }
+        $rp = "$x\.slopray\record.json"
+        if (Test-Path -LiteralPath $rp) {
+            $rec = Get-Content -LiteralPath $rp -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($rec.anomaly -and $rec.mo2 -and (Test-AnomalyDir $rec.anomaly) -and (Test-Mo2Dir $rec.mo2)) { return New-GammaInstall $rec.anomaly $rec.mo2 }
+        }
     } catch { }
-    if (-not $drives) { $drives = @($env:SystemDrive) }
-    foreach ($d in $drives) {
-        $candidates += "$d\Program Files (x86)\GOG Galaxy\Games\S.T.A.L.K.E.R. GAMMA"
-        $candidates += "$d\Program Files\GOG Galaxy\Games\S.T.A.L.K.E.R. GAMMA"
-        $candidates += "$d\GOG Galaxy\Games\S.T.A.L.K.E.R. GAMMA"
-        $candidates += "$d\Program Files (x86)\Steam\steamapps\common\S.T.A.L.K.E.R. GAMMA"
-        $candidates += "$d\SteamLibrary\steamapps\common\S.T.A.L.K.E.R. GAMMA"
-        $candidates += "$d\S.T.A.L.K.E.R. GAMMA"
-        $candidates += "$d\STALKER GAMMA"
-        $candidates += "$d\GAMMA"
-        $candidates += "$d\Games\S.T.A.L.K.E.R. GAMMA"
-        $candidates += "$d\Games\STALKER GAMMA"
-        $candidates += "$d\Games\GAMMA"
-        $candidates += "$d\STALKER MODS\S.T.A.L.K.E.R. GAMMA"
+    $px = Get-ParentPath $x
+    $mo2 = @($x, "$x\GAMMA", $(if ((Test-AnomalyDir $x) -and $px) { "$px\GAMMA" })) |
+           Where-Object { Test-Mo2Dir $_ } | Select-Object -First 1
+    if (-not $mo2) { return $null }
+    $an = Get-Mo2GamePath $mo2           # where MO2 really starts the game from
+    if (-not (Test-AnomalyDir $an)) {
+        $pm = Get-ParentPath $mo2
+        $an = @("$x\Anomaly", $x, $(if ($pm) { "$pm\Anomaly" })) | Where-Object { Test-AnomalyDir $_ } | Select-Object -First 1
     }
-    $root = $candidates | Where-Object { Test-GammaRoot $_ } | Select-Object -First 1
-    if (-not $root) {
+    if ($an) { return New-GammaInstall $an $mo2 }
+    return $null
+}
+# why a folder is not a complete install, in words a player understands
+function Get-GammaProblem ([string]$Path) {
+    $x = Get-NormPath $Path
+    if (-not $x -or -not (Test-Path -LiteralPath $x)) { return "'$Path' does not exist." }
+    $an = @("$x\Anomaly", $x) | Where-Object { Test-AnomalyDir $_ } | Select-Object -First 1
+    $mo2 = @($x, "$x\GAMMA") | Where-Object { Test-Mo2Dir $_ } | Select-Object -First 1
+    if ($an -and -not $mo2) {
+        return "found Anomaly in '$an', but no G.A.M.M.A. MO2 folder (ModOrganizer.ini + mods + profiles) next to it. " +
+               "Install G.A.M.M.A. first. If it is somewhere else, give me the GAMMA folder that has ModOrganizer.ini."
+    }
+    if ($mo2 -and -not $an) {
+        return "found the G.A.M.M.A. MO2 folder '$mo2', but not its Anomaly folder (bin\AnomalyDX11AVX.exe + db). " +
+               "Its game path is '$(Get-Mo2GamePath $mo2)'. Finish the G.A.M.M.A. install first, or give me the folder that holds Anomaly."
+    }
+    return "'$x' has no G.A.M.M.A. install (looked for Anomaly\bin\AnomalyDX11AVX.exe and GAMMA\ModOrganizer.ini + mods + profiles). Install G.A.M.M.A. first."
+}
+function Find-GammaInstalls {
+    $test = $env:SLOPRAY_TEST_SEARCH_ONLY      # tests: only these folders, no drive search
+    $candidates = @()
+    $drives = @()
+    if ($test) { $candidates = $test.Split(';') }
+    else {
+        try {
+            $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Root -match '^[A-Za-z]:\\$' } | ForEach-Object { $_.Root.TrimEnd('\') }
+        } catch { }
+        if (-not $drives) { $drives = @($env:SystemDrive) }
+        foreach ($d in $drives) {
+            foreach ($sub in 'Program Files (x86)\GOG Galaxy\Games\S.T.A.L.K.E.R. GAMMA', 'Program Files\GOG Galaxy\Games\S.T.A.L.K.E.R. GAMMA',
+                             'GOG Galaxy\Games\S.T.A.L.K.E.R. GAMMA', 'Program Files (x86)\Steam\steamapps\common\S.T.A.L.K.E.R. GAMMA',
+                             'SteamLibrary\steamapps\common\S.T.A.L.K.E.R. GAMMA', 'S.T.A.L.K.E.R. GAMMA', 'STALKER GAMMA', 'GAMMA',
+                             'Games\S.T.A.L.K.E.R. GAMMA', 'Games\STALKER GAMMA', 'Games\GAMMA', 'STALKER MODS\S.T.A.L.K.E.R. GAMMA') {
+                $candidates += "$d\$sub"
+            }
+            $candidates += $d                  # the game straight on a drive (C:\Anomaly + C:\GAMMA)
+        }
+    }
+    $found = [ordered]@{}
+    foreach ($c in $candidates) {
+        $i = Resolve-GammaInstall $c
+        if ($i) { $found["$($i.Anomaly)|$($i.Mo2)".ToLowerInvariant()] = $i }
+    }
+    if (-not $found.Count -and -not $test) {
         Write-Host "  not in the usual places - searching drives $($drives -join ' ') (a minute or two)"
         foreach ($d in $drives) {
-            try {
-                $hit = Get-ChildItem -LiteralPath "$d\" -Filter 'AnomalyDX11AVX.exe' -Recurse -Depth 5 `
-                                     -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1
-            } catch { $hit = $null }
-            if ($hit) {
-                $maybe = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $hit.FullName))
-                if (Test-GammaRoot $maybe) { $root = $maybe; break }
+            foreach ($pat in 'AnomalyDX11AVX.exe', 'ModOrganizer.ini') {
+                try {
+                    $hits = @(Get-ChildItem -LiteralPath "$d\" -Filter $pat -Recurse -Depth 5 -File -Force -ErrorAction SilentlyContinue)
+                } catch { $hits = @() }
+                foreach ($h in $hits) {
+                    $dir = Split-Path -Parent $h.FullName
+                    if ($pat -eq 'AnomalyDX11AVX.exe') { $dir = Split-Path -Parent $dir }      # bin -> Anomaly
+                    $i = Resolve-GammaInstall $dir
+                    if ($i) { $found["$($i.Anomaly)|$($i.Mo2)".ToLowerInvariant()] = $i }
+                }
             }
         }
     }
-    while (-not $root) {
+    return , @($found.Values)
+}
+function Show-GammaInstall ($i) {
+    if ($i.Split) { "Anomaly: $($i.Anomaly)   G.A.M.M.A. (MO2): $($i.Mo2)" } else { $i.Home }
+}
+# Picks the install to work on, or throws with a message for the player.
+#   -GamePath   never second-guessed (a typo must not land in another install)
+#   -Ask        skip the search and ask for a folder (INSTALL - choose folder.bat)
+#   -NoPrompt   never ask (-Yes): more than one install, or none, is an error
+function Select-GammaInstall ([string]$GamePath, [string]$From, [switch]$Ask, [switch]$NoPrompt) {
+    if ($GamePath) {
+        $i = Resolve-GammaInstall $GamePath
+        if (-not $i) { throw (Get-GammaProblem $GamePath) }
+        return $i
+    }
+    if (-not $Ask) {
+        # the folder this runs from wins (the uninstaller in <game>\.slopray\tool, a pack unzipped into the game)
+        $p = Get-NormPath $From
+        for ($n = 0; $n -lt 3 -and $p; $n++) {
+            $i = Resolve-GammaInstall $p
+            if ($i) { return $i }
+            $p = Get-ParentPath $p
+        }
+        $found = Find-GammaInstalls
+        if ($found.Count -eq 1) { return $found[0] }
+        if ($found.Count -gt 1) {
+            Write-Host "  found more than one G.A.M.M.A. install:"
+            for ($k = 0; $k -lt $found.Count; $k++) { Write-Host "    $($k + 1). $(Show-GammaInstall $found[$k])" }
+            if ($NoPrompt) { throw "more than one G.A.M.M.A. install found (listed above). Run again with -GamePath and the one you want." }
+            while ($true) {
+                $ans = $null
+                try { $ans = Read-Host "Which one? Type its number (1-$($found.Count))" } catch { throw "no choice made - run again with -GamePath" }
+                if ($ans -match '^\s*(\d+)\s*$' -and [int]$Matches[1] -ge 1 -and [int]$Matches[1] -le $found.Count) { return $found[[int]$Matches[1] - 1] }
+                Write-Host "  Type a number from the list."
+            }
+        }
+        Write-Host "  no complete G.A.M.M.A. install found in the usual places."
+        if ($NoPrompt) { throw "no G.A.M.M.A. install found. Install G.A.M.M.A. first, or run again with -GamePath." }
+    }
+    while ($true) {
         Write-Host ""
-        Write-Host "Could not find it. Open the folder that CONTAINS your 'Anomaly' folder,"
-        Write-Host "copy Explorer's address bar and paste it here (right-click pastes)."
+        Write-Host "Open your G.A.M.M.A. folder in Explorer, copy the address bar and paste it here"
+        Write-Host "(right-click pastes). The folder with 'Anomaly' and 'GAMMA' in it, or either of those two."
         Write-Host "Example:  G:\STALKER MODS\S.T.A.L.K.E.R. GAMMA"
         $typed = $null
         try { $typed = Read-Host "Path" } catch { throw "no folder given - run again with -GamePath" }
-        $root = Resolve-GammaRoot $typed
-        if (-not $root) { Write-Host "  No Anomaly\bin\AnomalyDX11AVX.exe under that folder. Try again." }
+        $i = Resolve-GammaInstall $typed
+        if ($i) { return $i }
+        Write-Host "  $(Get-GammaProblem $typed)"
     }
-    return $root
 }
 
 function Get-BusyGameProcesses {
@@ -140,12 +266,15 @@ function Get-VolumeSerial ([string]$Root) {
 }
 
 # --- the install record ----------------------------------------------------
-function Open-SlopRay ([string]$Root, [string]$Catalogue) {
+# $Inst = an install from Select-GammaInstall. Paths in the record stay logical
+# ("Anomaly\bin\...", "GAMMA\mods\..."); Resolve-Rel maps them to the real folders.
+function Open-SlopRay ($Inst, [string]$Catalogue) {
     # a game on a drive root arrives as "C:", which .NET reads as "the current directory
-    # on C:" (the pack folder, or System32 when elevated). Put the backslash back first.
-    $r = [IO.Path]::GetFullPath($(if ($Root -match '^[A-Za-z]:$') { "$Root\" } else { $Root })).TrimEnd('\')
+    # on C:" (the pack folder, or System32 when elevated). Get-NormPath keeps it a root.
+    $r = Get-NormPath $Inst.Home
     $ctx = @{
-        Root = $r; Dir = "$r\.slopray"; Record = $null; WasNew = $true; Run = $null
+        Root = $r; Anomaly = (Get-NormPath $Inst.Anomaly); Mo2 = (Get-NormPath $Inst.Mo2); Split = [bool]$Inst.Split
+        Dir = "$r\.slopray"; Record = $null; WasNew = $true; Run = $null
         Cat = New-Object 'System.Collections.Generic.HashSet[string]'
         ModNames = @{}; Safe = @{}
         Notes = New-Object System.Collections.Generic.List[string]
@@ -160,10 +289,13 @@ function Open-SlopRay ([string]$Root, [string]$Catalogue) {
         $rec = ConvertTo-Hash (Get-Content -LiteralPath $rp -Raw -Encoding UTF8 | ConvertFrom-Json)
         # a record copied over from another GAMMA folder must never be trusted
         $serial = Get-VolumeSerial $r
-        if ($rec.root -ne $r -or ($rec.volumeSerial -and $serial -and $rec.volumeSerial -ne $serial)) {
-            throw "the Slop-Ray record in '$($ctx.Dir)' was made for '$($rec.root)', not this folder. " +
+        if ($rec.root -ne $r -or ($rec.volumeSerial -and $serial -and $rec.volumeSerial -ne $serial) -or
+            ($rec.mo2 -and $rec.mo2 -ne $ctx.Mo2) -or ($rec.anomaly -and $rec.anomaly -ne $ctx.Anomaly)) {
+            throw "the Slop-Ray record in '$($ctx.Dir)' was made for '$($rec.root)'$(if ($rec.mo2) { " (MO2 folder '$($rec.mo2)')" }), not this install. " +
                   "It was probably copied with the game. Nothing was changed. Move the .slopray folder out of the way only if you are sure, then run again."
         }
+        # records from v0.6 knew only the root (always the standard layout)
+        if (-not $rec.anomaly) { $rec.anomaly = $ctx.Anomaly; $rec.mo2 = $ctx.Mo2 }
         foreach ($k in 'files', 'keys', 'modlist') { if (-not $rec[$k]) { $rec[$k] = @{} } }
         foreach ($k in 'dirs', 'history') { if (-not $rec[$k]) { $rec[$k] = @() } }
         if (-not $rec.shaderCache) { $rec.shaderCache = @{ baseline = $null; stale = $null } }
@@ -175,7 +307,7 @@ function Open-SlopRay ([string]$Root, [string]$Catalogue) {
 
 function New-Record ($ctx) {
     @{
-        schema = 1; installId = [guid]::NewGuid().ToString(); root = $ctx.Root
+        schema = 1; installId = [guid]::NewGuid().ToString(); root = $ctx.Root; anomaly = $ctx.Anomaly; mo2 = $ctx.Mo2
         volumeSerial = (Get-VolumeSerial $ctx.Root); state = 'new'; runId = ''
         history = @(); files = @{}; dirs = @(); keys = @{}; modlist = @{}
         exe = $null; legacy3dss = $null; shaderCache = @{ baseline = $null; stale = $null }
@@ -187,16 +319,25 @@ function Save-Record ($ctx) {
 }
 
 # --- paths -----------------------------------------------------------------
-# rel = path relative to the GAMMA root. Refuses anything that could land
-# outside it: rooted paths, "..", and links / junctions below the root.
+# rel = a logical path: "Anomaly\..." (the Anomaly folder), "GAMMA\..." (the MO2
+# folder), anything else under the Home folder (.slopray, the uninstaller .bat).
+# In the standard layout all three are one folder tree. Refuses anything that
+# could land outside: rooted paths, "..", and links / junctions below the base.
 function Resolve-Rel ($ctx, [string]$Rel) {
     $Rel = "$Rel".Replace('/', '\').Trim('\')
     if (-not $Rel -or [IO.Path]::IsPathRooted($Rel) -or $Rel.Contains(':')) { throw "unsafe path '$Rel'" }
     foreach ($seg in $Rel.Split('\')) { if ($seg -eq '' -or $seg -eq '.' -or $seg -eq '..') { throw "unsafe path '$Rel'" } }
-    $full = [IO.Path]::GetFullPath("$($ctx.Root)\$Rel")
-    if (-not $full.StartsWith("$($ctx.Root)\", [StringComparison]::OrdinalIgnoreCase)) { throw "path leaves the GAMMA folder: '$Rel'" }
-    $p = $ctx.Root
-    foreach ($seg in $Rel.Split('\')) {
+    $base = $ctx.Root; $sub = $Rel
+    if ($ctx.Split) {
+        $first, $rest = $Rel.Split('\', 2)
+        if ($first -ieq 'Anomaly') { $base = $ctx.Anomaly; $sub = $rest }
+        elseif ($first -ieq 'GAMMA') { $base = $ctx.Mo2; $sub = $rest }
+        if (-not $sub) { return $base }
+    }
+    $full = [IO.Path]::GetFullPath("$base\$sub")
+    if (-not $full.StartsWith("$base\", [StringComparison]::OrdinalIgnoreCase)) { throw "path leaves the game folder: '$Rel'" }
+    $p = $base
+    foreach ($seg in $sub.Split('\')) {
         $p = "$p\$seg"
         if ($ctx.Safe.ContainsKey($p)) { continue }
         if (-not (Test-Path -LiteralPath $p)) { break }
@@ -208,7 +349,20 @@ function Resolve-Rel ($ctx, [string]$Rel) {
     return $full
 }
 
-function Get-Rel ($ctx, [string]$Full) { $Full.Substring($ctx.Root.Length).TrimStart('\') }
+# the logical path of a real path (inverse of Resolve-Rel)
+function Get-Rel ($ctx, [string]$Full) {
+    if ($ctx.Split) {
+        foreach ($pair in @(@($ctx.Mo2, 'GAMMA'), @($ctx.Anomaly, 'Anomaly'))) {
+            if ($Full -ieq $pair[0]) { return $pair[1] }
+            if ($Full.StartsWith("$($pair[0])\", [StringComparison]::OrdinalIgnoreCase)) {
+                $sub = $Full.Substring($pair[0].Length + 1)
+                if ($pair[1] -eq 'Anomaly' -and $pair[0] -ieq $ctx.Root -and ($sub -ieq '.slopray' -or $sub -like '.slopray\*')) { return $sub }
+                return "$($pair[1])\$sub"
+            }
+        }
+    }
+    $Full.Substring($ctx.Root.Length).TrimStart('\')
+}
 
 # --- runs and the journal --------------------------------------------------
 function Add-Journal ($ctx, [hashtable]$Op) {
@@ -231,7 +385,7 @@ function Start-Run ($ctx, [string]$Kind, [string]$Version) {
     if (Test-Path -LiteralPath "$($ctx.Dir)\record.json") {
         [IO.File]::Copy("$($ctx.Dir)\record.json", "$dir\record.before.json")
     }
-    $ctx.Run = @{ Id = $id; Dir = $dir; Kind = $Kind; Version = $Version; Ops = 0 }
+    $ctx.Run = @{ Id = $id; Dir = $dir; Kind = $Kind; Version = $Version; Ops = 0; Placed = @{} }
     $ctx.Record.state = $(if ($Kind -eq 'install') { 'installing' } else { 'uninstalling' })
     $ctx.Record.runId = $id
     Save-Record $ctx
@@ -244,15 +398,18 @@ function Move-Logged ($ctx, [string]$From, [string]$To, [string]$Kind, [string]$
 }
 
 function Move-DirLogged ($ctx, [string]$From, [string]$To) {
+    if ([IO.Path]::GetPathRoot($From) -ne [IO.Path]::GetPathRoot($To)) { throw "can't move a folder to another drive: '$From' -> '$To'" }
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $To))
     Add-Journal $ctx @{ op = 'dirmove'; from = $From; to = $To }
     [IO.Directory]::Move($From, $To)
 }
 
 function New-TrackedDirs ($ctx, [string]$RelDir) {
-    $p = $ctx.Root; $r = ''
+    if (-not $RelDir) { return }                  # a file straight in the Home folder
+    $r = ''
     foreach ($seg in $RelDir.Split('\')) {
-        $p = "$p\$seg"; $r = $(if ($r) { "$r\$seg" } else { $seg })
+        $r = $(if ($r) { "$r\$seg" } else { $seg })
+        $p = Resolve-Rel $ctx $r
         if (-not (Test-Path -LiteralPath $p)) {
             Add-Journal $ctx @{ op = 'mkdir'; rel = $r }
             [void][IO.Directory]::CreateDirectory($p)
@@ -281,6 +438,7 @@ function Install-OwnedFile ($ctx, [string]$Rel, [string]$Src, [switch]$PackMod, 
     $new = Get-Sha $Src
     $e = $ctx.Record.files[$Rel]
     $action = 'new'
+    $ctx.Run.Placed[$Rel] = $true      # the final check covers exactly these
     if (Test-Path -LiteralPath $dst -PathType Container) { throw "'$Rel' is a folder, expected a file" }
     if (Test-Path -LiteralPath $dst -PathType Leaf) {
         $cur = Get-Sha $dst
@@ -348,6 +506,30 @@ function Install-OwnedFile ($ctx, [string]$Rel, [string]$Src, [switch]$PackMod, 
     $e.installedHash = $new
     if ($Keep) { $e.keep = $true }
     return $action
+}
+
+# --- moving a file of yours out of the way ------------------------------------
+# Moves a file that is not ours into the backup and puts nothing in its place
+# (SSS24's loose Streamline DLLs). installedHash 'absent' = we removed it, so the
+# uninstaller (Restore-OwnedFile) puts the backup back. Returns 'moved', 'done'
+# (not there) or 'kept' (a backup of a different file is already there: left as is).
+function Remove-ForeignFile ($ctx, [string]$Rel) {
+    $p = Resolve-Rel $ctx $Rel
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return 'done' }
+    Test-Hook $ctx
+    $cur = Get-Sha $p
+    $e = $ctx.Record.files[$Rel]
+    if ($e -and $e.baseline -ne 'present') { return 'kept' }
+    $bak = Get-BackupPath $ctx $Rel
+    if (Test-Path -LiteralPath $bak) {
+        if ((Get-Sha $bak) -ne $cur) { return 'kept' }
+        Move-Logged $ctx $p (Get-DisplacedPath $ctx $Rel) 'displace' $cur    # backup already holds it
+    } else {
+        Move-Logged $ctx $p $bak 'backup' $cur
+    }
+    if (-not $e) { $e = @{}; $ctx.Record.files[$Rel] = $e }
+    $e.baseline = 'present'; $e.baselineHash = $cur; $e.installedHash = 'absent'
+    return 'moved'
 }
 
 # --- removing our files from a folder ---------------------------------------

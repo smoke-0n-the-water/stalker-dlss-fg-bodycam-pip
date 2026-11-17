@@ -55,6 +55,16 @@ _Avoid_: user modification, conflict
 **Recovery folder**:
 Where a drifted file is moved instead of being deleted or overwritten, kept until the player removes it.
 
+### Foreign shader setups
+
+**SSS24 setup**:
+A GAMMA root where the player followed the Screen Space Shaders Update 24 install: the SSS24 mod ticked, SSS 23 unticked, SSS24's own exe and Streamline DLLs in `Anomaly\bin`, and demonized's MT-TEST gamedata mod ticked. Identified by file contents, never by mod folder name.
+_Avoid_: SSS24 install, SSS RC
+
+**SSS revert**:
+The install step that turns an SSS24 setup back into the SSS 23.5 setup Slop-Ray supports. Every change it makes is an Owned key or a Replaced file, so Uninstall restores the SSS24 setup.
+_Avoid_: downgrade, SSS rollback
+
 ### Settings edits
 
 **Owned key**:
