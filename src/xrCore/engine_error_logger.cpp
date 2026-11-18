@@ -100,6 +100,9 @@ namespace
     thread_local bool g_lastWriteSucceeded = false;
     struct FailureCodeState { long result = 0, removedReason = 0; bool valid = false, hasRemovedReason = false; };
     thread_local FailureCodeState g_failureCode;
+    // Lines about a lost GPU device, kept for the record that follows (SetDeviceFailureFacts).
+    char g_deviceFacts[2048] = {};
+    long g_deviceFactsResult = 0;
     char g_recordBuffer[65536] = {};
     BreadcrumbSlot g_breadcrumbs[kBreadcrumbCount] = {};
     CrashWorkspace g_crashWorkspace = {};
@@ -855,6 +858,14 @@ namespace
             append_format(output, capacity, used, "Device    : removed, reason 0x%08lX (%s)\r\n",
                 static_cast<unsigned long>(g_failureCode.removedReason), reason ? reason : "unknown");
         }
+        if (*g_deviceFacts && g_deviceFactsResult == g_failureCode.result)
+            for (LPCSTR line = g_deviceFacts; *line;)
+            {
+                LPCSTR end = strchr(line, '\n');
+                const size_t length = end ? size_t(end - line) : strlen(line);
+                append_format(output, capacity, used, "%.*s\r\n", int(length), line);
+                line += length + (end ? 1 : 0);
+            }
     }
 
     void append_lua_stack(char* output, size_t capacity, size_t& used)
@@ -2294,6 +2305,45 @@ FailureCodeScope::FailureCodeScope(long result, long removedReason, bool hasRemo
 FailureCodeScope::~FailureCodeScope()
 {
     g_failureCode = {previousResult_, previousRemovedReason_, previousValid_, previousHasRemovedReason_};
+}
+
+void SetDeviceFailureFacts(long result, LPCSTR lines)
+{
+    g_deviceFacts[0] = 0;
+    g_deviceFactsResult = result;
+    if (lines)
+        copy_text(g_deviceFacts, sizeof(g_deviceFacts), lines);
+}
+
+LPCSTR ResultName(long result)
+{
+    return result_name(result);
+}
+
+bool ShowDeviceFailureMessage()
+{
+    if (!g_failureCode.valid)
+        return false;
+    switch (static_cast<unsigned long>(g_failureCode.result))
+    {
+    case 0x887A0005: case 0x887A0006: case 0x887A0007: case 0x887A0020: case 0x80070102: break;
+    default: return false;
+    }
+    LPCSTR name = result_name(g_failureCode.result);
+    char text[1400] = {};
+    _snprintf_s(text, sizeof(text), _TRUNCATE,
+        "The GPU driver stopped responding (0x%08lX %s), so the game has to close.\n\n"
+        "The details were saved to:\n%s\n\n"
+        "Things to try:\n"
+        "- Update the GPU driver.\n"
+        "- Turn off any GPU overclock or undervolt.\n"
+        "- Turn frame generation off.\n"
+        "- Check that video memory (VRAM) is not full: lower texture settings, close other programs.",
+        static_cast<unsigned long>(g_failureCode.result), name ? name : "wait timed out", g_directory);
+    wchar_t wide[1400] = {}; // the folder path is UTF-8
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wide, int(_countof(wide)));
+    MessageBoxW(nullptr, wide, L"GPU driver stopped responding", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND);
+    return true;
 }
 
 void ReportRenderFailure(long result, long removedReason, LPCSTR expression, LPCSTR file, int line, LPCSTR function)

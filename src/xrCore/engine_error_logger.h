@@ -97,6 +97,12 @@ namespace EngineErrorLogger
         bool previousValid_, previousHasRemovedReason_;
     };
 
+    // Lines of context ("\n" separated) for a lost GPU device; the next record for this result prints them.
+    XRCORE_API void SetDeviceFailureFacts(long result, LPCSTR lines);
+    XRCORE_API LPCSTR ResultName(long result); // "DXGI_ERROR_DEVICE_HUNG", or nullptr
+    // One plain message box for a GPU driver stop (device removed/hung/reset, present timeout), when the
+    // failure being reported is one. Returns false for any other failure; the record is written before this.
+    XRCORE_API bool ShowDeviceFailureMessage();
     XRCORE_API void ReportRenderFailure(long result, long removedReason,
         LPCSTR expression, LPCSTR file, int line, LPCSTR function);
     // A protected module load can reject content and continue. Keep its normal

@@ -724,6 +724,97 @@ public:
     CCC_UnsavedInteger(LPCSTR name, int* value, int min, int max) : CCC_Integer(name, value, min, max) {}
     void Save(IWriter*) override {}
 };
+
+#ifdef XR_DX12_BRIDGE
+#include "../xrRenderDX10/D3D12PresentBridge.h"
+#include "../../xrCore/engine_error_logger.h"
+// The engine-side state around a lost GPU device (Present or AcquireFrame failed), called once by the
+// bridge's stall report: the new lines go to the log, all lines are kept for the ERROR record. Fixed
+// buffers only, no engine allocator, and the only GPU queries are removed reasons, video memory
+// budget and the adapter's driver version.
+extern int ps_framelimiter;
+static void Dx12DeviceFailureFactsImpl(HRESULT result, const char* stage, HRESULT removed12, HRESULT removed11, const char* vram)
+{
+    char facts[2048];
+    size_t used = 0;
+    auto put = [&](bool log, const char* format, ...)
+    {
+        char line[400];
+        va_list args;
+        va_start(args, format);
+        _vsnprintf_s(line, sizeof(line), _TRUNCATE, format, args);
+        va_end(args);
+        if (log) Msg("[DX12 device failure] %s", line);
+        const int n = _snprintf_s(facts + used, sizeof(facts) - used, _TRUNCATE, "%s\n", line);
+        if (n > 0) used += size_t(n);
+    };
+    auto name = [](long code) { const char* n = EngineErrorLogger::ResultName(code); return n ? n : "unknown"; };
+    facts[0] = 0;
+    put(false, "Device    : removed reason DX12=0x%08lX (%s) DX11=0x%08lX (%s)", (unsigned long)removed12, name(removed12),
+        (unsigned long)removed11, name(removed11));
+    if (*vram) put(false, "VRAM      : %s", vram);
+    put(true, "Failure   : 0x%08lX (%s) at %s", (unsigned long)result, name(result), stage);
+
+    auto* bridge = HW.PresentationBridge();
+    put(true, "FrameGen  : r_frame_generation=%s, r_frame_generation_pip=%s, generating=%s x%u, failed=%s",
+        get_token_name(frame_generation_token, int(ps_r_frame_generation)),
+        get_token_name(frame_generation_pip_token, int(ps_r_frame_generation_pip)),
+        bridge && bridge->GenerationActive() ? "yes" : "no", bridge ? bridge->GenerationMultiplier() : 0u,
+        bridge && bridge->GenerationFailed() ? "yes" : "no");
+    put(true, "Upscaler  : r_upscaler=%s, r_dlss_quality=%s, r_fsr3_quality=%s",
+        get_token_name(upscaler_token_dx12, int(ps_r_upscaler)), get_token_name(dlss_quality_token, int(ps_r_dlss_quality)),
+        get_token_name(fsr3_quality_token, int(ps_r_fsr3_quality)));
+    put(true, "Resolution: render %ux%u, output %ux%u", dlss::Active() ? dlss::RenderWidth() : u32(Device.dwWidth),
+        dlss::Active() ? dlss::RenderHeight() : u32(Device.dwHeight), u32(Device.dwWidth), u32(Device.dwHeight));
+    put(true, "Sync      : rs_v_sync=%s, r__framelimit=%d, Reflex=%s, VRR tearing=%s", psDeviceFlags.test(rsVSync) ? "on" : "off",
+        ps_framelimiter, bridge && bridge->GetStreamline() ? "Streamline" : "off", HW.m_SupportsVRR ? "yes" : "no");
+
+    DXGI_ADAPTER_DESC1 desc{};
+    LARGE_INTEGER umd{};
+    if (HW.m_pAdapter && SUCCEEDED(HW.m_pAdapter->GetDesc1(&desc)))
+    {
+        char gpu[128]{};
+        WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, gpu, int(sizeof(gpu) - 1), nullptr, nullptr);
+        if (SUCCEEDED(HW.m_pAdapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd)))
+        {
+            const unsigned c = HIWORD(umd.LowPart), d = LOWORD(umd.LowPart);
+            if (desc.VendorId == 0x10DE) // NVIDIA's public number is the last five digits of the driver version
+                put(true, "Driver    : %s, %u.%u.%u.%u (NVIDIA %u.%02u)", gpu, HIWORD(umd.HighPart), LOWORD(umd.HighPart), c, d,
+                    (c % 10) * 100 + d / 100, d % 100);
+            else
+                put(true, "Driver    : %s, %u.%u.%u.%u", gpu, HIWORD(umd.HighPart), LOWORD(umd.HighPart), c, d);
+        }
+        else
+            put(true, "Driver    : %s, version unavailable", gpu);
+    }
+    EngineErrorLogger::SetDeviceFailureFacts(result, facts);
+}
+
+void Dx12DeviceFailureFacts(HRESULT result, const char* stage, HRESULT removed12, HRESULT removed11, const char* vram)
+{
+    __try { Dx12DeviceFailureFactsImpl(result, stage, removed12, removed11, vram); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+// Hidden test command, no menu entry: runs the real report and then the real fatal path for a GPU driver
+// stop (message box, ERROR record, crash dump), and the game closes. Nothing happens unless it is typed.
+// r__debug_device_removed [0 = device hung (default), 1 = device removed, 2 = present timeout]
+class CCC_DebugDeviceRemoved : public IConsole_Command
+{
+public:
+    CCC_DebugDeviceRemoved(LPCSTR name) : IConsole_Command(name) { bEmptyArgsHandled = TRUE; }
+    void Execute(LPCSTR args) override
+    {
+        const int kind = args && *args ? atoi(args) : 0;
+        const HRESULT result = kind == 1 ? DXGI_ERROR_DEVICE_REMOVED : kind == 2 ? HRESULT_FROM_WIN32(WAIT_TIMEOUT) : DXGI_ERROR_DEVICE_HUNG;
+        if (auto* bridge = HW.PresentationBridge()) bridge->ReportDeviceFailureForTest(result);
+        bool ignore_always = false;
+        Debug.error(result, "r__debug_device_removed (simulated)", DEBUG_INFO, ignore_always);
+    }
+    void Status(TStatus& status) override { xr_strcpy(status, "0 hung, 1 removed, 2 timeout (closes the game)"); }
+    void Save(IWriter*) override {}
+};
+#endif // XR_DX12_BRIDGE
 #endif
 
 #if defined(USE_DX10) || defined(USE_DX11)
@@ -1868,6 +1959,7 @@ void xrRender_initconsole()
     CMD4(CCC_SupportedToken, "r_frame_generation", &ps_r_frame_generation, frame_generation_token, &dlss::FrameGenerationSupported);
     CMD4(CCC_SupportedToken, "r_frame_generation_pip", &ps_r_frame_generation_pip, frame_generation_pip_token, &FrameGenerationPipSupported);
     CMD4(CCC_Integer, "r_fg_diagnostics", &ps_r_fg_diagnostics, 0, 1);
+    CMD1(CCC_DebugDeviceRemoved, "r__debug_device_removed");
     CMD4(CCC_UnsavedInteger, "r_fg_hudless_test", &ps_r_fg_hudless_test, 0, 40);
     CMD4(CCC_Integer, "r_fg_laser_fill", &ps_r_fg_laser_fill, 0, 1);
     CMD4(CCC_UnsavedInteger, "r_fg_laser_fill_view", &ps_r_fg_laser_fill_view, 0, 1);

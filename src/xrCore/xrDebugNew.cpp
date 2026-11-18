@@ -293,7 +293,10 @@ void xrDebug::backend(const char* expression, const char* description, const cha
     if (IsDebuggerPresent())
         DebugBreak();
 
-	// No dialog: the report is already in ERROR, show the player that folder.
+	// A GPU driver stop gets one plain message (the record and dump are already written).
+	EngineErrorLogger::ShowDeviceFailureMessage();
+
+	// No generic dialog: the report is already in ERROR, show the player that folder.
 	EngineErrorLogger::OpenLogFolder();
 
 	CS.Leave();
