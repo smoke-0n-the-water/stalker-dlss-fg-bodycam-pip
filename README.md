@@ -1,7 +1,10 @@
 # Slop-Ray Engine: S.T.A.L.K.E.R. GAMMA Bodycam + PiP + DLSS + Frame Gen
 
 ## What's new in v0.7-dev
-https://cdn.discordapp.com/attachments/1425482008125112383/1571307652632420443/guns.png?ex=6afe3649&is=6afce4c9&hm=2c7e052600fab091c67c45267072d03deeee47a5bc477646f395f998c386e229&
+<img width="1000" height="538" alt="aznoiuvulebedp4lmwro" src="https://github.com/user-attachments/assets/5e03d0ce-1a84-4895-a653-f1df6af746fc" />
+
+
+
 
 - **Fixed: offline A-Life was frozen.** Since v0.5.0-dev, squads away from you never moved, smart terrains never refilled, and **delivery quests** came with no target and could not be finished. Squads move again and new delivery quests work. A delivery quest you took on an older build stays broken: abandon it and take a new one. Huge thanks to **ProgWalrus** for finding this one.
 - **No more AVX2.** Both exes now need only **AVX** (any CPU from about 2011 on). On a 9800X3D the AVX build benchmarks the same as the old AVX2 one.
