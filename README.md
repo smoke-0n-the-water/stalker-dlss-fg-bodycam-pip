@@ -44,7 +44,7 @@
 
 | File | For |
 |---|---|
-| `GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack.zip` | **Everyone.** New install, or update from any older pack (v0.3 to v0.6). |
+| `GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack.zip` | **Everyone.** New install, or update from any older pack (v0.3 to v0.6) DOWLOAD CLICK HERE: https://github.com/smoke-0n-the-water/stalker-dlss-fg-bodycam-pip/releases/download/v0.7-dev/GAMMA.v0.7-dev.+.DLSS.0.721.+.Frame.Gen.-.Full.Pack.zip|
 | `AnomalyDX12-v0.7-dev-pdb.zip` | Debug symbols for the DX12 exe. Only for crash reports. |
 | `AnomalyDX11AVX-v0.7-dev-pdb.zip` | Debug symbols for the DX11 exe. Only for crash reports. |
 
