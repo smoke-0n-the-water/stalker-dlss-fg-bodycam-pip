@@ -1025,6 +1025,129 @@ $scenarios['S39_texres_player_opt_in_kept_on_rerun'] = {
     Check ((ML $s) -contains "+$texMod") "player's tick on mod 7 kept on re-run"
 }
 
+# --- Atmos, pack check, HAGS (v0.7.1 T2) -------------------------------------------
+# The pack Atmos add-on (RC7 and RC8 both use it) and the stock one; the installer must
+# never untick a player's Atmospherics mod, whatever is ticked.
+$atmosRc7 = '290- Atmospherics 2.69 RC7.7 - Hippobot'
+$atmosRc8 = 'xx-290- Atmospherics v2.69 RC8 Hotfix 4 - Hippobot'
+$atmosAddon = 'Add-on - Atmospherics RC7 users'
+function Add-AtmosMod ($s, $name) {
+    W "$($s.Root)\GAMMA\mods\$name\gamedata\shaders\r3\pbr_brdf_character.h" "atmos $name"
+    Add-ModLine $s "+$name"
+}
+function Add-AtmosAddonZip ($s) {
+    New-Zip "$($s.Pack)\STEP 3 - Optional\$atmosAddon.zip" @{ 'gamedata\shaders\r3\ssfx.h' = 'rc7 atmos addon' }
+}
+# a manifest of the pack as built (what the pack build step writes); packs made by the other tests have none
+function Add-Manifest ($s) {
+    $f = [ordered]@{}
+    foreach ($x in Get-ChildItem -LiteralPath $s.Pack -Recurse -File | Where-Object { $_.FullName.Substring($s.Pack.Length + 1) -like 'STEP *' } | Sort-Object FullName) {
+        $f[$x.FullName.Substring($s.Pack.Length + 1).Replace('\', '/')] = Sha $x.FullName
+    }
+    W "$($s.Pack)\pack-manifest.json" ([ordered]@{ pack = 'test'; files = $f } | ConvertTo-Json -Depth 4)
+}
+# no player Atmospherics mod line was unticked (pack add-ons are not the player's mod)
+function Assert-AtmosKept ($s, $names) {
+    $ml = ML $s
+    foreach ($n in $names) { Check ($ml -contains "+$n") "Atmos '$n' still ticked" }
+    $off = @($ml | Where-Object { $_ -match '^-.*Atmospherics' -and $_ -notlike '-Add-on - *' })
+    Check ($off.Count -eq 0) "no Atmospherics mod unticked ($($off -join ', '))"
+}
+
+$scenarios['S40_atmos_rc7_only'] = {
+    $s = New-Scenario 'S40_atmos_rc7_only'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s $atmosRc7
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Assert-AtmosKept $s @($atmosRc7)
+    Check ((ML $s) -contains "+$atmosAddon") "RC7 add-on ticked"
+    Check ($script:lastOut -notmatch 'both RC7 and RC8') "no both-ticked warning"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "RC7 tree back to original after uninstall"
+}
+
+$scenarios['S41_atmos_rc8_only'] = {
+    $s = New-Scenario 'S41_atmos_rc8_only'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s $atmosRc8
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Assert-AtmosKept $s @($atmosRc8)
+    Check ((ML $s) -contains "+$atmosAddon") "RC7 add-on (also for RC8) ticked"
+    Check ($script:lastOut -notmatch 'both RC7 and RC8') "no both-ticked warning"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "RC8 tree back to original after uninstall"
+}
+
+$scenarios['S42_atmos_rc7_and_rc8_both_ticked'] = {
+    $s = New-Scenario 'S42_atmos_rc7_and_rc8_both_ticked'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s $atmosRc7; Add-AtmosMod $s $atmosRc8
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    $o = $script:lastOut
+    Check ($o -match 'both RC7 and RC8' -and $o.Contains($atmosRc7) -and $o.Contains($atmosRc8)) "warns and names both mods"
+    Check ($o -match "(?s)LEFT TO DO.*both RC7 and RC8") "warning repeated in LEFT TO DO"
+    Assert-AtmosKept $s @($atmosRc7, $atmosRc8)
+    Check ((ML $s) -contains "+$atmosAddon") "RC7 add-on ticked"
+    Check ($o -notmatch [string][char]0x2014) "no em dash in the output"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "both-ticked tree back to original after uninstall"
+}
+
+$scenarios['S43_pack_check_stops_on_bad_pack'] = {
+    $s = New-Scenario 'S43_pack_check_stops_on_bad_pack'
+    Add-Manifest $s
+    $c = Install $s @('-DryRun')
+    Check ($c -eq 0 -and $script:lastOut -match 'Pack check: every file') "intact pack passes the check, also in a dry run (got $c)"; Show-OnFail ($c -eq 0)
+    # a file missing (cut-off download)
+    Remove-Item -LiteralPath "$($s.Pack)\STEP 7 - Frame generation\bin\streamline\sl.common.dll" -Force      # test fixture only
+    $pre = Snap $s.Root
+    $c = Install $s
+    $o = $script:lastOut
+    Check ($c -eq 1) "missing file: exit 1 (got $c)"; Show-OnFail ($c -eq 1)
+    Check ($o -match 're-download the full pack' -and $o -match 'sl\.common\.dll') "says re-download and names the missing file"
+    Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "nothing written"
+    Check ((Compare-Snap $pre (Snap $s.Root)).Count -eq 0) "game folder unchanged"
+    # files cut short (same name, different content): an engine file and a zip
+    W "$($s.Pack)\STEP 7 - Frame generation\bin\streamline\sl.common.dll" 'sl common'
+    W "$($s.Pack)\STEP 7 - Frame generation\bin\AnomalyDX12.exe" 'SR dx1'
+    $z = "$($s.Pack)\STEP 2 - MO2 mods\1 - Test Patch.zip"
+    $bytes = [IO.File]::ReadAllBytes($z); [IO.File]::WriteAllBytes($z, $bytes[0..($bytes.Length - 20)])
+    $c = Install $s
+    $o = $script:lastOut
+    Check ($c -eq 1) "mismatched files: exit 1 (got $c)"; Show-OnFail ($c -eq 1)
+    Check ($o -match 're-download the full pack' -and $o -match 'AnomalyDX12\.exe' -and $o -match '1 - Test Patch\.zip') "names the mismatched engine file and zip"
+    Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "nothing written (mismatch)"
+    Check ((Compare-Snap $pre (Snap $s.Root)).Count -eq 0) "game folder unchanged (mismatch)"
+}
+
+$scenarios['S44_hags_off_warns'] = {
+    $s = New-Scenario 'S44_hags_off_warns'
+    foreach ($mode in '0', 'missing') {
+        $env:SLOPRAY_TEST_HAGS = $mode
+        try { $c = Install $s @('-DryRun') } finally { Remove-Item Env:\SLOPRAY_TEST_HAGS }
+        $o = $script:lastOut
+        Check ($c -eq 0) "HAGS '$mode': exit 0, warning only (got $c)"; Show-OnFail ($c -eq 0)
+        Check ($o -match 'Hardware-accelerated GPU scheduling' -and $o -match 'Settings > System > Display > Graphics > Default graphics settings') "HAGS '$mode': warns with the Windows path"
+        Check ($o -notmatch [string][char]0x2014) "HAGS '$mode': no em dash"
+    }
+    Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "dry runs wrote nothing"
+    $env:SLOPRAY_TEST_HAGS = '0'
+    try { $c = Install $s } finally { Remove-Item Env:\SLOPRAY_TEST_HAGS }
+    Check ($c -eq 0 -and $script:lastOut -match '(?s)LEFT TO DO.*Hardware-accelerated GPU scheduling') "real run: exit 0, repeated in LEFT TO DO (got $c)"; Show-OnFail ($c -eq 0)
+}
+
+$scenarios['S45_hags_on_quiet'] = {
+    $s = New-Scenario 'S45_hags_on_quiet'
+    $env:SLOPRAY_TEST_HAGS = '2'
+    try { $c = Install $s @('-DryRun') } finally { Remove-Item Env:\SLOPRAY_TEST_HAGS }
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ($script:lastOut -notmatch 'Hardware-accelerated GPU scheduling') "no warning when HAGS is on"
+    Check ($script:lastOut -match 'GPU scheduling \(HAGS\): on') "says it is on"
+}
+
 # --- run ---------------------------------------------------------------------
 Write-Host "Slop-Ray installer tests in $base"
 foreach ($k in $scenarios.Keys) {

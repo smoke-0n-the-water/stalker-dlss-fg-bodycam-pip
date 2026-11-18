@@ -152,6 +152,32 @@ if (-not $sr.WasNew -and $sr.Record.state -eq 'uninstalling') {
     Pause-End 1
 }
 
+# --- 2b. pack check ---------------------------------------------------------
+# pack-manifest.json (written when the pack is built) lists every pack file and its SHA-256.
+# A cut-off or damaged download is caught here, before anything else is read from the pack
+# (a cut-off zip would otherwise stop the installer with a confusing error) and before
+# anything is changed. (catalogue.json cannot do this: it only holds the hashes of PAST releases.)
+Head "Checking the pack files"
+$manifestFile = "$pack\pack-manifest.json"
+if (-not (Test-Path -LiteralPath $manifestFile)) {
+    Warn "this pack has no pack-manifest.json, so its files were not checked against a list."
+} else {
+    $manifest = (Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json).files.PSObject.Properties
+    $packBad = @()
+    foreach ($e in ($manifest | Sort-Object Name)) {
+        $f = "$pack\$($e.Name.Replace('/', [string][char]92))"
+        if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { $packBad += "$($e.Name) (missing)" }
+        elseif ((Get-Sha $f) -ne $e.Value) { $packBad += "$($e.Name) (damaged)" }
+    }
+    if ($packBad.Count) {
+        Bad "this pack is incomplete or damaged: $($packBad.Count) of $(@($manifest).Count) files are missing or different. Re-download the full pack and run me again. Nothing was changed."
+        foreach ($n in ($packBad | Select-Object -First 5)) { Say "     $n" }
+        if ($packBad.Count -gt 5) { Say "     ... and $($packBad.Count - 5) more" }
+        Pause-End 1
+    }
+    Good "Pack check: every file is there and matches its checksum ($(@($manifest).Count) files)"
+}
+
 # --- 3. what gets copied -------------------------------------------------
 # Nothing is written in this part: it only builds the list of changes.
 # A path that is not safe (a link or junction inside the game folder) stops
@@ -197,6 +223,18 @@ if (-not $gpu) {
 $rtx       = $gpu -match 'NVIDIA.*RTX'
 $rtxFg     = $gpu -match 'RTX\s*(40|50)\d\d'          # DLSS frame gen without any unlock
 $needsUnlk = $gpu -match 'RTX\s*(20|30|40)\d\d'       # unlock: 20/30 get FG, 40 gets 3x/4x
+
+# HAGS (Hardware-accelerated GPU scheduling) should be on for the DX12 exe. Read only: the
+# installer never changes Windows settings, it tells you where the switch is.
+if ($place | Where-Object { $_.Rel -like '*\AnomalyDX12.exe' }) {
+    $hags = Get-HwSchMode
+    if ($hags -eq 2) { Good "GPU scheduling (HAGS): on" }
+    else {
+        $hagsMsg = "Hardware-accelerated GPU scheduling (HAGS) is $(if ($null -eq $hags) { 'off or not available' } else { 'off' }). The DX12 exe is meant to run with it on. Turn it on in Windows: Settings > System > Display > Graphics > Default graphics settings > Hardware-accelerated GPU scheduling, then restart Windows."
+        Warn $hagsMsg
+        $todo.Add($hagsMsg)
+    }
+}
 
 # OptiScaler (STEP 6, janblade's F5 build). Its built-in unlock ([MFGUnlock]
 # RTX40/RTX2030 = detect) only switches on for the GPU family that needs it.
@@ -406,6 +444,17 @@ else {
     # its deffer_impl_flat.ps is identical (brodrigz 0.721), and it ships its own ssfx_*.
     $rc7 = (Is-Enabled "*Atmospherics*RC7*") -or (Is-Enabled "*Atmospherics*RC8*") -or
            (Is-EnabledByFile 'gamedata\shaders\r3\pbr_brdf_character.h')
+    # RC7 and RC8 together fight over the same shaders. Only a warning: both stay ticked, which
+    # one to keep is the player's call (the same add-on serves either).
+    $rc7Names = @($lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } |
+                  Where-Object { $_ -like '*Atmospherics*RC7*' -and -not (Is-PackMod $_) })
+    $rc8Names = @($lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } |
+                  Where-Object { $_ -like '*Atmospherics*RC8*' -and -not (Is-PackMod $_) })
+    if ($rc7Names.Count -and $rc8Names.Count) {
+        $bothMsg = "Atmospherics is ticked in both RC7 and RC8 versions: '$($rc7Names -join "', '")' and '$($rc8Names -join "', '")'. They overwrite each other's shaders. Nothing was unticked; in MO2 keep only the one you want."
+        Warn $bothMsg
+        $todo.Add($bothMsg)
+    }
     $addons = [ordered]@{
         # SSS 23 ssfx_il/ssfx_sss_ext + grass fallback + DLSS history fix. ONLY without RC7:
         # RC7 ships its own for every IL/SSR option ("IL Atmospherics", "SSR - Atmospherics"),
