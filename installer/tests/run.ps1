@@ -953,6 +953,78 @@ $scenarios['S29c_old_sss_below_235_and_atmos'] = {
     Check ($script:lastOut -match 'SSS 23\.5: ok') "says SSS 23.5 is fine"
 }
 
+
+# --- Texture Residency off by default (v0.7.1) ----------------------------------
+# Pack mod 7 ships the MCM menu + class rules; the master switch is the user.ltx cvar.
+$texMod = '7 - Tex Residency Classes'
+$texKey = 'r__tex_res_budget_target'
+function Add-TexResMod ($s) {
+    New-Zip "$($s.Pack)\STEP 2 - MO2 mods\$texMod.zip" @{ 'gamedata\scripts\tex_residency_mcm.script' = 'mcm'; 'gamedata\configs\tex_residency.ltx' = '[default]' }
+}
+function Ltx ($s) { T "$($s.Root)\Anomaly\appdata\user.ltx" }
+# 80 saved, as every earlier install left it: replaces the line if there, else adds it
+function Set-Ltx80 ($s) {
+    $l = @([IO.File]::ReadAllLines("$($s.Root)\Anomaly\appdata\user.ltx") | Where-Object { $_ -notmatch "^$texKey\s" }) + "$texKey 80"
+    W "$($s.Root)\Anomaly\appdata\user.ltx" (($l -join "`r`n") + "`r`n")
+}
+
+$scenarios['S37_texres_off_fresh_install'] = {
+    $s = New-Scenario 'S37_texres_off_fresh_install'
+    Add-TexResMod $s
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((Ltx $s) -match "(?m)^$texKey 0\s*$") "user.ltx has $texKey 0"
+    Check ((ML $s) -contains "-$texMod") "mod 7 present in the list but unticked ($((ML $s) -join ' | '))"
+    Check (-not ((ML $s) -contains "+$texMod")) "mod 7 not ticked"
+    Check (Test-Path -LiteralPath "$($s.Root)\GAMMA\mods\$texMod\slopray-mod.json") "mod 7 still unpacked, so it can be ticked later"
+    Check ($script:lastOut -match 'Texture Residency is OFF by default' -and $script:lastOut -match 'tick .7 - Tex Residency Classes.' -and $script:lastOut -match "$texKey 80") "message says it is off and how to opt in"
+    Check ($script:lastOut -notmatch [string][char]0x2014) "no em dash in the output"
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Assert-BackToOriginal $pre $s.Root "fresh tree back to original after uninstall"
+}
+
+$scenarios['S38_texres_off_upgrade_with_80_saved'] = {
+    $s = New-Scenario 'S38_texres_off_upgrade_with_80_saved'
+    Add-TexResMod $s
+    $r = $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    # what an install from before this change left behind: 80 saved, mod 7 ticked, no memory of the switch
+    Set-Ltx80 $s
+    W "$r\$mlRel" (((ML $s) -replace "^-$([regex]::Escape($texMod))$", "+$texMod") -join "`r`n") + "`r`n"
+    $recPath = "$r\.slopray\record.json"
+    $rec = Rec $s
+    foreach ($p in @($rec.keys.PSObject.Properties | Where-Object { $_.Name -like "*|$texKey" })) { $rec.keys.PSObject.Properties.Remove($p.Name) }
+    if ($rec.PSObject.Properties['texResOff']) { $rec.PSObject.Properties.Remove('texResOff') }
+    [IO.File]::WriteAllText($recPath, ($rec | ConvertTo-Json -Depth 8), $utf8)
+    Check ((Ltx $s) -match "(?m)^$texKey 80\s*$") "set up: 80 saved"
+    $c = Install $s
+    Check ($c -eq 0) "upgrade exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((Ltx $s) -match "(?m)^$texKey 0\s*$" -and (Ltx $s) -notmatch "$texKey 80") "80 replaced by 0"
+    Check ((ML $s) -contains "-$texMod" -and -not ((ML $s) -contains "+$texMod")) "mod 7 unticked on upgrade"
+    Check ($script:lastOut -match 'Texture Residency is OFF by default' -and $script:lastOut -match "$texKey was 80") "upgrade message names the old value 80"
+    Check ($script:lastOut -match 'unticked') "message says mod 7 was unticked"
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((Ltx $s) -match "(?m)^$texKey 80\s*$") "uninstall puts the saved 80 back"
+}
+
+$scenarios['S39_texres_player_opt_in_kept_on_rerun'] = {
+    $s = New-Scenario 'S39_texres_player_opt_in_kept_on_rerun'
+    Add-TexResMod $s
+    $r = $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Set-Ltx80 $s
+    W "$r\$mlRel" (((ML $s) -replace "^-$([regex]::Escape($texMod))$", "+$texMod") -join "`r`n") + "`r`n"
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((Ltx $s) -match "(?m)^$texKey 80\s*$") "player's 80 kept on re-run"
+    Check ((ML $s) -contains "+$texMod") "player's tick on mod 7 kept on re-run"
+}
+
 # --- run ---------------------------------------------------------------------
 Write-Host "Slop-Ray installer tests in $base"
 foreach ($k in $scenarios.Keys) {

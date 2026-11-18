@@ -373,6 +373,11 @@ function Install-GlossyAddon ($name) {
 # --- 6. unpack mods ------------------------------------------------------
 # modlist edits collected below: tick = force "+", drop = remove line (true) or untick (false)
 $tickNames = @{}; $dropNames = @{}
+# Texture Residency is off by default from v0.7.1. Once per install (the record remembers it) the
+# master switch goes to 0 and pack mod 7 (menu + class rules) is left unticked; after that a
+# re-run keeps whatever the player chose.
+$texPattern = '7 - Tex Residency Classes*'
+$texResMigrate = -not ($sr.Record -and $sr.Record.texResOff)
 Head "MO2 mods to unpack"
 $installed = New-Object System.Collections.Generic.List[string]
 $modPlan = New-Object System.Collections.Generic.List[object]
@@ -651,7 +656,12 @@ function Build-Modlist {
         $rest += $l
     }
     $top = @()
-    for ($i = $installed.Count - 1; $i -ge 0; $i--) { $top += "+$($installed[$i])" }
+    $was = Get-ModlistState $lines
+    for ($i = $installed.Count - 1; $i -ge 0; $i--) {
+        $n = $installed[$i]; $mark = '+'
+        if ($n -like $texPattern) { $mark = $(if ($texResMigrate -or $was[$n] -ne '+') { '-' } else { '+' }) }
+        $top += "$mark$n"
+    }
     return , (@($head) + $top + $rest)
 }
 $newLines = $null; $removedLines = @()
@@ -707,6 +717,7 @@ $want = [ordered]@{
     'rs_v_sync'          = 'off'
     'r_upscaler'         = $(if ($rtx) { 'dlss' } else { 'fsr3' })
     'r_frame_generation' = $(if ($rtxFg) { 'dlss' } else { 'off' })
+    'r__tex_res_budget_target' = '0'     # Texture Residency off by default (v0.7.1)
 }
 $ltx = "$anomaly\appdata\user.ltx"
 $ltxRel = 'Anomaly\appdata\user.ltx'
@@ -729,6 +740,21 @@ if (Test-Path -LiteralPath $ltx) {
 } else {
     Warn "no user.ltx yet (game never launched) - engine defaults apply"
     $todo.Add("In game: Settings > Video: MSAA off, VSync off, upscaler DLSS (RTX) or FSR")
+}
+
+# what the player is told about Texture Residency: shown before the install and again at the end
+$texNote = @()
+$texPackName = $installed | Where-Object { $_ -like $texPattern } | Select-Object -First 1
+$texWas = $null
+if ($ltxSet.Contains('r__tex_res_budget_target') -and $ltxNow) {
+    $texWas = ($ltxNow | Where-Object { $_ -match '^r__tex_res_budget_target\s+(\S+)\s*$' } | Select-Object -First 1) -replace '^r__tex_res_budget_target\s+', ''
+}
+if ($texResMigrate -or $ltxSet.Contains('r__tex_res_budget_target')) {
+    $texNote += "Texture Residency is OFF by default: r__tex_res_budget_target $(if ($texWas -and $texWas.Trim() -ne '0') { "was $($texWas.Trim()), now 0" } else { '0' })."
+    if ($texPackName) {
+        $texNote += "'$texPackName' is $(if ($modlist -and (Get-ModlistState $lines)[$texPackName] -eq '+') { 'now unticked' } else { 'left unticked' }) in MO2."
+    }
+    $texNote += "To opt in: tick '$(if ($texPackName) { $texPackName } else { '7 - Tex Residency Classes' })' in MO2, then MCM > Texture Residency (VRAM) > Manage VRAM on (or type r__tex_res_budget_target 80 in the console)."
 }
 
 # --- 10. checks: space, shader cache -------------------------------------
@@ -771,6 +797,7 @@ if ($foreignDb0.Count) { Say "  modded exes : unticks $(($foreignDb0 | ForEach-O
 if ($iniNew) { Say "  MO2 launch  : adds '$exeTitle'" }
 if ($ltxSet.Count) { Say "  user.ltx    : $(($ltxSet.Keys | ForEach-Object { "$_ $($ltxSet[$_])" }) -join ', ')" }
 if ($moveCache) { Say "  shader cache: moved aside (the game rebuilds it on first launch)" }
+foreach ($t in $texNote) { Say "  $t" }
 if ($optiNote) { Say "  $optiNote" }
 Say "  disk space  : needs about $([math]::Ceiling($need / 1MB)) MB$(if ($free) { ", $([math]::Floor($free / 1MB)) MB free" })"
 if ($free -and $free -lt $need) { Bad "not enough free space on $([IO.Path]::GetPathRoot($root)) - free some and run again"; Pause-End 1 }
@@ -887,7 +914,7 @@ try {
             $rec[$n].written = $after[$n]
         }
         Set-TextFile $sr $mlRel ((@($newLines) -join "`r`n") + "`r`n")
-        Good "$($installed.Count) mods ticked at the bottom of MO2's left pane"
+        Good "$(@($newLines | Where-Object { $_ -match '^\+' -and $installed.Contains($_.Substring(1)) }).Count) mods ticked at the bottom of MO2's left pane"
     }
 
     Head "MO2 launch entry '$exeTitle'"
@@ -987,6 +1014,7 @@ try {
     $old = $sr.Record.shaderCache.stale
     if ($sr.Record.shaderCache.stalePending) { $sr.Record.shaderCache.stale = $sr.Record.shaderCache.stalePending; $sr.Record.shaderCache.Remove('stalePending') }
     if ($legacy3dss) { $sr.Record.legacy3dss = @{ backup = 'GAMMA\3DSS_backup'; mod = $(if ($tdss) { $tdss.Name } else { '' }) } }
+    $sr.Record.texResOff = $true
     Complete-Run $sr 'installed'
     if ($old -and $old -ne $sr.Record.shaderCache.stale -and $old.StartsWith("$($sr.Dir)\runs\") -and (Test-Path -LiteralPath $old)) {
         # a shader cache we moved inside our own .slopray\runs folder: regenerated data
@@ -1025,6 +1053,7 @@ $addOns = @($installed | Where-Object { $_ -like 'Add-on - *' })
 Say "  add-ons: $(if ($addOns.Count) { $addOns -join ', ' } else { 'none needed' })"
 Say "  MO2 mods ticked by installer: $(if ($modlist) { 'yes' } else { 'NO (tick them by hand, see below)' })"
 if ($sssRevert) { Say "  SSS24 found: switched back to SSS 23.5 ($($sssRevert.Mods -join ', ') unticked). The uninstaller brings SSS24 back." }
+foreach ($t in $texNote) { Say "  $t" }
 Say "  your replaced files: $($sr.Dir)\backup (kept until you remove them)"
 foreach ($n in $sr.Notes) { Warn $n }
 if ($sr.Notes.Count) { Say "  recovery folder: $($sr.Dir)\recovery" }
@@ -1040,6 +1069,6 @@ Say "  $k. NVIDIA App: Smooth Motion OFF for Anomaly (else DX12 crashes)."; $k++
 Say "  $k. MO2 dropdown: pick 'Anomaly (DX12 + Frame Gen)' > Run."
 Say "     First launch rebuilds shaders, looks frozen a few minutes. Wait."
 Say ""
-Say "  Optional: Texture Residency (if you stutter use this mod in MCM/ Texture)"
+Say "  Optional: Texture Residency is off by default. If you stutter: tick '7 - Tex Residency Classes' in MO2, then MCM > Texture Residency (VRAM) > Manage VRAM on."
 Say ""
 Pause-End $(if ($fail -gt 0) { 1 } else { 0 })

@@ -874,6 +874,17 @@ void CResourceManager::ResidencyFrame()
 		return;
 	s_residency_frame = Device.dwFrame;
 
+	// Once, on the first rendered frame (user.ltx is applied by then): say whether residency is on.
+	static bool s_residency_state_logged = false;
+	if (!s_residency_state_logged)
+	{
+		s_residency_state_logged = true;
+		if (ps_r__tex_res_budget_target)
+			Msg("* Texture residency: on (r__tex_res_budget_target %d).", ps_r__tex_res_budget_target);
+		else
+			Msg("* Texture residency: off (r__tex_res_budget_target 0). Set 80 to opt in.");
+	}
+
 	// Phase 1: install any LOD swaps a worker finished, at frame start as the plan requires.
 	ApplyTextureSwaps();
 
