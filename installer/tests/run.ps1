@@ -1063,6 +1063,7 @@ $scenarios['S40_atmos_rc7_only'] = {
     Assert-AtmosKept $s @($atmosRc7)
     Check ((ML $s) -contains "+$atmosAddon") "RC7 add-on ticked"
     Check ($script:lastOut -notmatch 'both RC7 and RC8') "no both-ticked warning"
+    Check ($script:lastOut -notmatch 'not recognised as RC7 or RC8') "no unrecognised-Atmos warning"
     $c = Uninstall $s
     Assert-BackToOriginal $pre $s.Root "RC7 tree back to original after uninstall"
 }
@@ -1094,6 +1095,23 @@ $scenarios['S42_atmos_rc7_and_rc8_both_ticked'] = {
     Check ($o -notmatch [string][char]0x2014) "no em dash in the output"
     $c = Uninstall $s
     Assert-BackToOriginal $pre $s.Root "both-ticked tree back to original after uninstall"
+}
+
+$scenarios['S46_atmos_unrecognised_build'] = {
+    $s = New-Scenario 'S46_atmos_unrecognised_build'
+    $odd = 'Atmospherics v2.69 custom'
+    W "$($s.Root)\GAMMA\mods\$odd\gamedata\shaders\r3\x.h" 'custom atmos'
+    Add-ModLine $s "+$odd"
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    $o = $script:lastOut
+    Check ($o -match "'$odd' is not recognised as RC7 or RC8" -and $o -match 'stock Atmospherics add-on') "warns, names the mod, says the stock add-on is used"
+    Check ($o -match "(?s)LEFT TO DO.*not recognised as RC7 or RC8") "warning repeated in LEFT TO DO"
+    Assert-AtmosKept $s @($odd)
+    Check ($o -notmatch [string][char]0x2014) "no em dash in the output"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "unrecognised-Atmos tree back to original after uninstall"
 }
 
 $scenarios['S43_pack_check_stops_on_bad_pack'] = {

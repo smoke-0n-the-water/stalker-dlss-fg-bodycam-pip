@@ -455,6 +455,16 @@ else {
         Warn $bothMsg
         $todo.Add($bothMsg)
     }
+    # an Atmospherics mod that is neither RC7 nor RC8 (by name or file) gets the stock add-on
+    if (-not $rc7) {
+        $oddAtmos = @($lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } |
+                      Where-Object { $_ -like '*Atmospherics*' -and -not (Is-PackMod $_) })
+        if ($oddAtmos.Count) {
+            $oddMsg = "'$($oddAtmos -join "', '")' is not recognised as RC7 or RC8, so the stock Atmospherics add-on will be used. If you use RC7 or RC8, check that this is the right version. Nothing was unticked."
+            Warn $oddMsg
+            $todo.Add($oddMsg)
+        }
+    }
     $addons = [ordered]@{
         # SSS 23 ssfx_il/ssfx_sss_ext + grass fallback + DLSS history fix. ONLY without RC7:
         # RC7 ships its own for every IL/SSR option ("IL Atmospherics", "SSR - Atmospherics"),
