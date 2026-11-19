@@ -1159,6 +1159,7 @@ $scenarios['S43_pack_check_stops_on_bad_pack'] = {
     $o = $script:lastOut
     Check ($c -eq 1) "missing file: exit 1 (got $c)"; Show-OnFail ($c -eq 1)
     Check ($o -match 're-download the full pack' -and $o -match 'sl\.common\.dll') "says re-download and names the missing file"
+    Check ($o -match 'path is too long' -and $o.Contains('C:\SlopRay')) "missing file: hints at the long-path extract and a short folder"
     Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "nothing written"
     Check ((Compare-Snap $pre (Snap $s.Root)).Count -eq 0) "game folder unchanged"
     # files cut short (same name, different content): an engine file and a zip
@@ -1170,6 +1171,7 @@ $scenarios['S43_pack_check_stops_on_bad_pack'] = {
     $o = $script:lastOut
     Check ($c -eq 1) "mismatched files: exit 1 (got $c)"; Show-OnFail ($c -eq 1)
     Check ($o -match 're-download the full pack' -and $o -match 'AnomalyDX12\.exe' -and $o -match '1 - Test Patch\.zip') "names the mismatched engine file and zip"
+    Check ($o -notmatch 'path is too long') "damaged only: no long-path hint"
     Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "nothing written (mismatch)"
     Check ((Compare-Snap $pre (Snap $s.Root)).Count -eq 0) "game folder unchanged (mismatch)"
 }

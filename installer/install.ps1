@@ -173,6 +173,10 @@ if (-not (Test-Path -LiteralPath $manifestFile)) {
         Bad "this pack is incomplete or damaged: $($packBad.Count) of $(@($manifest).Count) files are missing or different. Re-download the full pack and run me again. Nothing was changed."
         foreach ($n in ($packBad | Select-Object -First 5)) { Say "     $n" }
         if ($packBad.Count -gt 5) { Say "     ... and $($packBad.Count - 5) more" }
+        if ($packBad | Where-Object { $_ -like '* (missing)' }) {
+            Say "  Missing files are often skipped by Windows when the folder path is too long (a 'Destination Path Too Long' box while extracting)."
+            Say "  Extract the zip to a short folder, for example C:\SlopRay, and run the installer from there."
+        }
         Pause-End 1
     }
     Good "Pack check: every file is there and matches its checksum ($(@($manifest).Count) files)"
@@ -391,13 +395,13 @@ function Install-GlossyAddon ($name) {
     $src = Find-GlossyShader
     if (-not $src) {
         Warn "Glossy Puddles is in your list but its shaders\r3\deffer_impl_flat.ps was not found - add-on skipped"
-        $todo.Add("Glossy Puddles: install the matching zip from STEP 3\Glossy Puddles - manual install only, by hand")
+        $todo.Add("Glossy Puddles: install the matching zip from STEP 3\Glossy (manual only), by hand")
         return
     }
     $patched = Add-GlossyDlss ([IO.File]::ReadAllText($src.Path))
     if (-not $patched) {
         Warn "Glossy Puddles: unknown shader layout in '$($src.Mod)' - add-on skipped"
-        $todo.Add("Glossy Puddles: install the matching zip from STEP 3\Glossy Puddles - manual install only, by hand")
+        $todo.Add("Glossy Puddles: install the matching zip from STEP 3\Glossy (manual only), by hand")
         return
     }
     # built again on every run, so a Glossy update on your side is picked up
@@ -689,6 +693,7 @@ $conflicts = @(
     'Bodycam-GAMMA-Patch*', 'Bodycam-Grass-Optimisation*',
     '3 - DLSS-FSR3 Compat Patch remerged (*',               # v0.5.0/v0.5.1 mod 3 (0.71); current one is skipped above
     'Add-on - Glossy Puddles Overhaul users (*',            # manual Glossy zips; the installer builds its own
+    'Add-on - Glossy (*',                                   # the same zips, short names from v0.7.1 (path length)
     'Native Upscaling Binaries Compatibility Patch*',       # brodrigz 0.72+ raw patch: reverts our shaders
     '1 - Bodycam-GAMMA-Patch-1.1.0', '2 - Bodycam-Grass-Optimisation-4.1.0'
 )
