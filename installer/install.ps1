@@ -777,6 +777,7 @@ $want = [ordered]@{
     'r_upscaler'         = $(if ($rtx) { 'dlss' } else { 'fsr3' })
     'r_frame_generation' = $(if ($rtxFg) { 'dlss' } else { 'off' })
     'r__tex_res_budget_target' = '0'     # Texture Residency off by default (v0.7.1)
+    'r__upscaler_camera_mv'    = '0'     # camera-MV fill off: it made the still image wobble (v0.7.1)
 }
 $ltx = "$anomaly\appdata\user.ltx"
 $ltxRel = 'Anomaly\appdata\user.ltx'

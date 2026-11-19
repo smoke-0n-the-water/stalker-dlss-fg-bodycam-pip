@@ -22,9 +22,10 @@ u32 ps_r_dlss_preset = 0;
 float ps_r_dlss_sharpness = 0.0f;
 // 1 (default) = Halton raster jitter, 0 = disable it for the whole jitter chain.
 int ps_r_upscaler_jitter = 1;
-// 1 (default) = fill zero motion vectors with camera-only vectors from depth,
-// 2 = force camera-only, 0 = raw shader-pack buffer.
-int ps_r__upscaler_camera_mv = 1;
+// 0 (default) = raw shader-pack buffer, 1 = fill zero motion vectors with camera-only
+// vectors from depth, 2 = force camera-only. 1 made the still image wobble under DLSS/DLAA
+// (it also fills vectors that are truly zero), so it is opt-in from v0.7.1.
+int ps_r__upscaler_camera_mv = 0;
 int ps_r_upscaler_debug = 0;
 int ps_r_upscaler_post_after = 0; // Laser Fix: off and hidden in the menu (post-order flip jumps PiP brightness)
 int ps_r_upscaler_particles_after = 1; // only used with r_upscaler_post_after 1 (no menu row)

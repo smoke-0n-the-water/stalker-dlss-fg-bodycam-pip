@@ -1097,6 +1097,38 @@ $scenarios['S42_atmos_rc7_and_rc8_both_ticked'] = {
     Assert-BackToOriginal $pre $s.Root "both-ticked tree back to original after uninstall"
 }
 
+# --- camera-MV fill off by default (v0.7.1) ----------------------------------------
+# r__upscaler_camera_mv 1 made the still image wobble under DLSS/DLAA. An upgrade from an
+# install that saved 1 gets 0 once; a later run keeps the player's own choice.
+$scenarios['S47_camera_mv_off_once'] = {
+    $s = New-Scenario 'S47_camera_mv_off_once'
+    $r = $s.Root; $k = 'r__upscaler_camera_mv'
+    $ltxPath = "$r\Anomaly\appdata\user.ltx"
+    function Set-CamMv ($v) {
+        $l = @([IO.File]::ReadAllLines($ltxPath) | Where-Object { $_ -notmatch "^$k\s" }) + "$k $v"
+        W $ltxPath (($l -join "`r`n") + "`r`n")
+    }
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 0\s*$") "fresh install writes $k 0"
+    # what a v0.7 install left: 1 saved, no record entry for the key
+    Set-CamMv 1
+    $recPath = "$r\.slopray\record.json"
+    $rec = Rec $s
+    foreach ($p in @($rec.keys.PSObject.Properties | Where-Object { $_.Name -like "*|$k" })) { $rec.keys.PSObject.Properties.Remove($p.Name) }
+    [IO.File]::WriteAllText($recPath, ($rec | ConvertTo-Json -Depth 8), $utf8)
+    $c = Install $s
+    Check ($c -eq 0) "upgrade exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 0\s*$" -and (T $ltxPath) -notmatch "(?m)^$k 1") "upgrade replaces 1 with 0"
+    # the player opts back in: a re-run leaves it alone
+    Set-CamMv 1
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 1\s*$") "re-run keeps the player's $k 1"
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+}
+
 $scenarios['S46_atmos_unrecognised_build'] = {
     $s = New-Scenario 'S46_atmos_unrecognised_build'
     $odd = 'Atmospherics v2.69 custom'
