@@ -29,7 +29,6 @@ IGame_Level::IGame_Level()
 	bReady = false;
 	pCurrentEntity = NULL;
 	pCurrentViewEntity = NULL;
-	Device.DumpResourcesMemoryUsage();
 }
 
 //#include "resourcemanager.h"
@@ -53,7 +52,6 @@ IGame_Level::~IGame_Level()
 	///////////////////////////////////////////
 	Sound->set_geometry_occ(NULL);
 	Sound->set_handler(NULL);
-	Device.DumpResourcesMemoryUsage();
 
 	u32 m_base = 0, c_base = 0, m_lmaps = 0, c_lmaps = 0;
 	if (Device.m_pRender)

@@ -904,11 +904,12 @@ void CResourceManager::ResidencyFrame()
 			Device.dwFrame, float(waited) / 1000.f, waits, float(worst) / 1000.f,
 			worst_name.size() ? worst_name.c_str() : "?");
 
-	// Deferred binds are expected while new textures stream in; summarise once a second.
+	// Deferred binds are expected while new textures stream in; summarise once a second,
+	// only while the VRAM log is on (r__tex_vram_log).
 	s_deferred_window += s_deferred.exchange(0, std::memory_order_relaxed);
 	if (Device.dwTimeGlobal >= s_deferred_next_ms)
 	{
-		if (s_deferred_window)
+		if (s_deferred_window && ps_r__tex_vram_log)
 			Msg("* [TexWait] last second: %u bind(s) drew without a still-loading texture instead of waiting",
 				s_deferred_window);
 		s_deferred_window = 0;
@@ -1285,7 +1286,7 @@ void CResourceManager::ApplyTextureSwaps()
 			Msg("* [TexRes] %u texture(s) needed again within %u s of a demote: residency backoff %ux -> %ux",
 				s_quick_promotes, kThrashWindowMs / 1000, old_backoff, s_backoff);
 
-		if (s_swap_installed || s_swap_dropped)
+		if (ps_r__tex_vram_log && (s_swap_installed || s_swap_dropped))
 		{
 			size_t waiting;
 			{
