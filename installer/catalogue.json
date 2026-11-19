@@ -40,8 +40,10 @@
 "1A28C4FE7C69CE6B7B032ED1E99C5D01D2981EFAF04018D988C11F82C54C19C0": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/3 - DLSS-FSR3 Compat Patch (m1RAGE5).zip:gamedata/scripts/modxml_dlss_options.script",
 "1AC3774A700D324FF7E2EDD483634821E7A61A95179E28297A526CD64958E713": "GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/2 - Bodycam-Grass-Optimisation-5.0.0.zip:gamedata/shaders/r3/deffer_detail_s_flat_inst_merge_thin.vs",
 "1B19B62BE2E4B412C4F295C91BB77CDE0E612F16ADD30DB1A87AAAC9E0E821BE": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/1 - Bodycam-GAMMA-Patch-1.1.0.zip:gamedata/shaders/r3/models_reflex_reticle.s",
+"1BDBA41D270423A86ACE52FD15F9D6B2AD154EA031605A23557B28A720A8CA56": "SlopRay v0.7.1-dev/STEP 2 - MO2 mods (install all 6)/7 - Tex Residency Classes.zip:gamedata/scripts/tex_residency_mcm.script",
 "1C914943D8C2A4ADDBA699585F304EFB44A14442080ED0FD3790DD2D80AFBD9E": "GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/1 - Bodycam-GAMMA-Patch-2.0.1.zip:gamedata/shaders/r3/scope_3dss_common.h",
 "1D2F2B2F8CF5C9ACFE2EAAA2D2C22FACE87BD19F7DF85453079A28E7123AE727": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack.zip:GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 6 - DLSS 5 optional (copy everything into Anomaly-bin)/Licenses/RenoDX_ATTRIBUTION.txt",
+"1ECD3B88195777C5A3948A3413199CBFE5364B3AAFCF969D5F64DBA5EECBDD36": "GAMMA v0.7.1-dev + DLSS 0.721 + Frame Gen - Full Pack.zip:SlopRay v0.7.1-dev/STEP 1 - Engine (copy into Anomaly folder)/bin/AnomalyDX11AVX.exe",
 "1F2D41C4AA5DB0BC33EBF7B66D72943A817D7CE6CBE880502A9403823633093F": "GAMMA v0.5.1-dev + DLSS 0.71 + Frame Gen - Full Pack.zip:GAMMA v0.5.1-dev + DLSS 0.71 + Frame Gen - Full Pack/STEP 1 - Engine (copy into Anomaly folder)/bin/vcruntime140_1.dll",
 "1F6C83014E8F72CF7F29EF99E79324E1526DCC7A0C69726BD5EA21128E12E9A7": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/1 - Bodycam-GAMMA-Patch-1.1.0.zip:gamedata/shaders/r3/depth_of_field.ps",
 "1FB84D9BE3ECAC6AFB1D1F1F934A8B580E591A502E49A0A7AE95ED8A007167D6": "GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack (OptiScaler 0.8.10 MFG + scope fixes).zip:GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 6 - DLSS 5 optional (copy everything into Anomaly-bin)/Licenses/PeripheralWarp_LICENSE.txt",
@@ -84,6 +86,7 @@
 "38EEA3B4209AFC455636EA372B5933D65FCC13BECEC6C84D101DCFC4D8648F75": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack.zip:GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 7 - Frame generation (copy the bin folder into Anomaly)/bin/streamline/sl.common.dll",
 "396ECB6E0EA2DD703FD35785DA1EC744228219565C780DF8255CF27E5DF6632F": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack.zip:GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 1 - Engine (copy into Anomaly folder)/bin/AnomalyDX11AVX.exe",
 "3975567B8943C53ACCE397F2B72380092F84F162D00B0D2C7D08A1025C563983": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack.zip:GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 1 - Engine (copy into Anomaly folder)/bin/nvngx_dlss.dll",
+"3A09A144AC4EB4C209B3FE416A4E0EA827DD254AA701D866439D15F07BC45255": "GAMMA v0.7.1-dev + DLSS 0.721 + Frame Gen - Full Pack.zip:SlopRay v0.7.1-dev/STEP 7 - Frame generation (copy the bin folder into Anomaly)/bin/AnomalyDX12.exe",
 "3AC732DEC9C6F6DC6C83734941131310D2748E83FDC1CEC6509E0890A0A10D5F": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/2 - Bodycam-Grass-Optimisation-4.1.0.zip:gamedata/shaders/r3/deffer_detail_w_flat.vs",
 "3B25F336B0F4D93400EDCA5F5FFFA270BBFD3D83045F3F7A6A5A8D48C2CD5AAB": "GAMMA v0.5.0-dev + DLSS 0.71 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/3 - DLSS-FSR3 Compat Patch remerged (0.71).zip:gamedata/shaders/r3/vert.vs",
 "3C0D7A67C12483C4424C413D60F4BF59301734026ADEB1C732F1C12EBF93DC82": "STEP 2 - MO2 mods (install all 7)/7 - Tex Residency Classes.zip:gamedata/configs/tex_residency.ltx",
@@ -455,6 +458,11 @@
 "Add-on - Anti-Lag for GAMMA users",
 "Add-on - Atmospherics RC7 users",
 "Add-on - Better Beef's NVGs users",
+"Add-on - Glossy (v2.1, RC7)",
+"Add-on - Glossy (v2.2-2.4, RC7-RC8)",
+"Add-on - Glossy (v2.2-2.4, stock Atmos)",
+"Add-on - Glossy (v2.5, RC7-RC8)",
+"Add-on - Glossy (v2.5, stock Atmos)",
 "Add-on - Glossy Puddles Overhaul users",
 "Add-on - Glossy Puddles Overhaul users (v2.1, Atmos RC7)",
 "Add-on - Glossy Puddles Overhaul users (v2.2-v2.4, Atmos RC7 or RC8)",
@@ -490,6 +498,7 @@
 "GAMMA v0.5.2-dev - UPDATE (DX12 exe + DLSS 0.721 mod).zip",
 "GAMMA v0.6-dev + DLSS 0.721 + Frame Gen - Full Pack.zip",
 "GAMMA v0.6-dev + SSS24 (private) - Full Pack.zip",
-"GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack.zip"
+"GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack.zip",
+"GAMMA v0.7.1-dev + DLSS 0.721 + Frame Gen - Full Pack.zip"
 ]
 }
