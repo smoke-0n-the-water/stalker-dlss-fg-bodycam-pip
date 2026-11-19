@@ -46,7 +46,9 @@ CUIPdaWnd* GetPDAMenu()
 
 CUIMainIngameWnd* GetMainGameMenu()
 {
-	return CurrentGameUI()->UIMainIngameWnd;
+	// nil before the game UI exists (scripts running on_game_start), not a null dereference
+	CUIGameCustom* ui = CurrentGameUI();
+	return ui ? ui->UIMainIngameWnd : nullptr;
 }
 
 CUIMessagesWindow* GetMessagesMenu()

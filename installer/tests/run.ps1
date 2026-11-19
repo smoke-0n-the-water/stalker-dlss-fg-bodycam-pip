@@ -1111,6 +1111,7 @@ $scenarios['S47_camera_mv_off_once'] = {
     $c = Install $s
     Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
     Check ((T $ltxPath) -match "(?m)^$k 0\s*$") "fresh install writes $k 0"
+    Check ((T $ltxPath) -match "(?m)^spawn_time_log 0\s*$") "fresh install writes spawn_time_log 0"
     # what a v0.7 install left: 1 saved, no record entry for the key
     Set-CamMv 1
     $recPath = "$r\.slopray\record.json"
