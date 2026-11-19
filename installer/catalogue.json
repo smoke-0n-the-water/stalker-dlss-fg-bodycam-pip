@@ -40,6 +40,7 @@
 "1A28C4FE7C69CE6B7B032ED1E99C5D01D2981EFAF04018D988C11F82C54C19C0": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/3 - DLSS-FSR3 Compat Patch (m1RAGE5).zip:gamedata/scripts/modxml_dlss_options.script",
 "1AC3774A700D324FF7E2EDD483634821E7A61A95179E28297A526CD64958E713": "GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/2 - Bodycam-Grass-Optimisation-5.0.0.zip:gamedata/shaders/r3/deffer_detail_s_flat_inst_merge_thin.vs",
 "1B19B62BE2E4B412C4F295C91BB77CDE0E612F16ADD30DB1A87AAAC9E0E821BE": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/1 - Bodycam-GAMMA-Patch-1.1.0.zip:gamedata/shaders/r3/models_reflex_reticle.s",
+"1C914943D8C2A4ADDBA699585F304EFB44A14442080ED0FD3790DD2D80AFBD9E": "GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/1 - Bodycam-GAMMA-Patch-2.0.1.zip:gamedata/shaders/r3/scope_3dss_common.h",
 "1D2F2B2F8CF5C9ACFE2EAAA2D2C22FACE87BD19F7DF85453079A28E7123AE727": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack.zip:GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 6 - DLSS 5 optional (copy everything into Anomaly-bin)/Licenses/RenoDX_ATTRIBUTION.txt",
 "1F2D41C4AA5DB0BC33EBF7B66D72943A817D7CE6CBE880502A9403823633093F": "GAMMA v0.5.1-dev + DLSS 0.71 + Frame Gen - Full Pack.zip:GAMMA v0.5.1-dev + DLSS 0.71 + Frame Gen - Full Pack/STEP 1 - Engine (copy into Anomaly folder)/bin/vcruntime140_1.dll",
 "1F6C83014E8F72CF7F29EF99E79324E1526DCC7A0C69726BD5EA21128E12E9A7": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/1 - Bodycam-GAMMA-Patch-1.1.0.zip:gamedata/shaders/r3/depth_of_field.ps",
@@ -150,6 +151,7 @@
 "5CB4854394093CCCB5F257595D50FA5EF792EA1A88C10F35052473ADF3FEC135": "GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/1 - Bodycam-GAMMA-Patch-2.0.1.zip:gamedata/shaders/r3/scope_glass_pbr_material.h",
 "5D03F172298128A9E8338F6954F271D1E2454A43A94EE0B40A410C4C066FD38A": "GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/2 - Bodycam-Grass-Optimisation-5.0.0.zip:gamedata/shaders/r3/deffer_detail_s_flat_inst.vs",
 "5F797BC473B4609E53F3631A030C234489C2D9F13A25147A76FF1310BF52EC19": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/1 - Bodycam-GAMMA-Patch-1.1.0.zip:gamedata/configs/mod_pip_objective_offsets_gamma_patch.ltx",
+"5FA620D0500A5F977C564F5C828BD41EDB8F08B13BE7D9A7454A26317B967000": "GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack.zip:GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack/STEP 1 - Engine (copy into Anomaly folder)/bin/AnomalyDX11AVX.exe",
 "5FD5F68DEF025C65A1645B8A7F4AAB17534B6FBF4D8F3854B135701165E63619": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/1 - Bodycam-GAMMA-Patch-1.1.0.zip:gamedata/scripts/options_modded_exes_3d_ballistics.script",
 "5FE0A4D9FD0AA2A578E2EA3A5D4B4E4105A014A15B49BEE23C0A848022B86C21": "GAMMA v0.5.0-dev + DLSS 0.71 + Frame Gen - Full Pack.zip:GAMMA v0.5.0-dev + DLSS 0.71 + Frame Gen - Full Pack/STEP 6 - OptiScaler (FG unlock RTX 20-40, optional DLSS 5)/OptiScaler/LUTs/AgX-Kraken-Punchy.cube",
 "6085774ED4629744485E4F49A0ECEBC20A495DEDA702C9215B891191DF6E8C93": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/1 - Bodycam-GAMMA-Patch-1.1.0.zip:gamedata/shaders/r3/models_reflex_reticle.ps",
@@ -319,6 +321,7 @@
 "BF042485F3EE0E0A775F1EA9D63B5B163FA4DF9607F4CA601DB491E0C2ECE7CF": "GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/1 - Bodycam-GAMMA-Patch-2.0.1.zip:gamedata/shaders/r3/scope_color_write.ps",
 "BF487E74E1C1A4BC59044C9CDFCC37ADD535774456FB2AF0F87DC1CF6EC7FAC2": "GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/2 - Bodycam-Grass-Optimisation-5.0.0.zip:gamedata/shaders/r3/deffer_detail_w_flat_inst_merge_occ.vs",
 "BFAD5AEF4C63A669E3C140655CDFDF395B6C979B400A447BD5DCB65ED8826C3D": "GAMMA v0.5.1-dev + DLSS 0.71 + Frame Gen - Full Pack.zip:GAMMA v0.5.1-dev + DLSS 0.71 + Frame Gen - Full Pack/STEP 1 - Engine (copy into Anomaly folder)/bin/msvcp140_1.dll",
+"C1E207603411EA3AFB56898884DB36D9FAD87188205401A025F9C7F1C83A233A": "GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack.zip:GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack/STEP 7 - Frame generation (copy the bin folder into Anomaly)/bin/AnomalyDX12.exe",
 "C206FA7A10D4710C7F6E5BC57B798E91CDE80D41B1C3489304073DCCD1E3559C": "GAMMA Bodycam 0.3 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 5)/1 - Bodycam-GAMMA-Patch-1.1.0.zip:gamedata/scripts/slaxml.script",
 "C3675F41CD8FF81AC6BCE9D6449DFB448B73439A0367166AF2499DA534B94772": "GAMMA v0.6-dev + SSS24 (private) - Full Pack.zip:GAMMA v0.6-dev + DLSS 0.721 + Frame Gen - Full Pack/STEP 6 - OptiScaler (FG unlock RTX 20-40, optional DLSS 5)/OptiScaler.ini",
 "C4E888A5F9E796197FF7B3FA4E3509642AB39F2D389959EACAE16B32BA429BC0": "GAMMA Bodycam 0.3.1 + DLSS + DLSS 5 + Frame Gen - Full Pack/STEP 2 - MO2 mods (install all 6)/2 - Bodycam-Grass-Optimisation-5.0.0.zip:gamedata/shaders/r3/dt_occ_box.vs",
@@ -486,6 +489,7 @@
 "GAMMA v0.5.2-dev + DLSS 0.721 + Frame Gen - Full Pack.zip",
 "GAMMA v0.5.2-dev - UPDATE (DX12 exe + DLSS 0.721 mod).zip",
 "GAMMA v0.6-dev + DLSS 0.721 + Frame Gen - Full Pack.zip",
-"GAMMA v0.6-dev + SSS24 (private) - Full Pack.zip"
+"GAMMA v0.6-dev + SSS24 (private) - Full Pack.zip",
+"GAMMA v0.7-dev + DLSS 0.721 + Frame Gen - Full Pack.zip"
 ]
 }
