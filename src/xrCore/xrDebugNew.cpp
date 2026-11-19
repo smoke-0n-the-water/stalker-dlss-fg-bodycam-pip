@@ -681,6 +681,9 @@ void format_message(LPSTR buffer, const u32& buffer_size)
 //AVO: simplify function
 LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 {
+    // The record, dump and crash bundle come first: the console variable dump below can fail in a broken heap.
+    if (!error_after_dialog)
+        EngineErrorLogger::ReportUnhandledException(pExceptionInfo);
     xrLogger::SetImmediateMode(true);
 	string256 error_message;
 	format_message(error_message, sizeof(error_message));

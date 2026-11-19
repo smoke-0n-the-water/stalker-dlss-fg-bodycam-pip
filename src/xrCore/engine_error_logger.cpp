@@ -3,6 +3,7 @@
 
 #include "engine_error_logger.h"
 #include "diagnostic_privacy.h"
+#include "crash_bundle.h"
 
 #include <Windows.h>
 #include <ShlObj.h>
@@ -1411,6 +1412,64 @@ namespace
         return run_on_helper(job);
     }
 
+    // The folder of this process's crash, for the message box and Explorer (empty: none was made).
+    volatile LONG g_bundleMade = 0;
+    wchar_t g_bundleDirectory[MAX_PATH] = {};
+
+    // Copies of this session's error logs, the dump and the game log (xray_<user>.log) in
+    // <game log folder>\crash_<time>, one folder to hand over. The previous session's case has only
+    // what is left: the CRASH record, and the game log when this session has not overwritten it yet.
+    void save_crash_bundle(bool currentSession, bool dumped, wchar_t* bundle)
+    {
+        bundle[0] = 0;
+        if (!*g_directoryWide)
+            return;
+        wchar_t gameLog[MAX_PATH] = {}, base[MAX_PATH] = {};
+        __try
+        {
+            if (!MultiByteToWideChar(CP_ACP, 0, xrLogger::GetLogPath(), -1, gameLog, int(_countof(gameLog))))
+                gameLog[0] = 0;
+            if (currentSession)
+                xrLogger::FlushLogWait(500);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { gameLog[0] = 0; }
+        if (*gameLog && !currentSession)
+        {
+            WIN32_FILE_ATTRIBUTE_DATA attributes = {};
+            if (!GetFileAttributesExW(gameLog, GetFileExInfoStandard, &attributes) ||
+                (ULONGLONG(attributes.ftLastWriteTime.dwHighDateTime) << 32 | attributes.ftLastWriteTime.dwLowDateTime) >= g_session.created)
+                gameLog[0] = 0; // this session has already started a new game log over it
+        }
+        // Next to the game log; in ERROR when its path is not known.
+        const wchar_t* name = CrashBundle::BaseName(gameLog);
+        if (name != gameLog)
+            _snwprintf_s(base, _countof(base), _TRUNCATE, L"%.*s", int(name - 1 - gameLog), gameLog);
+        else
+            wcscpy_s(base, g_directoryWide);
+
+        wchar_t names[16][32] = {};
+        const wchar_t* files[16] = {};
+        unsigned count = 0;
+        for (unsigned category = 0; category <= unsigned(Category::Hang); ++category)
+        {
+            // Only the logs this process wrote: the others are older sessions'.
+            if (currentSession ? !(g_sessionFiles & (1L << category)) : category != unsigned(Category::Crash))
+                continue;
+            _snwprintf_s(names[count], _countof(names[count]), _TRUNCATE, L"%S-LOG.log", category_name(Category(category)));
+            files[count] = names[count];
+            ++count;
+        }
+        if (dumped)
+            files[count++] = L"CRASH-DUMP.dmp"; // last: the largest
+        CrashBundle::Make(base, g_directoryWide, gameLog, files, count, bundle, MAX_PATH);
+    }
+
+    void save_current_crash_bundle(bool dumped)
+    {
+        if (!InterlockedExchange(&g_bundleMade, 1))
+            save_crash_bundle(true, dumped, g_bundleDirectory);
+    }
+
     void append_record_head(char* output, size_t capacity, size_t& used, Category category, Severity severity,
         LPCSTR expression, LPCSTR description, LPCSTR argument0, LPCSTR argument1, LPCSTR file, int line, LPCSTR function)
     {
@@ -1946,6 +2005,11 @@ namespace
         AcquireSRWLockExclusive(&g_writeLock);
         append_text_record(Category::Crash, record);
         ReleaseSRWLockExclusive(&g_writeLock);
+        if (found && event.eventId == 1000) // a crash, not an exit or a hang
+        {
+            wchar_t bundle[MAX_PATH] = {};
+            save_crash_bundle(false, false, bundle);
+        }
         return 0;
     }
 
@@ -2223,8 +2287,10 @@ void Report(
     if (severity == Severity::Fatal)
     {
         write_session_state(kSessionRecorded);
-        if (!g_insideLogger && request_dump(L"CRASH-DUMP", nullptr))
+        const bool dumped = !g_insideLogger && request_dump(L"CRASH-DUMP", nullptr);
+        if (dumped)
             append_text_record(category, "Dump      : CRASH-DUMP.dmp\r\n");
+        save_current_crash_bundle(dumped);
         char source[512] = {}, event[160] = {};
         format_source_path(file, source, sizeof(source));
         _snprintf_s(event, sizeof(event), _TRUNCATE, "fatal error at %s:%d", source, line);
@@ -2253,8 +2319,12 @@ void ReportUnhandledException(void* exceptionPointers)
             append_text_record(Category::Crash, note);
         }
         // A corrupted heap may hold its lock: DbgHelp would wait on it until the timeout.
-        if (code != kHeapCorruption && request_dump(L"CRASH-DUMP", pointers))
+        const bool dumped = code != kHeapCorruption && request_dump(L"CRASH-DUMP", pointers);
+        if (dumped)
             append_text_record(Category::Crash, "Dump      : CRASH-DUMP.dmp\r\n");
+        // Not after heap corruption: file calls allocate, and a corrupted heap may hold its lock.
+        if (code != kHeapCorruption)
+            save_current_crash_bundle(dumped);
         InterlockedExchange(&g_crashWorkspaceInUse, 0);
     }
     g_insideCrashHandler = false;
@@ -2266,11 +2336,12 @@ void OpenLogFolder()
     static volatile LONG opened = 0;
     if (!*g_directoryWide || InterlockedExchange(&opened, 1))
         return;
+    const wchar_t* folder = *g_bundleDirectory ? g_bundleDirectory : g_directoryWide;
     // A new process, not ShellExecute: no COM or shell extensions inside a failed process.
     wchar_t windows[MAX_PATH] = {}, explorer[MAX_PATH] = {}, command[MAX_PATH * 2] = {};
     if (!GetWindowsDirectoryW(windows, MAX_PATH) ||
         _snwprintf_s(explorer, _countof(explorer), _TRUNCATE, L"%s\\explorer.exe", windows) < 0 ||
-        _snwprintf_s(command, _countof(command), _TRUNCATE, L"\"%s\" \"%s\"", explorer, g_directoryWide) < 0)
+        _snwprintf_s(command, _countof(command), _TRUNCATE, L"\"%s\" \"%s\"", explorer, folder) < 0)
         return;
     STARTUPINFOW startup = {};
     startup.cb = sizeof(startup);
@@ -2330,6 +2401,9 @@ bool ShowDeviceFailureMessage()
     default: return false;
     }
     LPCSTR name = result_name(g_failureCode.result);
+    char folder[MAX_PATH * 3] = {}; // the crash bundle, else the ERROR folder
+    if (!*g_bundleDirectory || !WideCharToMultiByte(CP_UTF8, 0, g_bundleDirectory, -1, folder, int(sizeof(folder)), nullptr, nullptr))
+        copy_text(folder, sizeof(folder), g_directory);
     char text[1400] = {};
     _snprintf_s(text, sizeof(text), _TRUNCATE,
         "The GPU driver stopped responding (0x%08lX %s), so the game has to close.\n\n"
@@ -2339,7 +2413,7 @@ bool ShowDeviceFailureMessage()
         "- Turn off any GPU overclock or undervolt.\n"
         "- Turn frame generation off.\n"
         "- Check that video memory (VRAM) is not full: lower texture settings, close other programs.",
-        static_cast<unsigned long>(g_failureCode.result), name ? name : "wait timed out", g_directory);
+        static_cast<unsigned long>(g_failureCode.result), name ? name : "wait timed out", folder);
     wchar_t wide[1400] = {}; // the folder path is UTF-8
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wide, int(_countof(wide)));
     MessageBoxW(nullptr, wide, L"GPU driver stopped responding", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND);

@@ -258,6 +258,17 @@ void xrLogger::FlushLog()
 	theLogger->UnpauseLogging();
 }
 
+void xrLogger::FlushLogWait(unsigned timeoutMs)
+{
+	if (theLogger == nullptr)
+		return;
+	// Not FlushLog(): immediate mode would print the queue on this thread, which may not take the queue lock.
+	theLogger->bFlushRequested = true;
+	SetEvent(theLogger->hLogThread);
+	for (unsigned waited = 0; waited < timeoutMs && theLogger->bFlushRequested; waited += 5)
+		Sleep(5);
+}
+
 void xrLogger::SetImmediateMode(bool enable)
 {
 	if (theLogger == nullptr)
