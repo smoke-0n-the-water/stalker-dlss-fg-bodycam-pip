@@ -71,6 +71,10 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 	float distSQ;
 	float SSA = CalcSSA(distSQ, Center, pVisual);
     Flags16& flags = pVisual->flags;
+    // a visual with no shader (a mod particle whose shader or texture failed to load) cannot be
+    // drawn; skip it instead of reading through a null shader (player crash, v0.7.1-dev, Zaton)
+    if (!pVisual->shader._get())
+        return;
     ShaderElement* sh_d = &*pVisual->shader->E[4];
     if (!(flags.test(IRenderVisualFlags::eIgnoreOptimization) || (sh_d && sh_d->flags.bEmissive)))
     {
@@ -472,6 +476,10 @@ void CDSGraphManager::r_dsgraph_insert_static(dxRender_Visual *pVisual)
 	float distSQ;
 	float SSA = CalcSSA(distSQ, pVisual->vis.sphere.P, pVisual);
     Flags16& flags = pVisual->flags;
+    // a visual with no shader (a mod particle whose shader or texture failed to load) cannot be
+    // drawn; skip it instead of reading through a null shader (player crash, v0.7.1-dev, Zaton)
+    if (!pVisual->shader._get())
+        return;
     ShaderElement* sh_d = &*pVisual->shader->E[4];
     if (!(flags.test(IRenderVisualFlags::eIgnoreOptimization) || (sh_d && sh_d->flags.bEmissive)))
     {
