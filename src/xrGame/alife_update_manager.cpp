@@ -144,7 +144,10 @@ void CALifeUpdateManager::shedule_Update(u32 dt)
 
 void CALifeUpdateManager::set_process_time(int microseconds)
 {
-	graph().set_process_time(float(microseconds) - float(microseconds) * update_monster_factor() / 1000000.f);
+	// graph() compares this with CTimer::GetElapsed_sec(), so it must be seconds.
+	// The old expression divided only the monster-reserve term by 1,000,000, leaving
+	// the main value in microseconds (4320 us became ~4320 s: no budget at all).
+	graph().set_process_time((float(microseconds) - float(microseconds) * update_monster_factor()) / 1000000.f);
 }
 
 void CALifeUpdateManager::objects_per_update(const u32& objects_per_update)

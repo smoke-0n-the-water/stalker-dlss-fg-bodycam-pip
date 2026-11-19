@@ -18,6 +18,7 @@
 #    SLOPRAY_TEST_NO_PROCESS_CHECK=1   skip the "is MO2 open" check
 #    SLOPRAY_TEST_FAIL_AFTER=N         throw after N file operations
 #    SLOPRAY_TEST_KILL_AFTER=N         end the process after N file operations
+#    SLOPRAY_TEST_HAGS=0|1|2|missing   pretend this HwSchMode (no registry read)
 # ===========================================================================
 
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -256,6 +257,14 @@ function Get-BusyGameProcesses {
     @(Get-Process -ErrorAction SilentlyContinue |
       Where-Object { $_.Name -match '^(Anomaly|ModOrganizer|usvfs|xrEngine)' } |
       Select-Object -Expand Name -Unique)
+}
+
+# Hardware-accelerated GPU scheduling: HwSchMode 2 = on, 1 = off, missing = the GPU/driver has no switch.
+# Read only, never written. Returns $null when the value is missing.
+function Get-HwSchMode {
+    if ($env:SLOPRAY_TEST_HAGS) { if ($env:SLOPRAY_TEST_HAGS -eq 'missing') { return $null } else { return [int]$env:SLOPRAY_TEST_HAGS } }
+    try { return [int](Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name HwSchMode -ErrorAction Stop).HwSchMode }
+    catch { return $null }
 }
 
 function Get-VolumeSerial ([string]$Root) {

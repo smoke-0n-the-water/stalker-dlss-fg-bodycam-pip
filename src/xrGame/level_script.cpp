@@ -1002,10 +1002,12 @@ bool getCamEffectorTransformData(::luabind::object& t, LPCSTR animationFile)
 // demonized: Set custom camera position and direction with movement smoothing (for cutscenes, etc)
 void set_cam_position_direction(Fvector& position, Fvector& direction, unsigned int smoothing, bool hudEnabled, bool hudAffect)
 {
-	if (!g_pGameLevel || !Actor())
+	// g_actor, not Actor(): Actor() reads the game object, which does not exist yet while
+	// scripts run on_game_start (Zone Benchmark calls this there), and crashed the game.
+	if (!g_pGameLevel || !g_actor)
 		return;
 
-	CActor* actor = Actor();
+	CActor* actor = g_actor;
 	actor->initFPCam();
 	actor->m_FPCam->m_HPB.set(direction);
 	actor->m_FPCam->m_Position.set(position);
@@ -1032,20 +1034,24 @@ void set_cam_position_direction(Fvector& position, Fvector& direction, unsigned 
 
 void remove_cam_position_direction() 
 {
-	if (!g_pGameLevel || !Actor())
+	// g_actor, not Actor(): Actor() reads the game object, which does not exist yet while
+	// scripts run on_game_start (Zone Benchmark calls this there), and crashed the game.
+	if (!g_pGameLevel || !g_actor)
 		return;
 
-	CActor* actor = Actor();
+	CActor* actor = g_actor;
 	actor->removeFPCam();
 }
 
 // Smoothed release, hands the camera back to the base pose over smoothing ema steps then self-removes
 void remove_cam_position_direction(float smoothing)
 {
-	if (!g_pGameLevel || !Actor())
+	// g_actor, not Actor(): Actor() reads the game object, which does not exist yet while
+	// scripts run on_game_start (Zone Benchmark calls this there), and crashed the game.
+	if (!g_pGameLevel || !g_actor)
 		return;
 
-	CActor* actor = Actor();
+	CActor* actor = g_actor;
 	if (!actor->m_FPCam)
 		return;
 
@@ -1092,10 +1098,12 @@ bool is_cam_custom_active()
 // Toggle exclusive positioning, when it flips on a live effector reposition it in the manager list
 void set_cam_custom_exclusive(bool exclusive)
 {
-	if (!g_pGameLevel || !Actor())
+	// g_actor, not Actor(): Actor() reads the game object, which does not exist yet while
+	// scripts run on_game_start (Zone Benchmark calls this there), and crashed the game.
+	if (!g_pGameLevel || !g_actor)
 		return;
 
-	CActor* actor = Actor();
+	CActor* actor = g_actor;
 	if (!actor->m_FPCam || actor->m_FPCam->m_exclusive == exclusive)
 		return;
 

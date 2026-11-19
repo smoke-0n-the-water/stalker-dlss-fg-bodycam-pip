@@ -19,6 +19,17 @@ install it finds and asks which one. To skip the search, use
 different places also works: give it the GAMMA folder, MO2's own game path
 leads to Anomaly.
 
+**Pack check:** if the pack has `pack-manifest.json`, every file in it is
+checked against its SHA-256 before anything else. A missing or damaged file
+(a cut-off download) stops the installer with "re-download the full pack" and
+the first file names; nothing is changed. Packs without a manifest are not
+checked (a note says so).
+
+**Windows setting it only reads:** Hardware-accelerated GPU scheduling (HAGS,
+`HwSchMode`). Off or unavailable: a warning with the Windows path to turn it on,
+nothing is changed. If both Atmospherics RC7 and RC8 are ticked it warns and
+names both; no Atmospherics mod is ever unticked.
+
 **Before installing it warns about** things only you can decide on, and
 changes none of them: mods with old bodycam/PiP shaders (`svp_*`), night
 vision mods other than Beef's / Better Beef's, and loose shader files in
@@ -123,7 +134,7 @@ different, and looks again after 2 seconds before giving up and undoing the run.
 
 ## Switches
 
-`install.ps1`: `-DryRun` (show the plan, change nothing), `-Dlss5`,
+`install.ps1`: `-DryRun` (show the plan, change nothing), `-Dlss5`, `-OptiScaler 0.1.35|0.1.38` (default 0.1.35),
 `-GamePath "<folder>"` (the folder with Anomaly + GAMMA, or either of them),
 `-AskPath` (don't search, ask), `-Yes` (don't ask; more than one install
 found is then an error), `-GpuName` (testing).
@@ -134,7 +145,8 @@ found is then an error), `-GpuName` (testing).
 
 Copy into the pack root, next to the `STEP` folders: `install.ps1`,
 `uninstall.ps1`, `cleanup_backups.ps1`, `SlopRay.psm1`, `catalogue.json` and
-the five `.bat` files. After a release, rebuild the catalogue so the next
+the six `.bat` files. Last, write the pack check list (run it after the pack folder is final):
+`python -I installer/tools/build_pack_manifest.py "<pack folder>"` makes `pack-manifest.json` next to the `STEP` folders. STEP 6 holds the default OptiScaler F5 (0.1.35); another version sits in `STEP 6\F5 <version>` with only the files that differ (`dxgi.dll`, `nvngx.dll_dlssnr.dll`, `OptiScaler\libxess_fg.dll`, `OptiScaler.ini`), picked by `-OptiScaler`. After a release, rebuild the catalogue so the next
 version recognises its files:
 
 ```bash
@@ -179,10 +191,14 @@ installer output.
 | S32 | two installs found: listed and refused under `-Yes`; one found: used |
 | S33 | Anomaly without G.A.M.M.A.: "install G.A.M.M.A. first", nothing written |
 | S34 | Model Drop duplicate: 453 unticked and ticked again by uninstall; the same pair from other mods only warned |
+| S36 | OptiScaler 0.1.35 by default, 0.1.38 swapped in and back by re-runs, DLSS 5 on 0.1.38 uses its own ini, uninstall removes it, a pack without the 0.1.38 folder stops cleanly |
+| S40-S42 | Atmospherics RC7 only, RC8 only, both ticked (warns, names both): the pack add-on ticked, no Atmospherics mod unticked, uninstall restores |
+| S43 | pack check: a missing file, and a damaged engine file and zip, stop with "re-download the full pack" and change nothing |
+| S44 / S45 | HAGS off or missing: warning with the Windows path (not an error); on: quiet |
 | S35 | warnings for an old PiP mod, another NVG mod and a loose shader file; Beef's NVG and 3DSS not flagged; nothing changed |
 
 Test hooks (only used by the tests): `SLOPRAY_TEST_NO_PROCESS_CHECK`,
-`SLOPRAY_TEST_FAIL_AFTER=N`, `SLOPRAY_TEST_KILL_AFTER=N`,
+`SLOPRAY_TEST_HAGS=0|1|2|missing` (pretend HwSchMode), `SLOPRAY_TEST_FAIL_AFTER=N`, `SLOPRAY_TEST_KILL_AFTER=N`,
 `SLOPRAY_TEST_SEARCH_ONLY=<folder>;<folder>` (search only these, no drive scan).
 
 ## Known limits

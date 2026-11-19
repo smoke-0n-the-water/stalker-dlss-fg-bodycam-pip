@@ -382,7 +382,6 @@ void IGame_Persistent::RecordSlowTexture(LPCSTR texture_name, u32 elapsed_ms)
 		m_texture_warmup_pending_pins.push_back(name);
 		m_texture_warmup_dirty = true;
 	}
-	Msg("* [texture-warmup] learned '%s' (%u ms)", normalized, elapsed_ms);
 }
 
 void IGame_Persistent::ProcessTextureWarmupPins()

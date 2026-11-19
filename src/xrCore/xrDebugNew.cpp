@@ -293,7 +293,10 @@ void xrDebug::backend(const char* expression, const char* description, const cha
     if (IsDebuggerPresent())
         DebugBreak();
 
-	// No dialog: the report is already in ERROR, show the player that folder.
+	// A GPU driver stop gets one plain message (the record and dump are already written).
+	EngineErrorLogger::ShowDeviceFailureMessage();
+
+	// No generic dialog: the report is already in ERROR, show the player that folder.
 	EngineErrorLogger::OpenLogFolder();
 
 	CS.Leave();
@@ -678,6 +681,9 @@ void format_message(LPSTR buffer, const u32& buffer_size)
 //AVO: simplify function
 LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 {
+    // The record, dump and crash bundle come first: the console variable dump below can fail in a broken heap.
+    if (!error_after_dialog)
+        EngineErrorLogger::ReportUnhandledException(pExceptionInfo);
     xrLogger::SetImmediateMode(true);
 	string256 error_message;
 	format_message(error_message, sizeof(error_message));

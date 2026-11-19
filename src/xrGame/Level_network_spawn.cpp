@@ -22,8 +22,8 @@ static void describe_spawn(const void* entity, char* output, size_t capacity)
 }
 
 // Log in-game spawns ([SpawnTime]) and weapon HUD loads ([HudTime]) that held the main thread at
-// least this many ms, 0 = off.
-int spawn_time_log = 5;
+// least this many ms, 0 = off (default: a diagnostic, not for normal play).
+int spawn_time_log = 0;
 extern ENGINE_API BOOL g_bootComplete;
 
 void CLevel::cl_Process_Spawn(NET_Packet& P)

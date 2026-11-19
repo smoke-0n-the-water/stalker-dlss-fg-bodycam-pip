@@ -51,6 +51,9 @@ function New-Pack ($dir) {
     W "$dir\STEP 6 - OptiScaler\README.md" 'readme'
     W "$dir\STEP 6 - OptiScaler\OptiScaler\libxess.dll" 'xess'
     W "$dir\STEP 6 - OptiScaler\nvngx_dlssnr.dll" 'dlss 5 model'
+    # another F5 version: only the files that differ, in "STEP 6\F5 <version>"
+    W "$dir\STEP 6 - OptiScaler\F5 0.1.38\dxgi.dll" 'optiscaler 0138'
+    W "$dir\STEP 6 - OptiScaler\F5 0.1.38\OptiScaler.ini" "[DlssNr]`r`nEnabled=false`r`n[FrameGen]`r`nFGOutput=auto`r`n"
     New-Zip "$dir\STEP 2 - MO2 mods\1 - Test Patch.zip" @{ 'gamedata\configs\a.ltx' = 'patch a'; 'meta.ini' = "[General]`r`nversion=1`r`n" }
     New-Zip "$dir\STEP 2 - MO2 mods\3 - Test Compat (0.721).zip" @{ 'gamedata\shaders\r3\x.ps' = 'compat 0.721' }
     New-Zip "$dir\STEP 3 - Optional\Add-on - stock Atmospherics (no RC7).zip" @{ 'gamedata\shaders\r3\ssfx.h' = 'stock atmos' }
@@ -665,6 +668,35 @@ $scenarios['S35_preflight_warnings'] = {
     Check ((T "$r\Anomaly\gamedata\shaders\r3\scope_old.ps") -eq 'loose') "loose file left where it is"
 }
 
+$scenarios['S36_optiscaler_version'] = {
+    # OptiScaler F5 0.1.35 (default, in STEP 6) or 0.1.38 (overlay "STEP 6\F5 0.1.38"), per .bat
+    $s = New-Scenario 'S36_optiscaler_version'
+    $bin = "$($s.Root)\Anomaly\bin"
+    $c = Install $s
+    Check ($c -eq 0 -and (T "$bin\dxgi.dll") -eq 'optiscaler dll') "default = 0.1.35 (got $c)"; Show-OnFail ($c -eq 0)
+    Check (-not (Test-Path -LiteralPath "$bin\F5 0.1.38")) "the version folder itself is not copied into bin"
+    $c = Install $s @('-OptiScaler', '0.1.38')
+    Check ($c -eq 0 -and (T "$bin\dxgi.dll") -eq 'optiscaler 0138') "re-run with 0.1.38 swaps dxgi.dll (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T "$bin\OptiScaler.ini") -match 'FGOutput=auto') "0.1.38's own ini placed"
+    Check ((T "$bin\OptiScaler\libxess.dll") -eq 'xess') "files 0.1.38 does not change stay the shared ones"
+    Check ($script:lastOut -match 'OptiScaler F5 0\.1\.38') "the run says which version"
+    $c = Install $s @('-Dlss5', '-OptiScaler', '0.1.38')
+    $ini = T "$bin\OptiScaler.ini"
+    Check ($c -eq 0 -and $ini -match 'FGOutput=auto' -and $ini -match '(?m)^Enabled=true') "DLSS 5 on 0.1.38: its ini with DLSS 5 switched on (got $c)"; Show-OnFail ($c -eq 0)
+    Check (Test-Path -LiteralPath "$bin\nvngx_dlssnr.dll") "DLSS 5 model placed"
+    $c = Install $s
+    Check ($c -eq 0 -and (T "$bin\dxgi.dll") -eq 'optiscaler dll') "back to 0.1.35 (got $c)"; Show-OnFail ($c -eq 0)
+    Check (-not (Get-ChildItem -LiteralPath "$($s.Root)\.slopray\recovery" -Recurse -Filter 'dxgi.dll' -ErrorAction SilentlyContinue)) "swapping never treats our own dxgi.dll as yours"
+    $c = Uninstall $s
+    Check (-not (Test-Path -LiteralPath "$bin\dxgi.dll")) "uninstall removes OptiScaler (got $c)"
+    # a pack without the 0.1.38 folder: stop before changing anything
+    $s = New-Scenario 'S36b_optiscaler_version_missing'
+    Remove-Item -LiteralPath "$($s.Pack)\STEP 6 - OptiScaler\F5 0.1.38" -Recurse -Force      # test fixture only
+    $c = Install $s @('-OptiScaler', '0.1.38')
+    Check ($c -eq 1 -and $script:lastOut -match 'OptiScaler 0\.1\.38 is not in this pack') "missing version: clear stop (got $c)"; Show-OnFail ($c -eq 1)
+    Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "nothing written"
+}
+
 $scenarios['S17_game_on_drive_root'] = {
     $s = New-Scenario 'S17_game_on_drive_root'
     $used = [IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpper() }
@@ -919,6 +951,252 @@ $scenarios['S29c_old_sss_below_235_and_atmos'] = {
     $c = Install $s
     Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
     Check ($script:lastOut -match 'SSS 23\.5: ok') "says SSS 23.5 is fine"
+}
+
+
+# --- Texture Residency off by default (v0.7.1) ----------------------------------
+# Pack mod 7 ships the MCM menu + class rules; the master switch is the user.ltx cvar.
+$texMod = '7 - Tex Residency Classes'
+$texKey = 'r__tex_res_budget_target'
+function Add-TexResMod ($s) {
+    New-Zip "$($s.Pack)\STEP 2 - MO2 mods\$texMod.zip" @{ 'gamedata\scripts\tex_residency_mcm.script' = 'mcm'; 'gamedata\configs\tex_residency.ltx' = '[default]' }
+}
+function Ltx ($s) { T "$($s.Root)\Anomaly\appdata\user.ltx" }
+# 80 saved, as every earlier install left it: replaces the line if there, else adds it
+function Set-Ltx80 ($s) {
+    $l = @([IO.File]::ReadAllLines("$($s.Root)\Anomaly\appdata\user.ltx") | Where-Object { $_ -notmatch "^$texKey\s" }) + "$texKey 80"
+    W "$($s.Root)\Anomaly\appdata\user.ltx" (($l -join "`r`n") + "`r`n")
+}
+
+$scenarios['S37_texres_off_fresh_install'] = {
+    $s = New-Scenario 'S37_texres_off_fresh_install'
+    Add-TexResMod $s
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((Ltx $s) -match "(?m)^$texKey 0\s*$") "user.ltx has $texKey 0"
+    Check ((ML $s) -contains "-$texMod") "mod 7 present in the list but unticked ($((ML $s) -join ' | '))"
+    Check (-not ((ML $s) -contains "+$texMod")) "mod 7 not ticked"
+    Check (Test-Path -LiteralPath "$($s.Root)\GAMMA\mods\$texMod\slopray-mod.json") "mod 7 still unpacked, so it can be ticked later"
+    Check ($script:lastOut -match 'Texture Residency is OFF by default' -and $script:lastOut -match 'tick .7 - Tex Residency Classes.' -and $script:lastOut -match "$texKey 80") "message says it is off and how to opt in"
+    Check ($script:lastOut -notmatch [string][char]0x2014) "no em dash in the output"
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Assert-BackToOriginal $pre $s.Root "fresh tree back to original after uninstall"
+}
+
+$scenarios['S38_texres_off_upgrade_with_80_saved'] = {
+    $s = New-Scenario 'S38_texres_off_upgrade_with_80_saved'
+    Add-TexResMod $s
+    $r = $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    # what an install from before this change left behind: 80 saved, mod 7 ticked, no memory of the switch
+    Set-Ltx80 $s
+    W "$r\$mlRel" (((ML $s) -replace "^-$([regex]::Escape($texMod))$", "+$texMod") -join "`r`n") + "`r`n"
+    $recPath = "$r\.slopray\record.json"
+    $rec = Rec $s
+    foreach ($p in @($rec.keys.PSObject.Properties | Where-Object { $_.Name -like "*|$texKey" })) { $rec.keys.PSObject.Properties.Remove($p.Name) }
+    if ($rec.PSObject.Properties['texResOff']) { $rec.PSObject.Properties.Remove('texResOff') }
+    [IO.File]::WriteAllText($recPath, ($rec | ConvertTo-Json -Depth 8), $utf8)
+    Check ((Ltx $s) -match "(?m)^$texKey 80\s*$") "set up: 80 saved"
+    $c = Install $s
+    Check ($c -eq 0) "upgrade exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((Ltx $s) -match "(?m)^$texKey 0\s*$" -and (Ltx $s) -notmatch "$texKey 80") "80 replaced by 0"
+    Check ((ML $s) -contains "-$texMod" -and -not ((ML $s) -contains "+$texMod")) "mod 7 unticked on upgrade"
+    Check ($script:lastOut -match 'Texture Residency is OFF by default' -and $script:lastOut -match "$texKey was 80") "upgrade message names the old value 80"
+    Check ($script:lastOut -match 'unticked') "message says mod 7 was unticked"
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((Ltx $s) -match "(?m)^$texKey 80\s*$") "uninstall puts the saved 80 back"
+}
+
+$scenarios['S39_texres_player_opt_in_kept_on_rerun'] = {
+    $s = New-Scenario 'S39_texres_player_opt_in_kept_on_rerun'
+    Add-TexResMod $s
+    $r = $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Set-Ltx80 $s
+    W "$r\$mlRel" (((ML $s) -replace "^-$([regex]::Escape($texMod))$", "+$texMod") -join "`r`n") + "`r`n"
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((Ltx $s) -match "(?m)^$texKey 80\s*$") "player's 80 kept on re-run"
+    Check ((ML $s) -contains "+$texMod") "player's tick on mod 7 kept on re-run"
+}
+
+# --- Atmos, pack check, HAGS (v0.7.1 T2) -------------------------------------------
+# The pack Atmos add-on (RC7 and RC8 both use it) and the stock one; the installer must
+# never untick a player's Atmospherics mod, whatever is ticked.
+$atmosRc7 = '290- Atmospherics 2.69 RC7.7 - Hippobot'
+$atmosRc8 = 'xx-290- Atmospherics v2.69 RC8 Hotfix 4 - Hippobot'
+$atmosAddon = 'Add-on - Atmospherics RC7 users'
+function Add-AtmosMod ($s, $name) {
+    W "$($s.Root)\GAMMA\mods\$name\gamedata\shaders\r3\pbr_brdf_character.h" "atmos $name"
+    Add-ModLine $s "+$name"
+}
+function Add-AtmosAddonZip ($s) {
+    New-Zip "$($s.Pack)\STEP 3 - Optional\$atmosAddon.zip" @{ 'gamedata\shaders\r3\ssfx.h' = 'rc7 atmos addon' }
+}
+# a manifest of the pack as built (what the pack build step writes); packs made by the other tests have none
+function Add-Manifest ($s) {
+    $f = [ordered]@{}
+    foreach ($x in Get-ChildItem -LiteralPath $s.Pack -Recurse -File | Where-Object { $_.FullName.Substring($s.Pack.Length + 1) -like 'STEP *' } | Sort-Object FullName) {
+        $f[$x.FullName.Substring($s.Pack.Length + 1).Replace('\', '/')] = Sha $x.FullName
+    }
+    W "$($s.Pack)\pack-manifest.json" ([ordered]@{ pack = 'test'; files = $f } | ConvertTo-Json -Depth 4)
+}
+# no player Atmospherics mod line was unticked (pack add-ons are not the player's mod)
+function Assert-AtmosKept ($s, $names) {
+    $ml = ML $s
+    foreach ($n in $names) { Check ($ml -contains "+$n") "Atmos '$n' still ticked" }
+    $off = @($ml | Where-Object { $_ -match '^-.*Atmospherics' -and $_ -notlike '-Add-on - *' })
+    Check ($off.Count -eq 0) "no Atmospherics mod unticked ($($off -join ', '))"
+}
+
+$scenarios['S40_atmos_rc7_only'] = {
+    $s = New-Scenario 'S40_atmos_rc7_only'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s $atmosRc7
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Assert-AtmosKept $s @($atmosRc7)
+    Check ((ML $s) -contains "+$atmosAddon") "RC7 add-on ticked"
+    Check ($script:lastOut -notmatch 'both RC7 and RC8') "no both-ticked warning"
+    Check ($script:lastOut -notmatch 'not recognised as RC7 or RC8') "no unrecognised-Atmos warning"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "RC7 tree back to original after uninstall"
+}
+
+$scenarios['S41_atmos_rc8_only'] = {
+    $s = New-Scenario 'S41_atmos_rc8_only'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s $atmosRc8
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Assert-AtmosKept $s @($atmosRc8)
+    Check ((ML $s) -contains "+$atmosAddon") "RC7 add-on (also for RC8) ticked"
+    Check ($script:lastOut -notmatch 'both RC7 and RC8') "no both-ticked warning"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "RC8 tree back to original after uninstall"
+}
+
+$scenarios['S42_atmos_rc7_and_rc8_both_ticked'] = {
+    $s = New-Scenario 'S42_atmos_rc7_and_rc8_both_ticked'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s $atmosRc7; Add-AtmosMod $s $atmosRc8
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    $o = $script:lastOut
+    Check ($o -match 'both RC7 and RC8' -and $o.Contains($atmosRc7) -and $o.Contains($atmosRc8)) "warns and names both mods"
+    Check ($o -match "(?s)LEFT TO DO.*both RC7 and RC8") "warning repeated in LEFT TO DO"
+    Assert-AtmosKept $s @($atmosRc7, $atmosRc8)
+    Check ((ML $s) -contains "+$atmosAddon") "RC7 add-on ticked"
+    Check ($o -notmatch [string][char]0x2014) "no em dash in the output"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "both-ticked tree back to original after uninstall"
+}
+
+# --- camera-MV fill off by default (v0.7.1) ----------------------------------------
+# r__upscaler_camera_mv 1 made the still image wobble under DLSS/DLAA. An upgrade from an
+# install that saved 1 gets 0 once; a later run keeps the player's own choice.
+$scenarios['S47_camera_mv_off_once'] = {
+    $s = New-Scenario 'S47_camera_mv_off_once'
+    $r = $s.Root; $k = 'r__upscaler_camera_mv'
+    $ltxPath = "$r\Anomaly\appdata\user.ltx"
+    function Set-CamMv ($v) {
+        $l = @([IO.File]::ReadAllLines($ltxPath) | Where-Object { $_ -notmatch "^$k\s" }) + "$k $v"
+        W $ltxPath (($l -join "`r`n") + "`r`n")
+    }
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 0\s*$") "fresh install writes $k 0"
+    Check ((T $ltxPath) -match "(?m)^spawn_time_log 0\s*$") "fresh install writes spawn_time_log 0"
+    # what a v0.7 install left: 1 saved, no record entry for the key
+    Set-CamMv 1
+    $recPath = "$r\.slopray\record.json"
+    $rec = Rec $s
+    foreach ($p in @($rec.keys.PSObject.Properties | Where-Object { $_.Name -like "*|$k" })) { $rec.keys.PSObject.Properties.Remove($p.Name) }
+    [IO.File]::WriteAllText($recPath, ($rec | ConvertTo-Json -Depth 8), $utf8)
+    $c = Install $s
+    Check ($c -eq 0) "upgrade exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 0\s*$" -and (T $ltxPath) -notmatch "(?m)^$k 1") "upgrade replaces 1 with 0"
+    # the player opts back in: a re-run leaves it alone
+    Set-CamMv 1
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 1\s*$") "re-run keeps the player's $k 1"
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+}
+
+$scenarios['S46_atmos_unrecognised_build'] = {
+    $s = New-Scenario 'S46_atmos_unrecognised_build'
+    $odd = 'Atmospherics v2.69 custom'
+    W "$($s.Root)\GAMMA\mods\$odd\gamedata\shaders\r3\x.h" 'custom atmos'
+    Add-ModLine $s "+$odd"
+    $pre = Snap $s.Root
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    $o = $script:lastOut
+    Check ($o -match "'$odd' is not recognised as RC7 or RC8" -and $o -match 'stock Atmospherics add-on') "warns, names the mod, says the stock add-on is used"
+    Check ($o -match "(?s)LEFT TO DO.*not recognised as RC7 or RC8") "warning repeated in LEFT TO DO"
+    Assert-AtmosKept $s @($odd)
+    Check ($o -notmatch [string][char]0x2014) "no em dash in the output"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "unrecognised-Atmos tree back to original after uninstall"
+}
+
+$scenarios['S43_pack_check_stops_on_bad_pack'] = {
+    $s = New-Scenario 'S43_pack_check_stops_on_bad_pack'
+    Add-Manifest $s
+    $c = Install $s @('-DryRun')
+    Check ($c -eq 0 -and $script:lastOut -match 'Pack check: every file') "intact pack passes the check, also in a dry run (got $c)"; Show-OnFail ($c -eq 0)
+    # a file missing (cut-off download)
+    Remove-Item -LiteralPath "$($s.Pack)\STEP 7 - Frame generation\bin\streamline\sl.common.dll" -Force      # test fixture only
+    $pre = Snap $s.Root
+    $c = Install $s
+    $o = $script:lastOut
+    Check ($c -eq 1) "missing file: exit 1 (got $c)"; Show-OnFail ($c -eq 1)
+    Check ($o -match 're-download the full pack' -and $o -match 'sl\.common\.dll') "says re-download and names the missing file"
+    Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "nothing written"
+    Check ((Compare-Snap $pre (Snap $s.Root)).Count -eq 0) "game folder unchanged"
+    # files cut short (same name, different content): an engine file and a zip
+    W "$($s.Pack)\STEP 7 - Frame generation\bin\streamline\sl.common.dll" 'sl common'
+    W "$($s.Pack)\STEP 7 - Frame generation\bin\AnomalyDX12.exe" 'SR dx1'
+    $z = "$($s.Pack)\STEP 2 - MO2 mods\1 - Test Patch.zip"
+    $bytes = [IO.File]::ReadAllBytes($z); [IO.File]::WriteAllBytes($z, $bytes[0..($bytes.Length - 20)])
+    $c = Install $s
+    $o = $script:lastOut
+    Check ($c -eq 1) "mismatched files: exit 1 (got $c)"; Show-OnFail ($c -eq 1)
+    Check ($o -match 're-download the full pack' -and $o -match 'AnomalyDX12\.exe' -and $o -match '1 - Test Patch\.zip') "names the mismatched engine file and zip"
+    Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "nothing written (mismatch)"
+    Check ((Compare-Snap $pre (Snap $s.Root)).Count -eq 0) "game folder unchanged (mismatch)"
+}
+
+$scenarios['S44_hags_off_warns'] = {
+    $s = New-Scenario 'S44_hags_off_warns'
+    foreach ($mode in '0', 'missing') {
+        $env:SLOPRAY_TEST_HAGS = $mode
+        try { $c = Install $s @('-DryRun') } finally { Remove-Item Env:\SLOPRAY_TEST_HAGS }
+        $o = $script:lastOut
+        Check ($c -eq 0) "HAGS '$mode': exit 0, warning only (got $c)"; Show-OnFail ($c -eq 0)
+        Check ($o -match 'Hardware-accelerated GPU scheduling' -and $o -match 'Settings > System > Display > Graphics > Default graphics settings') "HAGS '$mode': warns with the Windows path"
+        Check ($o -notmatch [string][char]0x2014) "HAGS '$mode': no em dash"
+    }
+    Check (-not (Test-Path -LiteralPath "$($s.Root)\.slopray")) "dry runs wrote nothing"
+    $env:SLOPRAY_TEST_HAGS = '0'
+    try { $c = Install $s } finally { Remove-Item Env:\SLOPRAY_TEST_HAGS }
+    Check ($c -eq 0 -and $script:lastOut -match '(?s)LEFT TO DO.*Hardware-accelerated GPU scheduling') "real run: exit 0, repeated in LEFT TO DO (got $c)"; Show-OnFail ($c -eq 0)
+}
+
+$scenarios['S45_hags_on_quiet'] = {
+    $s = New-Scenario 'S45_hags_on_quiet'
+    $env:SLOPRAY_TEST_HAGS = '2'
+    try { $c = Install $s @('-DryRun') } finally { Remove-Item Env:\SLOPRAY_TEST_HAGS }
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ($script:lastOut -notmatch 'Hardware-accelerated GPU scheduling') "no warning when HAGS is on"
+    Check ($script:lastOut -match 'GPU scheduling \(HAGS\): on') "says it is on"
 }
 
 # --- run ---------------------------------------------------------------------

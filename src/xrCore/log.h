@@ -31,6 +31,8 @@ public:
 	static void EnableFastDebugLog();
 	static void InitLog();
 	static void FlushLog();
+	// FlushLog, then wait up to timeoutMs for the log thread to finish writing (crash handlers; no locks taken here)
+	static void FlushLogWait(unsigned timeoutMs);
 	static void CloseLog();
 	static void SetImmediateMode(bool enable);
 

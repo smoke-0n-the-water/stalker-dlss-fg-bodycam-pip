@@ -72,6 +72,15 @@ HRESULT D3D12PresentBridge::Check(HRESULT result, const char* stage)
     return result;
 }
 
+// Defined in xrRender_console.cpp: logs the engine-side state and keeps the lines for the ERROR record.
+extern void Dx12DeviceFailureFacts(HRESULT result, const char* stage, HRESULT removed12, HRESULT removed11, const char* vram);
+
+void D3D12PresentBridge::ReportDeviceFailureForTest(HRESULT result)
+{
+    m_stallReported = false;
+    ReportStall("debug command r__debug_device_removed", result);
+}
+
 void D3D12PresentBridge::ReportStall(const char* stage, HRESULT result)
 {
     if (m_stallReported || !m_logger) return;
@@ -90,6 +99,7 @@ void D3D12PresentBridge::ReportStall(const char* stage, HRESULT result)
     // Process-wide use of this GPU's dedicated memory (DX11 rendering and DX12
     // presentation together) against the budget Windows grants the game.
     DXGI_QUERY_VIDEO_MEMORY_INFO local{}, shared{};
+    char vram[160]{};
     if (m_adapter && SUCCEEDED(m_adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local)) &&
         SUCCEEDED(m_adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &shared)))
     {
@@ -98,7 +108,12 @@ void D3D12PresentBridge::ReportStall(const char* stage, HRESULT result)
             "[DX12 bridge] Stall report VRAM: %.0f/%.0f MiB used/budget (dedicated); %.0f/%.0f MiB in system memory",
             local.CurrentUsage / MiB, local.Budget / MiB, shared.CurrentUsage / MiB, shared.Budget / MiB);
         m_logger(message);
+        snprintf(vram, sizeof(vram), "%.0f/%.0f MiB used/budget (dedicated), %.0f/%.0f MiB in system memory",
+            local.CurrentUsage / MiB, local.Budget / MiB, shared.CurrentUsage / MiB, shared.Budget / MiB);
     }
+    Dx12DeviceFailureFacts(result, stage,
+        m_device12 ? m_device12->GetDeviceRemovedReason() : S_OK,
+        m_device11 ? m_device11->GetDeviceRemovedReason() : S_OK, vram);
     for (size_t i = 0; i < m_slots.size(); ++i)
     {
         const auto& slot = m_slots[i];
