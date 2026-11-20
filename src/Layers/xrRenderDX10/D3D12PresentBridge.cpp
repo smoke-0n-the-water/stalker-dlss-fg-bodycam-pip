@@ -344,8 +344,8 @@ HRESULT D3D12PresentBridge::CreateFsrFrameGeneration()
     const std::string version_name = m_ffx->ProviderVersion(&m_fsrFrameGeneration);
     if (m_logger && version_name != m_fsrFgVersion)
     {
-        char message[256]{};
-        snprintf(message, sizeof(message), "[FSR FG] Frame generation provider %s at %ux%u (4.x requires Windows 11 and Radeon RX 9000; other systems use the 3.1 runtime).",
+        char message[320]{};
+        snprintf(message, sizeof(message), "[FSR FG] Frame generation provider %s at %ux%u (Swapchain 4.0.0 Driver-Assisted Frame Pacing on RX 9000 + Adrenalin 26.10.1+; 4.x requires Windows 11 and Radeon RX 9000; other systems use the 3.1.6 runtime).",
             version_name.c_str(), m_desc.Width, m_desc.Height);
         m_logger(message);
     }
@@ -1392,8 +1392,8 @@ HRESULT D3D12PresentBridge::CreateUpscaler(UINT renderWidth, UINT renderHeight, 
     m_upDisplayHeight = displayHeight;
     if (m_logger)
     {
-        char message[256]{};
-        snprintf(message, sizeof(message), "[FSR] DX12 upscaler provider %s: scene=%ux%u display=%ux%u hdr=%u perceptual-input=%u (FSR 4 needs Radeon RX 7000/9000; other GPUs use 3.1).",
+        char message[320]{};
+        snprintf(message, sizeof(message), "[FSR] DX12 upscaler provider %s: scene=%ux%u display=%ux%u hdr=%u perceptual-input=%u (FSR 4.1.2 runs on Radeon RX 6000/7000/9000 & supported Ryzen AI APUs; other GPUs use 3.1.6).",
             m_upVersion.c_str(), renderWidth, renderHeight, displayWidth, displayHeight, unsigned(hdr), unsigned(m_upNonLinear));
         m_logger(message);
     }
