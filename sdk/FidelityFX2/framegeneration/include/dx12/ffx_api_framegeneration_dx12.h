@@ -55,7 +55,8 @@ struct ffxCreateContextDescFrameGenerationSwapChainForHwndDX12
     IDXGISwapChain4**                swapchain;       ///< Output pointer to receive the created frame interpolation swapchain.
     HWND                             hwnd;            ///< Window handle for the calling application.
     DXGI_SWAP_CHAIN_DESC1*           desc;            ///< Swap chain creation parameters.
-    DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreenDesc;  ///< Fullscreen swap chain creation parameters (can be NULL for windowed mode).\n    IDXGIFactory*                    dxgiFactory;     ///< The DXGI factory to use for DX12 swapchain creation.
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreenDesc;  ///< Fullscreen swap chain creation parameters (can be NULL for windowed mode).
+    IDXGIFactory*                    dxgiFactory;     ///< The DXGI factory to use for DX12 swapchain creation.
     ID3D12CommandQueue*              gameQueue;       ///< The command queue to be used for presentation.
 };
 

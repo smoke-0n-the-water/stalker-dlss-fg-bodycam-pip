@@ -1,4 +1,4 @@
-// AMD FSR SDK 2.3.0 (FFX API) signed DX12 runtime: FSR Upscaling 4.x and FSR Frame Generation.
+// AMD FSR SDK 2.4.0 (FFX API) signed DX12 runtime: FSR Upscaling 4.x and FSR Frame Generation.
 // Loaded dynamically. The DX11 executable and DLSS-only DX12 sessions never load it.
 #pragma once
 
@@ -33,7 +33,7 @@ public:
     ffxReturnCode_t Query(ffxContext* context, ffxQueryDescHeader* desc) const { return m_query(context, desc); }
     ffxReturnCode_t Dispatch(ffxContext* context, const ffxDispatchDescHeader* desc) const { return m_dispatch(context, desc); }
 
-    // Provider actually selected for a created context, e.g. "4.1.1" on RDNA3/4 or a
+    // Provider actually selected for a created context, e.g. "4.1.2" on supported Radeon GPUs (RDNA 2/3/4 and Ryzen AI APUs) or a
     // 3.1.x fallback elsewhere. Returns "unknown" if the query fails.
     std::string ProviderVersion(ffxContext* context) const;
     static void Message(uint32_t type, const wchar_t* message); // Rate-limited log sink.
