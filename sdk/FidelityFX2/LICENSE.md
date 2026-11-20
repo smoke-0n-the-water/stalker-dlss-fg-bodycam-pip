@@ -921,7 +921,6 @@ These source files
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\RadianceCache.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\random\Halton.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\random\OwenSobol.hlsl`
-- `Kits\FidelityFX\upscalers\fsr3\internal\shaders\ffx_fsr3upscaler_shading_change_pyramid_pass.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\random\PCG.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\random\Random.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Ray.hlsl`
