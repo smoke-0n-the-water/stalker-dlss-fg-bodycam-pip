@@ -183,6 +183,7 @@ local function install_dynamic_options()
 end
 
 local function add_options()
+    local caps = support()
     local generation = generation_choices()
     local methods = upscaler_choices()
     local fsr_modes = content_for("r_fsr3_quality", {
@@ -271,6 +272,9 @@ local function add_options()
                             cmd = "r_frame_generation", content = generation, vid = true,
                             upscaler_method = dual and "either" or nil,
                         })
+                    end
+                    if caps.antilag2 == "1" and has_switch("r_antilag2") then
+                        add(switch_row("antilag2", "r_antilag2", {}))
                     end
                     if has_switch("r_upscaler_post_after") then
                         add(switch_row("upscaler_post_after", "r_upscaler_post_after", {

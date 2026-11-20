@@ -16,6 +16,9 @@
 #include "D3D12PresentBridge.h"
 #include "../xrRenderPC_R4/Dlss/FrameGeneration.h"
 #endif
+#if defined(USE_DX11) && !defined(XR_DX12_BRIDGE)
+#include "AntiLag2DX11.h"
+#endif
 #include "../../xrEngine/XR_IOConsole.h"
 #include "../../xrEngine/renderdoc_integration.h"
 #include "../../Include/xrAPI/xrAPI.h"
@@ -600,6 +603,11 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
     _RELEASE(device);
     _RELEASE(context);
 
+#if defined(USE_DX11) && !defined(XR_DX12_BRIDGE)
+    antilag2_dx11::Initialize();
+    Msg("[Anti-Lag 2] DX11 %s", antilag2_dx11::IsSupported() ? "supported" : "unavailable");
+#endif
+
     if (ps_r__max_frame_latency > 0) {
         IDXGIDevice1* dxgi_device1 = nullptr;
         if (SUCCEEDED(pDevice->QueryInterface(&dxgi_device1)) && dxgi_device1) {
@@ -811,6 +819,10 @@ void CHW::DestroyDevice()
 
 #ifdef USE_DX11
     _RELEASE(pContext);
+#endif
+
+#if defined(USE_DX11) && !defined(XR_DX12_BRIDGE)
+    antilag2_dx11::DeInitialize();
 #endif
 
 #ifndef USE_DX11

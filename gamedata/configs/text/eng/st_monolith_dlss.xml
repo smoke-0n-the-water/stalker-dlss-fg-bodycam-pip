@@ -50,4 +50,6 @@
     <string id="ui_mm_lst_upscaler_sunshafts_raw"><text>Raw</text></string>
     <string id="ui_mm_video_basic_upscaler_particles_after"><text>Full resolution particles</text></string>
     <string id="ui_mm_video_basic_upscaler_particles_after_desc"><text>Draws smoke, fire and dust at full resolution without upscaling, which reduces visual artifacts on them.\nCan cost FPS, especially on weaker GPUs.\nThe visual difference is small with DLSS.</text></string>
+    <string id="ui_mm_video_basic_antilag2"><text>AMD Radeon Anti-Lag 2</text></string>
+    <string id="ui_mm_video_basic_antilag2_desc"><text>Reduces input latency by pacing the CPU to align with the GPU on supported AMD Radeon graphics cards. Operates independently of upscaling. Applies in real time without restarting the renderer.</text></string>
 </string_table>

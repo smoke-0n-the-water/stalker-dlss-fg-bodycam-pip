@@ -396,6 +396,9 @@ void CRenderDevice::on_idle()
 
 #ifdef XR_DX12_BRIDGE
     fg::BeginSimulation();
+#else
+    if (m_pRender)
+        m_pRender->BeginSimulation();
 #endif
 	if (Device.ModelDefferClear)
 	{
@@ -540,10 +543,11 @@ void CRenderDevice::on_idle()
 	
 #ifdef ECO_RENDER // ECO_RENDER START
 #ifdef XR_DX12_BRIDGE
-	// Reflex applies r__framelimit itself; never wait twice.
-	const bool engineLimiter = ps_framelimiter && !fg::ReflexLimitsFrames();
+	// Reflex or Anti-Lag 2 applies r__framelimit itself; never wait twice.
+	const bool engineLimiter = ps_framelimiter && !fg::LatencyLimitsFrames();
 #else
-	const bool engineLimiter = ps_framelimiter != 0;
+	// Anti-Lag 2 (DX11) applies r__framelimit itself when active; never wait twice.
+	const bool engineLimiter = ps_framelimiter && !(m_pRender && m_pRender->LatencyLimitsFrames());
 #endif
 	if (Device.Paused() || IsMainMenuActive() || engineLimiter)
 	{

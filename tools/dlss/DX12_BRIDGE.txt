@@ -23,10 +23,12 @@ bin/D3D12/D3D12Core.dll       sdk/AgilitySDK/bin (Agility SDK 1.619.6). The exe
                               exports D3D12SDKVersion=619 / D3D12SDKPath=.\D3D12\.
                               Gives Shader Model 6.6+ (FSR 4) on Windows 10.
 Licenses: sdk/FidelityFX2/LICENSE.md, sdk/AgilitySDK/LICENSE.txt,
-sdk/Streamline/LICENSE.txt. Only the files listed above are redistributable.
-The sdk/*/bin runtime DLLs are not tracked in git (like nvngx_dlss.dll): take
-them from the vendor packages at the versions above. Builds only need the
-tracked headers; the DLLs are loaded at runtime.
+sdk/Streamline/LICENSE.txt, sdk/AntiLag2/LICENSE.txt. Only the files listed above
+are redistributable. The sdk/*/bin runtime DLLs are not tracked in git (like
+nvngx_dlss.dll): take them from the vendor packages at the versions above.
+Builds only need the tracked headers; the DLLs are loaded at runtime.
+AMD Radeon Anti-Lag 2 (SDK v2.0.0a) is header-only (sdk/AntiLag2/); no extra
+DLLs are required beside the exe. The headers bind to the driver directly.
 
 Current scope
 -------------
@@ -45,6 +47,12 @@ RImplementation.Target null, crashing the next frame). After FSR FG has been
 used, Off/DLSS keep the FSR swapchain with generation off; DLSS FG and Reflex
 need a game restart (menu: "DLSS 2x (restart the game)").
 
+AMD Radeon Anti-Lag 2 (AntiLag2DX12) provides driver-level latency reduction on
+supported Radeon GPUs when the bridge runs under the fsr or fallback runtimes
+(Streamline manages Reflex instead). Native DX11 builds (AnomalyDX11AVX.exe without
+the DX12 bridge) integrate Anti-Lag 2 via AntiLag2DX11. Controlled by the
+r_antilag2 CVar (0 or 1), toggled in real time without vid_restart.
+
 DLSS-FG presets (e.g. Preset C, NVIDIA app beta 2026-10-13) are driver overrides,
 not a Streamline option: DLSSGOptions has no preset field in 2.14.16. Forcing one
 means the driver profile for AnomalyDX12.exe (NvApiDriverSettings.h in the SL SDK):
@@ -61,8 +69,10 @@ the UI (plus the current value); parsing/saving use the full token list.
 Support: DLSS = NVIDIA + NGX SuperSampling available (probed once per device);
 FSR 3 = feature level 11.1; FSR (DX12) and FSR FG = signed AMD runtime loads
 and offers a version for this GPU; DLSS FG = Streamline adapter check (vendor
-check before Streamline has started). r_upscaler_support prints the summary
-the options script uses for labels (FSR 4 vs FSR 3.1, restart required).
+check before Streamline has started). r_upscaler_support prints the summary the options script uses for labels
+(FSR 4 vs FSR 3.1, restart required) and reports antilag2=0|1. The Anti-Lag 2
+checkbox is shown in Basic video options whenever antilag2=1 and r_antilag2 exists
+in the engine console, independent of upscaler selection (works with Off, DLSS, or FSR).
 
 Upscalers: DX11 DLSS, DX11 FSR 3.1.2 (r_upscaler fsr3), and DX12 AMD FSR
 (r_upscaler fsr4, DX12 exe only). The DX12 FSR path copies render-resolution
@@ -85,15 +95,28 @@ The 3D scope lens updates at its own rate and may ghost slightly in the lens.
 FSR FG: synchronous generation on the presentation queue (allowAsyncWorkloads
 false), HUD-less UI detection; FG 4.0.1 on Windows 11 + RX 9000, otherwise the
 runtime's 3.1 provider (3.1.6 on RTX 4070).
-r__framelimit: with Streamline, Reflex applies the cap and the engine limiter
-does not wait. While frames are generated the cap counts displayed frames.
+Anti-Lag 2 & FSR FG coordination: the bridge attaches AntiLag2SwapchainData
+(&context, enabled) to the DXGI swapchain via SetPrivateData(kFfxAntiLag2DataGuid).
+The FSR Frame Interpolation swapchain queries this data to synchronize pacing
+with Anti-Lag 2 directly. At frame end, MarkEndOfFrameRendering is called before
+Present. 3D-scope (SVP) non-presenting frames skip Anti-Lag 2 (matching Reflex);
+True-PiP renders and presents both viewports together and is not skipped.
+r__framelimit: with Streamline, Reflex applies the cap; with Anti-Lag 2 active
+without frame generation (AntiLag2LimitsFrames()), the cap (ps_framelimiter) is
+handed off to AntiLag2DX12::Update (or AntiLag2DX11::Update on DX11) and the
+engine sleep limiter does not wait (LatencyLimitsFrames()). While frames are
+generated the cap counts displayed frames.
 
 Diagnostics (r_fg_diagnostics 1, latched at device creation): [FG DIAG] lines for
 tags/formats, post-Present DLSS-G state, sparse depth/motion samples, cumulative
 counters, and "DXGI present counter ... per rendered frame" (~2 when generating;
 works for both runtimes). [FSR] lines carry FSR runtime debug-checker messages
 (consecutive repeats dropped). The startup line "[DX12 bridge] D3D12 core"
-shows which D3D12Core.dll loaded and the highest shader model.
+shows which D3D12Core.dll loaded and the highest shader model. Startup reports
+"[Anti-Lag 2] DX12 initialized." (or "[Anti-Lag 2] DX11 supported|unavailable").
+[FG DIAG] reports Anti-Lag 2 status (active, off, unavailable).
+Linux / Mesa note: when running under Wine/Proton on Mesa RADV, Anti-Lag 2
+requires ENABLE_LAYER_MESA_ANTI_LAG=1 on Mesa versions prior to 26.3.
 
 The presentation transport is adapted from OGSR's D3D12PresentBridge at revision
 6443f8426. Credits: OGSR team and xrSimpAI.

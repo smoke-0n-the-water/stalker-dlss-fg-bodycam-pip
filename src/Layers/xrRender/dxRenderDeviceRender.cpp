@@ -4,6 +4,13 @@
 #include "ResourceManager.h"
 #include "../../xrEngine/shader_bus.h"
 
+#if defined(USE_DX11) && !defined(XR_DX12_BRIDGE)
+#include "../xrRenderDX10/AntiLag2DX11.h"
+#include "xrRender_console.h"
+extern int ps_framelimiter;
+extern bool IsMainMenuActive();
+#endif
+
 // a shader bus texture lane's $user$bus_ alias and the texture it shows
 struct bus_texture_slot
 {
@@ -711,6 +718,32 @@ bool dxRenderDeviceRender::SwitchOutputMonitor(HMONITOR hTargetMon, HWND hWnd,
     Msg("* vid_monitor: DX9 output swapped, final mode %ux%u", vidModeW, vidModeH);
     return true;
 
+#else
+    return false;
+#endif
+}
+
+void dxRenderDeviceRender::BeginSimulation()
+{
+#if defined(USE_DX11) && !defined(XR_DX12_BRIDGE)
+    if (!antilag2_dx11::IsSupported()) return;
+    // Skip legacy non-presenting 3D-scope frames (matching FrameGeneration.cpp).
+    // True-PiP renders both viewports in one presented frame and must not be skipped.
+    auto& svp = Device.m_SecondViewport;
+    const bool scopeFrame = !Device.true_pip_on && svp.IsSVPActive() &&
+        (Device.dwFrame + 1) % svp.GetSVPFrameDelay() == 0;
+    if (scopeFrame) return;
+    const bool enabled = ps_r_antilag2 != 0;
+    const unsigned int maxFps = LatencyLimitsFrames() ? unsigned(ps_framelimiter) : 0u;
+    antilag2_dx11::Update(enabled, maxFps);
+#endif
+}
+
+bool dxRenderDeviceRender::LatencyLimitsFrames() const
+{
+#if defined(USE_DX11) && !defined(XR_DX12_BRIDGE)
+    return ps_framelimiter > 0 && antilag2_dx11::IsSupported() && ps_r_antilag2 != 0 &&
+        !Device.Paused() && !IsMainMenuActive();
 #else
     return false;
 #endif

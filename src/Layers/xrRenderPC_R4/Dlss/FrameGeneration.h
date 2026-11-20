@@ -19,5 +19,6 @@ void Reset();
 // limiter must not wait as well. While frames are generated the cap is interpreted
 // as displayed frames, so rendered frames are limited to half of it.
 bool ReflexLimitsFrames();
+bool LatencyLimitsFrames();
 float FrameLimitScale();
 }

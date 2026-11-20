@@ -40,12 +40,17 @@ function class:GetCurrentValue(path, opt, row)
     local id = path .. "/" .. opt
     if pending[id] ~= nil then return pending[id] end
     if row.curr then return row.curr[1]() end
+    if row.val == 1 then return get_console_cmd(1, row.cmd) end
     return live[row.cmd]
 end
 function class:CacheValue(path, opt, value, row)
     local id = path .. "/" .. opt
     if backup[id] == nil then backup[id] = self:GetCurrentValue(path, opt, row) end
-    pending[id] = value ~= backup[id] and value or nil
+    if value ~= backup[id] then
+        pending[id] = value
+    else
+        pending[id] = nil
+    end
 end
 function class:Reset_opt(tree, path, flags)
     renders = renders + 1
@@ -266,6 +271,58 @@ change("upscaler_sunshafts", "smoothed")
 menu:On_Accept()
 assert(live.r_upscaler_sunshafts == "smoothed")
 open()
+-- Anti-Lag 2: hidden when unsupported or console command is absent.
+live.r_upscaler_support = "antilag2=0"
+live.r_antilag2 = "0"
+ui_options.init_opt_base()
+open()
+expect("upscaler,dlss_mode,dlss_preset,dlss_linear_input,dlss_sharpness," .. SWITCHES)
+assert(menu:GetOption("video/basic/antilag2").id == nil)
+
+live.r_upscaler_support = "antilag2=1"
+live.r_antilag2 = nil
+ui_options.init_opt_base()
+open()
+expect("upscaler,dlss_mode,dlss_preset,dlss_linear_input,dlss_sharpness," .. SWITCHES)
+assert(menu:GetOption("video/basic/antilag2").id == nil)
+
+-- Anti-Lag 2: present when supported, independent of upscaler method, toggles cleanly without vid_restart.
+live.r_antilag2 = "0"
+ui_options.init_opt_base()
+assert(#ui_options.options[1].gr[1].gr == 15)
+local al2_row = menu:GetOption("video/basic/antilag2")
+assert(al2_row.id == "antilag2" and al2_row.type == "check" and al2_row.val == 1)
+assert(al2_row.cmd == "r_antilag2" and al2_row.bool_to_num and not al2_row.vid)
+assert(al2_row.upscaler_method == nil, "Anti-Lag 2 must be independent of upscaler method")
+
+open()
+assert(table.concat(menu.visible, ",") == "renderer,resolution,fov,line,title,upscaler,dlss_mode,dlss_preset,dlss_linear_input,dlss_sharpness,antilag2," .. SWITCHES)
+select_method("fsr3")
+assert(table.concat(menu.visible, ",") == "renderer,resolution,fov,line,title,upscaler,fsr3_mode,dlss_sharpness,antilag2," .. SWITCHES)
+select_method("off")
+assert(table.concat(menu.visible, ",") == "renderer,resolution,fov,line,title,upscaler,antilag2")
+
+-- Toggle Anti-Lag 2: writes 0/1 to console via bool_to_num, does not require vid_restart
+assert(menu.values.antilag2 == false and live.r_antilag2 == "0")
+change("antilag2", true)
+assert(live.r_antilag2 == "0", "Toggle wrote to live console before Apply")
+menu:On_Accept()
+assert(live.r_antilag2 == "1")
+
+open()
+assert(menu.values.antilag2 == true)
+change("antilag2", false)
+menu:On_Accept()
+assert(live.r_antilag2 == "0")
+
+-- Reset back to standard state for downstream tests
+live.r_upscaler_support = nil
+live.r_antilag2 = nil
+live.r_upscaler = "dlss"
+ui_options.init_opt_base()
+open()
+expect("upscaler,dlss_mode,dlss_preset,dlss_linear_input,dlss_sharpness," .. SWITCHES)
+
 -- Older DLSS-only binary keeps the old controls, including quality=off.
 command_tokens.r_upscaler, command_tokens.r_fsr3_quality = nil, nil
 command_tokens.r_upscaler_sunshafts = nil

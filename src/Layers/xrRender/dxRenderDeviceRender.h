@@ -71,6 +71,8 @@ public:
 	virtual void SetCacheXform_prev(Fmatrix& mView, Fmatrix& mProject);
 	virtual void OnAssetsChanged();
 	virtual bool SwitchOutputMonitor(HMONITOR hTargetMon, HWND hWnd, u32 g_screenmode, u32& vidModeW, u32& vidModeH);
+	virtual void BeginSimulation() override;
+	virtual bool LatencyLimitsFrames() const override;
 
 public:
 	CResourceManager* Resources;

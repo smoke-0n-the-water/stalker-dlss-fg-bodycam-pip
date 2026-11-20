@@ -702,6 +702,12 @@
       <ExcludedFromBuild Condition="'$(Configuration)'!='Release-DX12'">true</ExcludedFromBuild>
     </ClCompile>
     <ClInclude Include="Dlss\FrameGeneration.h" />
+    <ClCompile Include="..\xrRenderDX10\AntiLag2DX11.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'=='Release-DX12'">true</ExcludedFromBuild>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClInclude Include="..\xrRenderDX10\AntiLag2DX11.h" />
     <ClCompile Include="..\xrRenderDX10\dx10HW.cpp" />
     <ClCompile Include="..\xrRenderDX10\dx10ResourceManager_Resources.cpp" />
     <ClCompile Include="..\xrRenderDX10\dx10ResourceManager_Scripting.cpp" />
