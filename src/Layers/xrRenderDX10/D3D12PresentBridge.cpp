@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <stdlib.h>
+#include "../../../sdk/AntiLag2/ffx_antilag2_dx12.h"
 #pragma comment(lib, "d3dcompiler.lib")
 
 namespace
@@ -17,6 +19,14 @@ struct SharedHandle
 {
     HANDLE value{};
     ~SharedHandle() { if (value) CloseHandle(value); }
+};
+
+// GUID used by AMD FSR SDK FrameInterpolationSwapchainDX12 to query Anti-Lag 2 context and state.
+static constexpr GUID kFfxAntiLag2DataGuid = {0x5083ae5b, 0x8070, 0x4fca, {0x8e, 0xe5, 0x35, 0x82, 0xdd, 0x36, 0x7d, 0x13}};
+struct AntiLag2SwapchainData
+{
+    AMD::AntiLag2DX12::Context* context;
+    bool enabled;
 };
 
 D3D12_RESOURCE_BARRIER Transition(ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
@@ -51,6 +61,11 @@ FfxApiResource FfxShared(ID3D12Resource* resource)
     return ffxApiGetResourceDX12(resource, FFX_API_RESOURCE_STATE_COMMON);
 }
 }
+
+struct D3D12PresentBridge::AntiLag2State
+{
+    AMD::AntiLag2DX12::Context context{};
+};
 
 // Preserve the first failure so shutdown/rollback cannot hide its cause.
 HRESULT D3D12PresentBridge::Check(HRESULT result, const char* stage)
@@ -206,6 +221,22 @@ HRESULT D3D12PresentBridge::Initialize(IDXGIFactory2* factory, IDXGIAdapter* ada
     }
     BRIDGE_CHECK(createDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_device12)));
     LogDeviceCapabilities();
+    if (runtime != PresentRuntime::Streamline)
+    {
+        m_antiLag2 = std::make_unique<AntiLag2State>();
+        if (AMD::AntiLag2DX12::Initialize(&m_antiLag2->context, m_device12.Get()) == S_OK)
+        {
+            m_antiLag2Supported = true;
+            m_antiLag2Enabled = false;
+            if (m_logger) m_logger("[Anti-Lag 2] DX12 initialized.");
+        }
+        else
+        {
+            m_antiLag2.reset();
+            m_antiLag2Supported = false;
+            m_antiLag2Enabled = false;
+        }
+    }
     if (runtime == PresentRuntime::Streamline)
     {
         if (!m_streamline.SetDevice(m_device12.Get())) return Check(E_FAIL, m_streamline.FailureStage());
@@ -1243,6 +1274,17 @@ HRESULT D3D12PresentBridge::FailGeneration(const char* reason)
     return S_OK;
 }
 
+void D3D12PresentBridge::UpdateAntiLag2(bool enabled, UINT maxFps)
+{
+    if (!m_antiLag2Supported || !m_antiLag2 || m_runtimeKind == PresentRuntime::Streamline)
+    {
+        m_antiLag2Enabled = false;
+        return;
+    }
+    m_antiLag2Enabled = enabled;
+    AMD::AntiLag2DX12::Update(&m_antiLag2->context, enabled, enabled ? maxFps : 0u);
+}
+
 HRESULT D3D12PresentBridge::Present(UINT interval, UINT flags)
 {
     if (flags & DXGI_PRESENT_TEST) return m_swapChain->Present(interval, flags);
@@ -1251,6 +1293,18 @@ HRESULT D3D12PresentBridge::Present(UINT interval, UINT flags)
     if (m_vsyncBlocked) m_allowGeneration = false;
     if (auto* sl = GetStreamline()) sl->Marker(sl::PCLMarker::eRenderSubmitEnd);
     BRIDGE_CHECK(SubmitFrame());
+    if (m_antiLag2Supported && m_antiLag2 && m_runtimeKind != PresentRuntime::Streamline)
+    {
+        if (m_runtimeKind == PresentRuntime::Fsr && m_swapChain)
+        {
+            AntiLag2SwapchainData al2Data{&m_antiLag2->context, m_antiLag2Enabled};
+            m_swapChain->SetPrivateData(kFfxAntiLag2DataGuid, sizeof(al2Data), &al2Data);
+        }
+        if (m_antiLag2Enabled)
+        {
+            AMD::AntiLag2DX12::MarkEndOfFrameRendering(&m_antiLag2->context);
+        }
+    }
     if (auto* sl = GetStreamline()) sl->Marker(sl::PCLMarker::ePresentStart);
     const HRESULT result = m_swapChain->Present(interval, flags);
     if (auto* sl = GetStreamline()) sl->Marker(sl::PCLMarker::ePresentEnd);
@@ -1578,6 +1632,10 @@ void D3D12PresentBridge::Shutdown()
     WaitIdle();
     if (m_device12 && m_profiling && m_statistics.frames) ReportStatistics();
     DestroyUpscaler();
+    if (m_swapChain && m_runtimeKind == PresentRuntime::Fsr)
+    {
+        m_swapChain->SetPrivateData(kFfxAntiLag2DataGuid, 0, nullptr);
+    }
     // Runtime shutdown must precede destruction of its DXGI/D3D objects.
     m_streamline.Shutdown();
     DestroyFsrFrameGeneration();
@@ -1616,6 +1674,13 @@ void D3D12PresentBridge::Shutdown()
     m_retired12.Reset();
     m_queue.Reset();
     m_proxyDevice.Reset();
+    if (m_antiLag2Supported && m_antiLag2)
+    {
+        AMD::AntiLag2DX12::DeInitialize(&m_antiLag2->context);
+    }
+    m_antiLag2.reset();
+    m_antiLag2Supported = false;
+    m_antiLag2Enabled = false;
     m_device12.Reset();
     m_streamline.Unload();
     m_ffx->Unload();

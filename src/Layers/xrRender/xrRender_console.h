@@ -25,6 +25,7 @@ enum
 };
 extern ECORE_API u32 ps_r_upscaler_sunshafts;
 extern ECORE_API int ps_r_dlss_hdr_input;
+extern ECORE_API int ps_r_antilag2;
 extern ECORE_API float ps_ssfx_fog_scattering;
 extern ECORE_API Fvector4 ps_ssfx_motionblur;
 extern ECORE_API Fvector4 ps_ssfx_taa;

@@ -118,6 +118,11 @@ public:
     const char* FsrFrameGenerationVersion();
     const char* LastFailure() const { return m_failureStage ? m_failureStage : "none"; }
 
+    // AMD Radeon Anti-Lag 2.0 (DX12 native runtime).
+    void UpdateAntiLag2(bool enabled, UINT maxFps);
+    bool AntiLag2Supported() const { return m_antiLag2Supported; }
+    bool AntiLag2Active() const { return m_antiLag2Supported && m_antiLag2Enabled; }
+
     // Stable per-slot native D3D11 resources; cache views at creation, select at frame start.
     HRESULT GetRenderSurface(ID3D11Texture2D** surface) const;
     HRESULT GetRenderSurface(UINT slot, ID3D11Texture2D** surface) const;
@@ -270,4 +275,10 @@ private:
     ComPtr<ID3D11Texture2D> m_upColor11, m_upDepth11, m_upMotion11, m_upOutput11;
     ComPtr<ID3D11UnorderedAccessView> m_upDepthUAV, m_upMotionUAV;
     DXGI_FORMAT m_upColorFormat{DXGI_FORMAT_UNKNOWN};
+
+    // AMD Radeon Anti-Lag 2.0 state (pimpl avoids exposing SDK header).
+    struct AntiLag2State;
+    std::unique_ptr<AntiLag2State> m_antiLag2;
+    bool m_antiLag2Supported{};
+    bool m_antiLag2Enabled{};
 };

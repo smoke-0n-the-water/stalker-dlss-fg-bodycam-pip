@@ -7,6 +7,7 @@
 #pragma comment(lib, "version.lib") // RuntimeVersions
 
 extern u32 ps_r_frame_generation;
+extern int ps_r_antilag2;
 extern u32 ps_r_frame_generation_pip;
 extern int ps_r_fg_diagnostics;
 extern int ps_framelimiter;
@@ -95,6 +96,23 @@ void ToFloats(float (&target)[16], const Fmatrix& source)
     static_assert(sizeof(Fmatrix) == sizeof(target), "Fmatrix layout");
     memcpy(target, &source, sizeof(target));
 }
+
+bool FsrFgActiveForLatency(const D3D12PresentBridge& bridge)
+{
+    return bridge.Runtime() == PresentRuntime::Fsr && !bridge.GenerationFailed() &&
+        bridge.FrameGenerationReady() && ps_r_frame_generation == Fsr && EffectiveMode() != Off &&
+        Device.b_is_Active && !Device.Paused() && g_pGameLevel && !Device.dwPrecacheFrame &&
+        !IsMainMenuActive() && !RImplementation.o.dx10_msaa && RImplementation.o.ssfx_motionvectors &&
+        dlss::Configured();
+}
+
+bool AntiLag2LimitsFrames()
+{
+    auto* bridge = HW.PresentationBridge();
+    return ps_framelimiter > 0 && bridge && bridge->AntiLag2Supported() && ps_r_antilag2 != 0 &&
+        !Device.Paused() && !IsMainMenuActive() && !FsrFgActiveForLatency(*bridge) &&
+        !bridge->GenerationActive();
+}
 }
 
 void BeginSimulation()
@@ -118,6 +136,12 @@ void BeginSimulation()
     scopeFrame = !Device.true_pip_on && svp.IsSVPActive() &&
         (Device.dwFrame + 1) % svp.GetSVPFrameDelay() == 0;
     if (scopeFrame) return;
+    if (bridge->AntiLag2Supported())
+    {
+        const bool al2Enabled = ps_r_antilag2 != 0;
+        const UINT al2MaxFps = AntiLag2LimitsFrames() ? UINT(ps_framelimiter) : 0u;
+        bridge->UpdateAntiLag2(al2Enabled, al2MaxFps);
+    }
     UINT limitUs = 0;
     if (ReflexLimitsFrames())
         limitUs = UINT(1e6f * FrameLimitScale() / float(ps_framelimiter));
@@ -307,8 +331,9 @@ const char* RuntimeVersions()
     ModuleVersion(L"nvngx_dlssg.dll", dlssg, sizeof(dlssg));
     ModuleVersion(L"sl.dlss_g.dll", sl, sizeof(sl));
     const char* fsr = bridge->FsrFrameGenerationVersion();
-    xr_sprintf(text, "runtime %s, FSR frame generation %s, nvngx_dlssg %s, sl.dlss_g %s",
-        bridge->RuntimeName(), fsr && *fsr ? fsr : "none", dlssg, sl);
+    xr_sprintf(text, "runtime %s, FSR frame generation %s, nvngx_dlssg %s, sl.dlss_g %s, Anti-Lag 2 %s",
+        bridge->RuntimeName(), fsr && *fsr ? fsr : "none", dlssg, sl,
+        bridge->AntiLag2Supported() ? (bridge->AntiLag2Active() ? "active" : "off") : "unavailable");
     return text;
 }
 
@@ -325,6 +350,11 @@ bool ReflexLimitsFrames()
     // Menus and pause keep the engine's own eco limiter.
     return ps_framelimiter > 0 && bridge && bridge->GetStreamline() && !bridge->GenerationFailed() &&
         !Device.Paused() && !IsMainMenuActive();
+}
+
+bool LatencyLimitsFrames()
+{
+    return ReflexLimitsFrames() || AntiLag2LimitsFrames();
 }
 
 float FrameLimitScale()

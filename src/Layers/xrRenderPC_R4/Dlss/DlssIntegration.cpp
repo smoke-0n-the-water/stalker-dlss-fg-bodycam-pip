@@ -7,6 +7,9 @@
 #ifdef XR_DX12_BRIDGE
 #include "../../xrRenderDX10/D3D12PresentBridge.h"
 #endif
+#if !defined(XR_DX12_BRIDGE)
+#include "../../xrRenderDX10/AntiLag2DX11.h"
+#endif
 
 namespace
 {
@@ -388,6 +391,7 @@ void SupportSummary(char* text, unsigned size)
     const char* fsrUpscaler = "0";
     const char* fsrGeneration = "0";
     const char* dlssGeneration = "0";
+    bool antiLag2Supported = false;
 #ifdef XR_DX12_BRIDGE
     if (auto* bridge = HW.PresentationBridge(); bridge && bridge->FsrRuntimeAvailable())
     {
@@ -401,9 +405,14 @@ void SupportSummary(char* text, unsigned size)
         const bool running = bridge && bridge->Runtime() == PresentRuntime::Streamline && bridge->FrameGenerationReady();
         dlssGeneration = running || StreamlineIntegration::CanInitialize() ? "1" : "restart";
     }
+    if (auto* bridge = HW.PresentationBridge())
+        antiLag2Supported = bridge->AntiLag2Supported();
+#else
+    antiLag2Supported = antilag2_dx11::IsSupported();
 #endif
-    xr_sprintf(text, size, "dlss=%u fsr3=%u fsr_dx12=%s fg_dlss=%s fg_fsr=%s",
-        unsigned(UpscalerSupported(1)), unsigned(UpscalerSupported(2)), fsrUpscaler, dlssGeneration, fsrGeneration);
+    xr_sprintf(text, size, "dlss=%u fsr3=%u fsr_dx12=%s fg_dlss=%s fg_fsr=%s antilag2=%u",
+        unsigned(UpscalerSupported(1)), unsigned(UpscalerSupported(2)), fsrUpscaler, dlssGeneration, fsrGeneration,
+        unsigned(antiLag2Supported));
 }
 unsigned RenderWidth() { return renderSize.Valid() ? renderSize.width : Device.dwWidth; }
 unsigned RenderHeight() { return renderSize.Valid() ? renderSize.height : Device.dwHeight; }

@@ -37,6 +37,7 @@ xr_token upscaler_sunshafts_token[] = {
     {"raw", UPSCALER_SUNSHAFTS_RAW}, {nullptr, 0}
 };
 int ps_r_dlss_hdr_input = 1;
+int ps_r_antilag2 = 1;
 xr_token dlss_preset_token[] = {
     {"default", 0}, {"j", 10}, {"k", 11}, {"l", 12}, {"m", 13}, {nullptr, 0}
 };
@@ -1966,6 +1967,7 @@ void xrRender_initconsole()
     CMD4(CCC_UnsavedInteger, "r_fg_laser_fill_view", &ps_r_fg_laser_fill_view, 0, 1);
     CMD4(CCC_Integer, "r_fg_dlss_frames_max", &ps_r_fg_dlss_frames_max, 0, 5);
 #endif
+    CMD4(CCC_Integer, "r_antilag2", &ps_r_antilag2, 0, 1);
 	CMD3(CCC_Token, "r_fsr3_quality", &ps_r_fsr3_quality, fsr3_quality_token);
 	CMD3(CCC_Token, "r_dlss_preset", &ps_r_dlss_preset, dlss_preset_token);
 	CMD4(CCC_Float, "r_dlss_sharpness", &ps_r_dlss_sharpness, 0.0f, 1.0f);
