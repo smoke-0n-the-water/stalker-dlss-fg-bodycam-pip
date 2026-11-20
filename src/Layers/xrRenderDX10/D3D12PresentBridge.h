@@ -112,7 +112,7 @@ public:
     const char* UpscalerVersion() const { return m_upVersion.c_str(); }
     bool UpscalerReady() const { return m_upContext != nullptr; }
     // AMD FSR runtime present (signed loader beside the exe) and the versions it would
-    // select on this GPU, e.g. "4.1.1" or "3.1.5"; empty when unavailable. Cached.
+    // select on this GPU, e.g. "4.1.2" or "3.1.6"; empty when unavailable. Cached.
     bool FsrRuntimeAvailable();
     const char* FsrUpscalerVersion();
     const char* FsrFrameGenerationVersion();
