@@ -2,7 +2,7 @@ The following license applies to all files except as noted below.
 
 Copyright (C)  Advanced Micro Devices, Inc. All rights reserved. 
  
-REDISTRIBUTION: Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to install, reproduce, copy and distribute copies of the Software, in binary form only, and to permit persons to whom the Software is provided to do so, subject to the following conditions are met: 
+REDISTRIBUTION: Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to install, reproduce, copy and distribute copies of the Software, in binary form only, and to permit persons to whom the Software is provided to do the same, provided that the following conditions are met: 
  
 No reverse engineering, decompilation, or disassembly of this Software is permitted. 
  
@@ -481,8 +481,8 @@ These source files
 - `Kits\FidelityFX\docs\getting-started\naming-guidelines.md`
 - `Kits\FidelityFX\docs\getting-started\sdk-structure.md`
 - `Kits\FidelityFX\docs\license.md`
-- `Kits\FidelityFX\docs\media\AMD_FidelityFX_Lockup_RGB_Blk.png`
-- `Kits\FidelityFX\docs\media\AMD_FidelityFX_SDK_Lockup_RGB_Wht.png`
+- `Kits\FidelityFX\docs\media\AMD_FSR_SDK_Lockup_RGB_Blk.png`
+- `Kits\FidelityFX\docs\media\AMD_FSR_SDK_Lockup_RGB_Wht.png`
 - `Kits\FidelityFX\docs\techniques\denoising.md`
 - `Kits\FidelityFX\docs\techniques\frame-interpolation-api.md`
 - `Kits\FidelityFX\docs\techniques\frame-interpolation-ml.md`
@@ -904,7 +904,6 @@ These source files
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\bsdf\Beckmann.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\bsdf\BSDF.hlsli`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\bsdf\GGX.hlsl`
-- `Kits\FidelityFX\docs\techniques\super-resolution-upscaler.md` -> REMOVED! Wait let me check lines 905-915 carefully:
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\bsdf\Simple.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Camera.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Cel.hlsl`
@@ -914,7 +913,6 @@ These source files
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Ctor.hlsli`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\FrameCtx.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Half.hlsl`
-- `Kits\FidelityFX\docs\techniques\super-resolution-upscaler.md` -> NO, not here!
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Hash.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Hatch.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\integrator\PT.hlsl`
@@ -945,9 +943,9 @@ These source files
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\utils\FilesystemUtils.h`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\utils\HighResTimer.h`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\utils\Json.cpp`
+- `Kits\FidelityFX\docs\techniques\super-resolution-upscaler.md` -> WAIT no, not here, check lines 940-960
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\utils\Json.h`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\utils\Log.cpp`
-- `Kits\FidelityFX\docs\techniques\super-resolution-upscaler.md` -> wait why did I type that?! Let me make sure I write clean LICENSE.md without any extra text!
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\utils\Log.h`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\utils\StringUtils.cpp`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\utils\StringUtils.h`
