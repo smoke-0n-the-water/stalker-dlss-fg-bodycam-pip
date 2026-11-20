@@ -284,7 +284,7 @@ typedef struct FfxFrameGenerationConfig
     FfxApiFrameGenerationDispatchFunc frameGenerationCallback;         ///< The frame generation callback to use to generate the interpolated frame.
     void*                             frameGenerationCallbackContext;  ///< A pointer to be passed to the frame generation callback.
     bool                              frameGenerationEnabled;          ///< Sets the state of frame generation. Set to false to disable frame generation.
-    bool                              allowAsyncWorkloads;             ///< Sets the state of async workloads. Set to true to enable interpolation work on async command queue.
+    bool                              allowAsyncWorkloads;             ///< Sets the state of async workloads. Set to true to enable interpolation work on async compute.
     bool                              allowAsyncPresent;               ///< Sets the state of async presentation (console only). Set to true to enable present from async command queue.
     struct FfxApiResource             HUDLessColor;                    ///< The hudless back buffer image to use for UI extraction from backbuffer resource.
     uint32_t                          flags;                           ///< Zero or combination of flags from FfxApiDispatchFrameGenerationFlags.
