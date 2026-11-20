@@ -236,7 +236,7 @@ struct ffxDispatchDescFrameGenerationPrepareV2
     float                 frameTimeDelta;           ///< Time elapsed in milliseconds since the last frame.
     bool                  reset;                    ///< A boolean value which when set to true, indicates the camera has moved discontinuously and frame generation should reset its internal state.
     float                 cameraNear;               ///< The distance to the near plane of the camera.
-    float                 cameraFar;                ///< The distance to the far plane of the camera. This is used only used in case of non infinite depth.
+    float                 cameraFar;                ///< The distance to the far plane of the camera. This is used only in case of non-infinite depth.
     float                 cameraFovAngleVertical;   ///< The camera angle field of view in the vertical direction (expressed in radians).
     float                 viewSpaceToMetersFactor;  ///< The scale factor to convert view space units to meters.
     struct FfxApiResource depth;                    ///< The depth buffer data for the current frame.
@@ -284,7 +284,7 @@ typedef struct FfxFrameGenerationConfig
     FfxApiFrameGenerationDispatchFunc frameGenerationCallback;         ///< The frame generation callback to use to generate the interpolated frame.
     void*                             frameGenerationCallbackContext;  ///< A pointer to be passed to the frame generation callback.
     bool                              frameGenerationEnabled;          ///< Sets the state of frame generation. Set to false to disable frame generation.
-    bool                              allowAsyncWorkloads;             ///< Sets the state of async workloads. Set to true to enable interpolation work on async compute.
+    bool                              allowAsyncWorkloads;             ///< Sets the state of async workloads. Set to true to enable interpolation work on async command queue.
     bool                              allowAsyncPresent;               ///< Sets the state of async presentation (console only). Set to true to enable present from async command queue.
     struct FfxApiResource             HUDLessColor;                    ///< The hudless back buffer image to use for UI extraction from backbuffer resource.
     uint32_t                          flags;                           ///< Zero or combination of flags from FfxApiDispatchFrameGenerationFlags.

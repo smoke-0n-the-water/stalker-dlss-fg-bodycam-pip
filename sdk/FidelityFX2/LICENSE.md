@@ -2,7 +2,7 @@ The following license applies to all files except as noted below.
 
 Copyright (C)  Advanced Micro Devices, Inc. All rights reserved. 
  
-REDISTRIBUTION: Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to install, reproduce, copy and distribute copies of the Software, in binary form only, and to permit persons to whom the Software is provided to do the same, provided that the following conditions are met: 
+REDISTRIBUTION: Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to install, reproduce, copy and distribute copies of the Software, in binary form only, and to permit persons to whom the Software is provided to do so, subject to the following conditions are met: 
  
 No reverse engineering, decompilation, or disassembly of this Software is permitted. 
  
@@ -903,12 +903,12 @@ These source files
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Basis.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\bsdf\Beckmann.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\bsdf\BSDF.hlsli`
-- `Kits\FidelityFX\docs\techniques\super-resolution-upscaler.md`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\bsdf\GGX.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\bsdf\Simple.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Camera.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Cel.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\color\Color.hlsl`
+- `Kits\FidelityFX\docs\techniques\super-resolution-upscaler.md`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\color\Grade.hlsl`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Constants.hlsli`
 - `Samples\RadianceCaches\FidelityFX_NRC\dx12\shaders\common\Ctor.hlsli`

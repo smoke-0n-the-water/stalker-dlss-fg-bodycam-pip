@@ -1,4 +1,4 @@
-<h1>Welcome to the AMD FSR™ SDK 2.4.0 - "Redstone"</h1>
+﻿<h1>Welcome to the AMD FSR™ SDK 2.4.0 - "Redstone"</h1>
 
 ![alt text](docs/media/AMD_FSR_SDK_Lockup_RGB_Wht.png)
 
@@ -47,7 +47,7 @@ For more information on the license terms please refer to [license](docs/license
 
 <h2>Disclaimer</h2>
 
-The information contained herein is for informational purposes only, and is subject to change without notice. While every precaution has been taken in the preparation of this document, it may contain technical inaccuracies, omissions and typographical errors, and AMD is under no obligation to update or otherwise correct this information. Advanced Micro Devices, Inc. makes no representations or warranties with respect to the accuracy or completeness of the contents of the document, and assumes no liability of any kind, including the implied warranties of noninfringement, merchantability or fitness for particular purposes, with respect to the operation or use of AMD hardware, software or other products described herein. No license, including implied or arising by estoppel, to any intellectual property rights is granted by this document. Terms and limitations applicable to the purchase or use of AMD’s products are as set forth in a signed agreement between the parties or in AMD's Standard Terms and Conditions of Sale.
+The information contained herein is for informational purposes only, and is subject to change without notice. While every precaution has been taken in the preparation of this document, it may contain technical inaccuracies, omissions and typographical errors, and AMD is under no obligation to update or otherwise correct this information. Advanced Micro Devices, Inc. makes no representations or warranties with respect to the accuracy or completeness of the contents of this document, and assumes no liability of any kind, including the implied warranties of noninfringement, merchantability or fitness for particular purposes, with respect to the operation or use of AMD hardware, software or other products described herein. No license, including implied or arising by estoppel, to any intellectual property rights is granted by this document. Terms and limitations applicable to the purchase or use of AMD’s products are as set forth in a signed agreement between the parties or in AMD's Standard Terms and Conditions of Sale.
 
 AMD, the AMD Arrow logo, Radeon, Ryzen, CrossFire, RDNA and combinations thereof are trademarks of Advanced Micro Devices, Inc. Other product names used in this publication are for identification purposes only and may be trademarks of their respective companies.
 
@@ -58,3 +58,4 @@ Microsoft is a registered trademark of Microsoft Corporation in the US and other
 Windows is a registered trademark of Microsoft Corporation in the US and other jurisdictions.
 
 © 2022-2026 Advanced Micro Devices, Inc. All rights reserved.
+
