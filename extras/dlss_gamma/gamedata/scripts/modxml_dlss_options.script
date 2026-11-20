@@ -38,7 +38,7 @@ local function content_for(command, choices)
     return content
 end
 
--- "dlss=1 fsr3=1 fsr_dx12=3.1.5 fg_dlss=restart fg_fsr=3.1.6" from r_upscaler_support.
+-- "dlss=1 fsr3=1 fsr_dx12=4.1.2 fg_dlss=restart fg_fsr=4.0.2" from r_upscaler_support.
 local function support()
     local caps = {}
     local text = get_console_cmd(0, "r_upscaler_support")
@@ -82,24 +82,42 @@ local function major(version)
     return tonumber(string.match(version or "", "^(%d+)%.")) or 0
 end
 
--- Labels say what actually runs: FSR 4 only on supported Radeon GPUs.
+local function format_versioned(xml_id, version, suffix)
+    if version and version ~= "" and version ~= "0" then
+        return "AMD FSR " .. version .. (suffix and (" " .. suffix) or "")
+    end
+    return xml_id
+end
+
+-- Labels say what actually runs using the live version reported by r_upscaler_support
+-- (e.g. "AMD FSR 4.1.2 (DX12)" or "AMD FSR 3.1.6 (DX12)").
 local function upscaler_choices()
     local caps = support()
+    local fsr_dx12_label = format_versioned(
+        major(caps.fsr_dx12) >= 4 and "ui_mm_lst_upscaler_fsr4" or "ui_mm_lst_upscaler_fsr_dx12",
+        caps.fsr_dx12, "(DX12)"
+    )
     return content_for("r_upscaler", {
-        {"off", "dlss_off"}, {"dlss", "upscaler_dlss"}, {"fsr3", "upscaler_fsr3"},
-        {"fsr4", major(caps.fsr_dx12) >= 4 and "upscaler_fsr4" or "upscaler_fsr_dx12"},
+        {"off", "ui_mm_lst_dlss_off"},
+        {"dlss", "ui_mm_lst_upscaler_dlss"},
+        {"fsr3", "ui_mm_lst_upscaler_fsr3"},
+        {"fsr4", fsr_dx12_label},
     })
 end
 
 local function generation_choices()
     local caps = support()
     local restart = caps.fg_dlss == "restart" and "_restart" or ""
+    local fg_fsr_label = format_versioned(
+        major(caps.fg_fsr) >= 4 and "ui_mm_lst_fg_fsr4_2x" or "ui_mm_lst_fg_fsr_2x",
+        caps.fg_fsr, "2x"
+    )
     return content_for("r_frame_generation", {
-        {"off", "dlss_off"},
-        {"dlss", "fg_dlss_2x" .. restart},
-        {"dlss3x", "fg_dlss_3x" .. restart},
-        {"dlss4x", "fg_dlss_4x" .. restart},
-        {"fsr", major(caps.fg_fsr) >= 4 and "fg_fsr4_2x" or "fg_fsr_2x"},
+        {"off", "ui_mm_lst_dlss_off"},
+        {"dlss", "ui_mm_lst_fg_dlss_2x" .. restart},
+        {"dlss3x", "ui_mm_lst_fg_dlss_3x" .. restart},
+        {"dlss4x", "ui_mm_lst_fg_dlss_4x" .. restart},
+        {"fsr", fg_fsr_label},
     })
 end
 
@@ -233,7 +251,7 @@ local function add_options()
                         add({
                             id = "upscaler", type = "list", val = 0,
                             cmd = "r_upscaler", content = methods, vid = true,
-                            curr = {current_method},
+                            no_str = true, curr = {current_method},
                         })
                     end
                     add({
@@ -269,7 +287,7 @@ local function add_options()
                         add({
                             id = "frame_generation", type = "list", val = 0,
                             cmd = "r_frame_generation", content = generation, vid = true,
-                            upscaler_method = dual and "either" or nil,
+                            no_str = true, upscaler_method = dual and "either" or nil,
                         })
                     end
                     if has_switch("r_upscaler_post_after") then
