@@ -1206,7 +1206,8 @@ void CAI_Stalker::shedule_Update(u32 DT)
 				// square root, Lua object lookup and global namespace traversal for them.
 				// Resolve the callback only after the distance rejection, preserving the
 				// original dynamic lookup semantics used by GAMMA/addon scripts.
-				const float look_distance_sqr = Actor()->Position().distance_to_sqr(Position());
+				// a stalker can update before the actor is spawned
+				const float look_distance_sqr = Actor() ? Actor()->Position().distance_to_sqr(Position()) : flt_max;
 				const float look_limit_sqr = NPCsLookAtActorMinDistance * NPCsLookAtActorMinDistance;
 				if (look_distance_sqr < look_limit_sqr)
 				{
