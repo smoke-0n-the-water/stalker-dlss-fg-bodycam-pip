@@ -1222,7 +1222,9 @@ void CAI_Stalker::shedule_Update(u32 DT)
 
 #ifndef USE_SCHEDULER_IN_AGENT_MANAGER
 				lua_profile.begin("agent_manager");
-				agent_manager().update();
+				// group may have no agent manager if this stalker is not registered in it (e.g. revived corpse)
+				if (CAgentManager* manager = Level().seniority_holder().team(g_Team()).squad(g_Squad()).group(g_Group()).get_agent_manager())
+					manager->update();
 				lua_profile.end();
 #endif // USE_SCHEDULER_IN_AGENT_MANAGER
 
