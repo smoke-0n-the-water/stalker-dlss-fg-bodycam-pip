@@ -784,6 +784,7 @@ $want = [ordered]@{
     'r__tex_res_budget_target' = '0'     # Texture Residency off by default (v0.7.1)
     'r__upscaler_camera_mv'    = '0'     # camera-MV fill off: it made the still image wobble (v0.7.1)
     'spawn_time_log'           = '0'     # per-spawn timing log off: a diagnostic, not for play (v0.7.1)
+    'r__svp_adaptive_res'      = '0'     # fixed PiP target size: 1.2 rebuilt it on lens changes (stutter) (v0.7.3)
 }
 $ltx = "$anomaly\appdata\user.ltx"
 $ltxRel = 'Anomaly\appdata\user.ltx'

@@ -1130,6 +1130,38 @@ $scenarios['S47_camera_mv_off_once'] = {
     Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
 }
 
+# --- PiP adaptive resolution off by default (v0.7.3) ---------------------------------
+# r__svp_adaptive_res 1.2 rebuilt the scope render target on every lens-size change (stutter).
+# An upgrade from an install that saved 1.2 gets 0 once; a later run keeps the player's choice.
+$scenarios['S48_svp_adaptive_res_off_once'] = {
+    $s = New-Scenario 'S48_svp_adaptive_res_off_once'
+    $r = $s.Root; $k = 'r__svp_adaptive_res'
+    $ltxPath = "$r\Anomaly\appdata\user.ltx"
+    function Set-Adapt ($v) {
+        $l = @([IO.File]::ReadAllLines($ltxPath) | Where-Object { $_ -notmatch "^$k\s" }) + "$k $v"
+        W $ltxPath (($l -join "`r`n") + "`r`n")
+    }
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 0\s*$") "fresh install writes $k 0"
+    # what a v0.7.2 install left: 1.2 saved, no record entry for the key
+    Set-Adapt '1.2'
+    $recPath = "$r\.slopray\record.json"
+    $rec = Rec $s
+    foreach ($p in @($rec.keys.PSObject.Properties | Where-Object { $_.Name -like "*|$k" })) { $rec.keys.PSObject.Properties.Remove($p.Name) }
+    [IO.File]::WriteAllText($recPath, ($rec | ConvertTo-Json -Depth 8), $utf8)
+    $c = Install $s
+    Check ($c -eq 0) "upgrade exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 0\s*$" -and (T $ltxPath) -notmatch "(?m)^$k 1\.2") "upgrade replaces 1.2 with 0"
+    # the player opts back in: a re-run leaves it alone
+    Set-Adapt '1.2'
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match "(?m)^$k 1\.2\s*$") "re-run keeps the player's $k 1.2"
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+}
+
 $scenarios['S46_atmos_unrecognised_build'] = {
     $s = New-Scenario 'S46_atmos_unrecognised_build'
     $odd = 'Atmospherics v2.69 custom'

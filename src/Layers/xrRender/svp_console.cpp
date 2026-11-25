@@ -77,7 +77,7 @@ u32 svp_ledger_disc_latch = 0;
 u32 svp_ledger_fwd_keep = 0;
 u32 svp_ledger_grass_cull = 0;
 int ps_r__3db_debug = 0; // 3db ballistics overlay, 1 = bone markers + fire axis + crosshair ray + sight line + mrad log, 2 = adds the zeroed ray, 3 = adds fading shot tracers
-float ps_r__svp_adaptive_res = 1.2f; // adaptive SVP resolution: size the SVP render to the on-screen eyepiece disc * this margin. 0 = off (full svp_height), 1.0 = render exactly at the disc (sharpest, mild pan shimmer), 1.2 = keep ~1.2x SSAA. big oculars clamp to no-op
+float ps_r__svp_adaptive_res = 0.f; // adaptive SVP resolution: size the SVP render to the on-screen eyepiece disc * this margin. 0 = off (full svp_height, default: a resize recreates the SVP target = a hitch on lens changes), 1.0 = render exactly at the disc (sharpest, mild pan shimmer), 1.2 = keep ~1.2x SSAA. big oculars clamp to no-op
 float ps_r__svp_lod = 1.0f; // SVP LOD reduction strength [0..1]: scale the scope's LOD selection to its true pixel coverage (coarser at low mag, capped at the main view so zoomed detail is never worse). 0 = off
 float ps_r__svp_cull_ssa = 4.0f; // SVP small-object cull strength: skip scope geometry below this * the LOD-out ssa, scaled by magnification (tiny distant clutter at low mag). 0 = off, higher = more aggressive
 int ps_r__svp_dlss = 0; // SVP DLSS-SR master gate, 0 = stock (render_scale inert), nonzero = scaffolding active
@@ -355,7 +355,7 @@ void svp_console_init()
 	CMD4(CCC_Float, "r__svp_lens_shooter_z", &ps_r__svp_lens_shooter_z, -.3f, .3f);
 	CMD4(CCC_Float, "r__svp_lens_head_albedo", &ps_r__svp_lens_head_albedo, 0.f, 1.f);
 	CMD4(CCC_Integer, "r__3db_debug", &ps_r__3db_debug, 0, 3); // 3db overlay (1 = markers + axes, 2 = + zeroed ray, 3 = + tracers)
-	CMD4(CCC_Float, "r__svp_adaptive_res", &ps_r__svp_adaptive_res, 0.0f, 2.0f); // size SVP render to the eyepiece disc * margin (0 = off, 1.2 recommended)
+	CMD4(CCC_Float, "r__svp_adaptive_res", &ps_r__svp_adaptive_res, 0.0f, 2.0f); // size SVP render to the eyepiece disc * margin (0 = off, default; 1.2 = sharper fit, rebuilds the target on lens changes)
 	CMD4(CCC_Float, "r__svp_lod", &ps_r__svp_lod, 0.0f, 1.0f); // SVP LOD reduction strength (0 = off)
 	CMD4(CCC_Float, "r__svp_cull_ssa", &ps_r__svp_cull_ssa, 0.0f, 8.0f); // SVP small-object cull strength (0 = off)
 	CMD4(CCC_SvpInternalInteger, "r__svp_dlss", &ps_r__svp_dlss, 0, 1);
