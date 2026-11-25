@@ -2235,6 +2235,10 @@ void xrRender_initconsole()
 
 #ifdef DETAIL_RADIUS
 	CMD4(CCC_detail_radius, "r__detail_radius", &ps_r__detail_radius, 0, 250);
+	// on by default: free the previous level's models and textures on a map change (VRAM/RAM growth
+	// across level changes, map-transition crashes); costs a longer load and some texture pop-in after it
+	psDeviceFlags2.set(rsClearModels, TRUE);
+	psDeviceFlags2.set(rsClearAllResources, TRUE);
 	CMD3(CCC_Mask, "r__clear_models_on_unload", &psDeviceFlags2, rsClearModels); //Alundaio
 	CMD3(CCC_Mask, "r__clear_resources_on_unload", &psDeviceFlags2, rsClearAllResources);
 	CMD4(CCC_Integer, "r__tex_evict_enabled",    &ps_r__tex_evict_enabled,    0,   1    );

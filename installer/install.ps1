@@ -785,6 +785,8 @@ $want = [ordered]@{
     'r__upscaler_camera_mv'    = '0'     # camera-MV fill off: it made the still image wobble (v0.7.1)
     'spawn_time_log'           = '0'     # per-spawn timing log off: a diagnostic, not for play (v0.7.1)
     'r__svp_adaptive_res'      = '0'     # fixed PiP target size: 1.2 rebuilt it on lens changes (stutter) (v0.7.3)
+    'r__clear_models_on_unload'    = 'on'  # free the previous level's models on a map change (v0.7.3)
+    'r__clear_resources_on_unload' = 'on'  # ...and its textures: map-transition crashes, VRAM/RAM growth (v0.7.3)
 }
 $ltx = "$anomaly\appdata\user.ltx"
 $ltxRel = 'Anomaly\appdata\user.ltx'

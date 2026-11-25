@@ -1162,6 +1162,39 @@ $scenarios['S48_svp_adaptive_res_off_once'] = {
     Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
 }
 
+# --- free the previous level on a map change (v0.7.3) ---------------------------------
+# r__clear_models_on_unload + r__clear_resources_on_unload on for every card (map-transition
+# crashes, VRAM/RAM growth). An upgrade that saved off gets on once; a later run keeps the choice.
+$scenarios['S49_clear_on_unload_on_once'] = {
+    $s = New-Scenario 'S49_clear_on_unload_on_once'
+    $r = $s.Root; $keys = @('r__clear_models_on_unload', 'r__clear_resources_on_unload')
+    $ltxPath = "$r\Anomaly\appdata\user.ltx"
+    function Set-Keys ($v) {
+        $l = @([IO.File]::ReadAllLines($ltxPath) | Where-Object { $_ -notmatch '^r__clear_(models|resources)_on_unload\s' })
+        foreach ($k in $keys) { $l += "$k $v" }
+        W $ltxPath (($l -join "`r`n") + "`r`n")
+    }
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    foreach ($k in $keys) { Check ((T $ltxPath) -match "(?m)^$k on\s*$") "fresh install writes $k on" }
+    # what a v0.7.2 install left: off saved, no record entries for the keys
+    Set-Keys 'off'
+    $recPath = "$r\.slopray\record.json"
+    $rec = Rec $s
+    foreach ($p in @($rec.keys.PSObject.Properties | Where-Object { $_.Name -like '*|r__clear_*_on_unload' })) { $rec.keys.PSObject.Properties.Remove($p.Name) }
+    [IO.File]::WriteAllText($recPath, ($rec | ConvertTo-Json -Depth 8), $utf8)
+    $c = Install $s
+    Check ($c -eq 0) "upgrade exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    foreach ($k in $keys) { Check ((T $ltxPath) -match "(?m)^$k on\s*$" -and (T $ltxPath) -notmatch "(?m)^$k off") "upgrade replaces $k off with on" }
+    # the player opts out: a re-run leaves it alone
+    Set-Keys 'off'
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    foreach ($k in $keys) { Check ((T $ltxPath) -match "(?m)^$k off\s*$") "re-run keeps the player's $k off" }
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+}
+
 $scenarios['S46_atmos_unrecognised_build'] = {
     $s = New-Scenario 'S46_atmos_unrecognised_build'
     $odd = 'Atmospherics v2.69 custom'
