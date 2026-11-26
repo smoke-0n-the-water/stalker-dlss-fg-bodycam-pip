@@ -103,11 +103,8 @@ void dxRenderDeviceRender::updateGamma()
 	m_Gamma.Update();
 }
 
-void ShaderSwapCache_Clear();
-
 void dxRenderDeviceRender::OnDeviceDestroy(BOOL bKeepTextures)
 {
-	ShaderSwapCache_Clear(); // drop held shader refs before the resource manager goes
 	m_WireShader.destroy();
 	m_SelectionShader.destroy();
 

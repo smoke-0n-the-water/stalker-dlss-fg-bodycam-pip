@@ -818,43 +818,6 @@ public:
 #endif // XR_DX12_BRIDGE
 #endif
 
-// Runtime shader swap cache (FBasicVisual.cpp). r__shader_swap_cache 0|1 turns it off for A/B;
-// r__shader_swap_stats prints hits/misses/build time to the log, "r__shader_swap_stats reset" zeroes them.
-extern int ps_r__shader_swap_cache;
-void ShaderSwapCache_Clear();
-void ShaderSwapCache_Report();
-void ShaderSwapCache_ResetStats();
-
-class CCC_ShaderSwapCache : public CCC_Integer
-{
-public:
-    CCC_ShaderSwapCache(LPCSTR name, int* value) : CCC_Integer(name, value, 0, 1) {}
-    void Execute(LPCSTR args) override
-    {
-        CCC_Integer::Execute(args);
-        if (!ps_r__shader_swap_cache)
-            ShaderSwapCache_Clear();
-    }
-};
-
-class CCC_ShaderSwapStats : public IConsole_Command
-{
-public:
-    CCC_ShaderSwapStats(LPCSTR name) : IConsole_Command(name) { bEmptyArgsHandled = TRUE; }
-    void Execute(LPCSTR args) override
-    {
-        if (args && !xr_strcmp(args, "reset"))
-        {
-            ShaderSwapCache_ResetStats();
-            Msg("[shader swap cache] stats reset");
-            return;
-        }
-        ShaderSwapCache_Report();
-    }
-    void Status(TStatus& status) override { xr_strcpy(status, "[reset]"); }
-    void Save(IWriter*) override {}
-};
-
 #if defined(USE_DX10) || defined(USE_DX11)
 #include "../xrRenderDX10/StateManager/dx10SamplerStateCache.h"
 #endif	//	USE_DX10
@@ -1739,8 +1702,6 @@ void xrRender_initconsole()
 	CMD4(CCC_Float, "r__wallmark_ttl", &ps_r__WallmarkTTL, 1.0f, 10.f*60.f);
 
 	CMD4(CCC_Integer, "r__supersample", &ps_r__Supersample, 1, 8);
-	CMD2(CCC_ShaderSwapCache, "r__shader_swap_cache", &ps_r__shader_swap_cache);
-	CMD1(CCC_ShaderSwapStats, "r__shader_swap_stats");
 
 	Fvector tw_min, tw_max;
 

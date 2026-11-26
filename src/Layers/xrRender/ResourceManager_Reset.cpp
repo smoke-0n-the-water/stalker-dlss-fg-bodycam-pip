@@ -8,11 +8,8 @@
 	#include "../../Include/xrAPI/xrAPI.h"
 #endif
 
-void ShaderSwapCache_Clear();
-
 void CResourceManager::reset_begin()
 {
-	ShaderSwapCache_Clear();
 #if defined(USE_DX10) || defined(USE_DX11)
     DrainTextureLoads();
     ReleasePrefetchedTextures();
