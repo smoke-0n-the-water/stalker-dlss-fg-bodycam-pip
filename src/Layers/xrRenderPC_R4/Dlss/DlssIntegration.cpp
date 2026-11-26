@@ -411,6 +411,7 @@ bool Configured() { return configured; }
 void InvalidateHistory() { ResetHistory(); }
 bool HdrInput() { return configured && hdrInput; }
 bool Active() { return configured && inScene && mainView && BackendReady(); }
+unsigned UpscalerKind() { return Active() ? (UsesFsr() ? 1u : 2u) : 0u; }
 // The scope (SVP) pass is drawn unjittered: its projection carries no jitter, so its
 // shaders (raster offset, position decode, texgen) must not apply the main view's.
 Offset RasterJitter() { return SvpPassBound() ? Offset{} : rasterJitter; }

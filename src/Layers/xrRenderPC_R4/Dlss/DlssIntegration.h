@@ -13,6 +13,8 @@ void BeginScene();
 void EndScene(bool invalidateHistory = false);
 bool Active();
 bool Configured();
+// SSS 24's ssfx_upscaling_setup.x: 0 none, 1 FSR, 2 DLSS (while Active()).
+unsigned UpscalerKind();
 void InvalidateHistory();
 // DLSS takes linear HDR input (r_dlss_hdr_input)
 bool HdrInput();
