@@ -703,7 +703,21 @@ void CDSGraphManager::r_dsgraph_extract_dlss_effects()
 		}
 		return false;
 	};
-	dlss::ExtractNativeUi(RGraph.mapHUDSorted.Sorted, RGraph.mapDlssHudEffects, isLaser);
+	// Holo and red dot reticles on the weapon too (brodrigz 332f9328d): reconstructed
+	// from fewer pixels they came out blurred. Reticles with the scope lens flag are in
+	// the scope lists instead and already drawn after the upscaler; the magnified PiP
+	// reticle has its own list (mapReflexHUDSorted) and is not touched here.
+	const auto isEffect = [&](const auto& item)
+	{
+		if (isLaser(item)) return true;
+		for (const auto& pass : item.pSE->passes)
+		{
+			const char* name = pass->ps ? pass->ps->cName.c_str() : nullptr;
+			if (name && !strncmp(name, "models_reflex_reticle", 21)) return true;
+		}
+		return false;
+	};
+	dlss::ExtractNativeUi(RGraph.mapHUDSorted.Sorted, RGraph.mapDlssHudEffects, isEffect);
 	auto& world = RGraph.mapDynamicSorted.Sorted;
 	world.erase(std::remove_if(world.begin(), world.end(), [&](const auto& item)
 	{
@@ -724,8 +738,10 @@ void CDSGraphManager::r_dsgraph_render_dlss_effects()
 	RImplementation.rmNormal();
 }
 
-// Reflex sight reticles without the scope lens flag are drawn in the scene with
-// the HUD. Keep copies for frame generation's mask, drawn after the upscaler.
+// Reflex sight reticles without the scope lens flag stay in the scene with the HUD
+// when effects are not held for after the upscaler. Keep copies for frame
+// generation's mask, drawn after the upscaler. Held reticles are already gone from
+// these lists and go into the mask with the laser beams.
 void CDSGraphManager::r_dsgraph_extract_fg_reticles()
 {
 	RGraph.mapFgReticles.clear();
@@ -753,10 +769,14 @@ void CDSGraphManager::r_dsgraph_render_fg_reticles()
 void CDSGraphManager::r_dsgraph_render_fg_mask(bool reticles)
 {
 	PROF_EVENT("r_dsgraph_render_fg_mask");
-	// Only these: the effects list may hold particles, and the scope list lenses.
-	const char* prefix = reticles ? "models_reflex_reticle" : "models_laserbeam";
-	const size_t length = xr_strlen(prefix);
+	// Only these: the effects lists may hold particles, and the scope list lenses.
+	// The HUD effects list also holds the reflex reticles taken out of the scene.
 	R_dsgraph::mapDSGraphItems<float, true> items;
+	const auto matches = [&](const char* name)
+	{
+		if (!strncmp(name, "models_reflex_reticle", 21)) return true;
+		return !reticles && !strncmp(name, "models_laserbeam", 16);
+	};
 	const auto collect = [&](const auto& from)
 	{
 		items.clear();
@@ -765,7 +785,7 @@ void CDSGraphManager::r_dsgraph_render_fg_mask(bool reticles)
 			for (const auto& pass : item.pSE->passes)
 			{
 				const char* name = pass->ps ? pass->ps->cName.c_str() : nullptr;
-				if (!name || strncmp(name, prefix, length)) continue;
+				if (!name || !matches(name)) continue;
 				items.push_back(item);
 				break;
 			}

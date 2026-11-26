@@ -537,7 +537,8 @@ void CRenderTarget::dlss_post_effects(float jitterX, float jitterY)
 	if (!reported_post_effects)
 	{
 		Msg("[Upscaler] %s drawn after reconstruction%s: native=%ux%u, scene=%ux%u",
-			withPostChain && ps_r_upscaler_particles_after ? "Particles and laser beams" : "Laser beams",
+			withPostChain && ps_r_upscaler_particles_after ? "Particles, laser beams and reflex reticles" :
+				"Laser beams and reflex reticles",
 			withPostChain ? "" : ", after post-processing", Device.dwWidth, Device.dwHeight,
 			dlss::RenderWidth(), dlss::RenderHeight());
 		reported_post_effects = true;
