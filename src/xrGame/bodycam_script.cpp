@@ -239,6 +239,7 @@ void Bodycam::script_register(lua_State* L)
 		def("set_reference_weapon_position", &bodycam_set_reference_weapon_position),
 		def("save_reference_weapon_position", &Bodycam::SaveReferenceWeaponPosition), def("get_float", &bodycam_get_float),
 		def("set_float", &Bodycam::SetFloat), def("get_bool", &bodycam_get_bool), def("set_bool", &Bodycam::SetBool),
+		def("set_bool_runtime", &Bodycam::SetBoolRuntime),
 		def("apply_preset", &Bodycam::ApplyPreset), def("set_viewmodel_profile", &bodycam_set_viewmodel_profile),
 		def("clear_viewmodel_profile", &bodycam_clear_viewmodel_profile), def("dump", &Bodycam::DumpState),
 		def("get_bindings", &bodycam_get_bindings), def("list_dir", &bodycam_list_dir), def("drives", &bodycam_drives),
