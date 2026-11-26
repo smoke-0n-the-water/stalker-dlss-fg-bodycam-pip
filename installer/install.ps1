@@ -219,6 +219,26 @@ foreach ($p in $place) {
 }
 Good "$($place.Count) engine files to copy$(if ($engineChange) { '' } else { ' (engine already this version)' })"
 
+# An engine from a pack before v0.7 means saves made on it: v0.7 changed offline A-Life, and a
+# player who updated mid-save from v0.5 crashed after 10-15 min. The catalogue names the pack.
+$oldEngine = $null
+$catPath = "$pack\catalogue.json"
+if (Test-Path -LiteralPath $catPath) {
+    $catNames = (Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json).hashes
+    foreach ($exe in 'AnomalyDX12.exe', 'AnomalyDX11AVX.exe') {
+        $live = "$anomaly\bin\$exe"
+        if (-not (Test-Path -LiteralPath $live)) { continue }
+        $prop = $catNames.PSObject.Properties[(Get-Sha $live)]
+        $from = $(if ($prop) { [string]$prop.Value } else { '' })
+        if ($from -match '^(GAMMA (v0\.[0-6](?:\.\d+)?(?:-dev)?|Bodycam [\d.]+))\b') { $oldEngine = $Matches[1]; break }
+    }
+}
+if ($oldEngine) {
+    $saveMsg = "Your current engine is the engine from $oldEngine (before v0.7). Saves made on it can crash on ${PackVersion}: start a new game, or back up your saves before you load one."
+    Warn $saveMsg
+    $todo.Add($saveMsg)
+}
+
 # GPU decides the OptiScaler step and the default video settings below.
 $gpu = $GpuName
 if (-not $gpu) {
@@ -468,6 +488,13 @@ else {
             Warn $oddMsg
             $todo.Add($oddMsg)
         }
+    }
+    # GAMMA's "Items Model Drop After Usage": players without it crashed on start (v0.7.2 reports).
+    # A warning only; ticking mods is the player's call.
+    if (-not (Is-Enabled '*Items Model Drop After Usage*')) {
+        $dropMsg = "GAMMA's mod '453- Items Model Drop After Usage - Kute' is not ticked in MO2. Players without it crashed on start with this engine: tick it (it is part of GAMMA)."
+        Warn $dropMsg
+        $todo.Add($dropMsg)
     }
     $addons = [ordered]@{
         # SSS 23 ssfx_il/ssfx_sss_ext + grass fallback + DLSS history fix. ONLY without RC7:

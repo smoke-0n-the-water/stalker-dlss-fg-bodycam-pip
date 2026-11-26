@@ -1195,6 +1195,72 @@ $scenarios['S49_clear_on_unload_on_once'] = {
     Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
 }
 
+# --- v0.7.3 T9 ------------------------------------------------------------------------
+# RC8.1 / RC8.2 are named "RC8.x": they take the RC7/RC8 add-on, with no "not recognised" warning.
+$scenarios['S50_atmos_rc82_recognised'] = {
+    $s = New-Scenario 'S50_atmos_rc82_recognised'
+    $rc82 = 'Atmospherics 2.69 RC8.2'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s $rc82
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Assert-AtmosKept $s @($rc82)
+    Check ((ML $s) -contains "+$atmosAddon") "RC7/RC8 add-on ticked for RC8.2"
+    Check ($script:lastOut -notmatch 'not recognised as RC7 or RC8') "no unrecognised-Atmos warning"
+    $c = Uninstall $s
+}
+
+# An engine from a pack before v0.7 in Anomaly\bin = an update over saves made on it: warn.
+function Add-CatalogueEntry ($s, $sha, $value) {
+    $p = "$($s.Pack)\catalogue.json"
+    $cat = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json
+    $cat.hashes | Add-Member -NotePropertyName $sha -NotePropertyValue $value -Force
+    W $p ($cat | ConvertTo-Json -Depth 4)
+}
+$scenarios['S51_old_engine_save_warning'] = {
+    $s = New-Scenario 'S51_old_engine_save_warning'
+    $exe = "$($s.Root)\Anomaly\bin\AnomalyDX12.exe"
+    W $exe 'SR dx12 v0.5.1 release build'
+    Add-CatalogueEntry $s (Sha $exe) 'GAMMA v0.5.1-dev + DLSS 0.71 + Frame Gen - Full Pack.zip:GAMMA v0.5.1-dev + DLSS 0.71 + Frame Gen - Full Pack/STEP 7 - Frame generation (copy the bin folder into Anomaly)/bin/AnomalyDX12.exe'
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    $o = $script:lastOut
+    Check ($o -match 'engine from GAMMA v0\.5\.1-dev' -and $o -match 'new game') "names the old pack and says to start a new game"
+    Check ($o -match "(?s)LEFT TO DO.*engine from GAMMA v0\.5\.1-dev") "warning repeated in LEFT TO DO"
+    Check ($o -notmatch [string][char]0x2014) "no em dash in the output"
+    # a re-run: the engine is now this pack's, no warning
+    $c = Install $s
+    Check ($script:lastOut -notmatch 'engine from GAMMA v0\.') "no warning once the engine is current"
+    $c = Uninstall $s
+}
+$scenarios['S52_items_model_drop_warning'] = {
+    $s = New-Scenario 'S52_items_model_drop_warning'
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ($script:lastOut -match 'Items Model Drop After Usage' -and $script:lastOut -match '(?s)LEFT TO DO.*Items Model Drop After Usage') "warns when it is not ticked, also in LEFT TO DO"
+    $c = Uninstall $s
+    # ticked: no warning
+    $s = New-Scenario 'S52_items_model_drop_ticked'
+    W "$($s.Root)\GAMMA\mods\453- Items Model Drop After Usage - Kute\gamedata\configs\items\items\items_model_drop_physc.ltx" 'kute'
+    Add-ModLine $s '+453- Items Model Drop After Usage - Kute'
+    $c = Install $s
+    Check ($c -eq 0 -and $script:lastOut -notmatch 'Items Model Drop After Usage') "no warning when it is ticked"
+    $c = Uninstall $s
+}
+# A player-edited OptiScaler.ini is never lost: moved to the recovery folder, with a note.
+$scenarios['S53_optiscaler_ini_edit_kept'] = {
+    $s = New-Scenario 'S53_optiscaler_ini_edit_kept'
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    $ini = "$($s.Root)\Anomaly\bin\OptiScaler.ini"
+    W $ini "[DlssNr]`r`nEnabled=false`r`n[Mine]`r`nedited=1`r`n"
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    $rec = @(Get-ChildItem -LiteralPath "$($s.Root)\.slopray" -Recurse -File -Filter 'OptiScaler.ini' | Where-Object { (T $_.FullName) -match 'edited=1' })
+    Check ($rec.Count -ge 1) "the edited ini is kept under .slopray ($($rec.Count) copies)"
+    Check ($script:lastOut -match 'changed by you, moved to the recovery folder: Anomaly\\bin\\OptiScaler\.ini') "the player is told where it went"
+    $c = Uninstall $s
+}
+
 $scenarios['S46_atmos_unrecognised_build'] = {
     $s = New-Scenario 'S46_atmos_unrecognised_build'
     $odd = 'Atmospherics v2.69 custom'
