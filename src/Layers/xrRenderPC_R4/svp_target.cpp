@@ -50,6 +50,17 @@ svp::TargetFrame target_frame()
 }
 }
 
+// pip ~CRenderTarget sets the SHARED $user$material texture's surface to null (it is created by name,
+// so every target points the same texture at its own surface). Deleting the SVP target alone left the
+// main view without its material lookup; point it back at the main target's surface (purpl.ball)
+static void drop_svp_target(CRenderTarget*& target)
+{
+	xr_delete(target);
+	CRenderTarget* main = RImplementation.TargetMain;
+	if (main && main->t_material && main->t_material_surf)
+		main->t_material->surface_set(main->t_material_surf);
+}
+
 u32 svp_render_extent()
 {
 	return svp::RenderExtent(target_settings(), target_frame());
@@ -79,7 +90,7 @@ void CRender::EnsureTargetSVP()
 		const bool size_ok = (TargetSVP->Width == svp_w && TargetSVP->Height == svp_h);
 		if (gate_ok && size_ok)
 			return;
-		xr_delete(TargetSVP);
+		drop_svp_target(TargetSVP);
 	}
 	TargetSVP = xr_new<CRenderTarget>("svp", svp_w, svp_h);
 	// CHK_DX is a no-op so a VRAM-exhausted creation fails silently, never keep a half-built target
@@ -91,7 +102,7 @@ void CRender::EnsureTargetSVP()
 	if (!svp_rt_ok)
 	{
 		Msg("! [SVP-ALLOC] SVP target creation FAILED (out of VRAM?), scope pass disabled");
-		xr_delete(TargetSVP);
+		drop_svp_target(TargetSVP);
 		return;
 	}
 	Device.m_SecondViewport.dlss_reset_next = true; // pip DLSS history reset, SVP surface (re)created incl. res change
