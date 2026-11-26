@@ -7,6 +7,8 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #include "stdafx.h"
+
+int g_dbg_log_spawns = 0; // console dbg_log_spawns, see CALifeSwitchManager::add_online
 #include "alife_switch_manager.h"
 #include "xrServer_Objects_ALife.h"
 #include "alife_graph_registry.h"
@@ -61,7 +63,9 @@ void CALifeSwitchManager::add_online(CSE_ALifeDynamicObject* object, bool update
 		object->s_flags.bit_and(u16(-1) ^ M_SPAWN_UPDATE);
 
 		//Alundaio: Knowing last object to spawn can be very useful to debugging
-		if (Core.isDebug())
+		// Slop-Ray: opt-in (dbg_log_spawns 1). With -dbg, which GAMMA keeps for the debug menu, it
+		// printed a line for every object going online: 1141 lines in a 7 minute session.
+		if (Core.isDebug() && g_dbg_log_spawns)
 			Msg("[LSS] Spawning object [%s][%s][%d]", object->name_replace(), *object->s_name, object->ID);
 
 		//Alundaio: Workaround for crash with corpses that end up outside AI map

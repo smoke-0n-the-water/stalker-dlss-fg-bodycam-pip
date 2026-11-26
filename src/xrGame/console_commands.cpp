@@ -94,6 +94,7 @@ extern int psLua_ParallelGC_CallAmount;
 extern BOOL psLua_ParallelGC_debug;
 extern BOOL psLua_ParallelGC;
 extern BOOL lua_debug;
+extern int g_dbg_log_spawns;
 BOOL lua_busy_hands_debug = TRUE;
 
 float g_end_modif = 0.f;
@@ -2837,6 +2838,7 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "lua_parallel_gc", &psLua_ParallelGC, 0, 1);
 
 	CMD4(CCC_Integer, "lua_debug", &lua_debug, 0, 1);
+	CMD4(CCC_Integer, "dbg_log_spawns", &g_dbg_log_spawns, 0, 1); // [LSS] Spawning object lines (needs -dbg)
 	CMD4(CCC_Integer, "lua_use_functor_cache", &lua_use_functor_cache, 0, 1);
 	CMD4(CCC_Integer, "lua_busy_hands_debug", &lua_busy_hands_debug, 0, 1);
 
