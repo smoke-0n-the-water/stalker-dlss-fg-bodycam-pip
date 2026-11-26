@@ -106,6 +106,9 @@ void CRender::EnsureTargetSVP()
 		return;
 	}
 	Device.m_SecondViewport.dlss_reset_next = true; // pip DLSS history reset, SVP surface (re)created incl. res change
+	// one line per build (rare: level start, a size or DLSS gate change), so a hitch can be matched to it
+	Msg("* [SVP] scope target built %ux%u at frame %u, %s", svp_w, svp_h, Device.dwFrame,
+		Device.m_SecondViewport.IsSVPActive() ? "while a PiP scope is aimed" : "before any aim");
 	if (ps_r__svp_diag)
 		PipMsg("[SVP-ALLOC] svp=%ux%u (base=%u composite_h=%u display_h=%u aspect=%.2f supersample=%.2f dlss=%d)",
 			svp_w, svp_h, svp_composite_height() >> 1, svp_composite_height(), Device.dwHeight,
