@@ -1,0 +1,88 @@
+name: Bug or crash report
+description: A crash, a shader error, or something that looks wrong in game.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please fill in every field: most crashes depend on the GPU, the exe and the shader mods.
+        After a crash, attach the folder `Anomaly\appdata\logs\crash_<date_time>` (zip it). No such folder? Attach `Anomaly\appdata\logs\xray_<name>.log` and the newest file in `%APPDATA%\QUARK-ENGINE\ERROR`.
+  - type: input
+    id: version
+    attributes:
+      label: Slop-Ray version
+      description: The pack you installed, e.g. v0.7.3-dev. The xray log says it near the top ("Slop-Ray Engine v...").
+    validations:
+      required: true
+  - type: dropdown
+    id: exe
+    attributes:
+      label: Which exe
+      options:
+        - DX12 + Frame Gen (AnomalyDX12.exe)
+        - DX11-AVX (AnomalyDX11AVX.exe)
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and VRAM
+      placeholder: RTX 3070 8 GB
+    validations:
+      required: true
+  - type: input
+    id: cpu_ram
+    attributes:
+      label: CPU and RAM
+      placeholder: Ryzen 5 5600, 16 GB
+    validations:
+      required: true
+  - type: input
+    id: gamma
+    attributes:
+      label: GAMMA version, GOG or Steam, ROMEO or plain GAMMA
+    validations:
+      required: true
+  - type: dropdown
+    id: hags
+    attributes:
+      label: Windows Hardware-accelerated GPU scheduling (HAGS)
+      options:
+        - "On"
+        - "Off"
+        - Don't know
+  - type: input
+    id: shaders
+    attributes:
+      label: Atmospherics version (and IL / SSR option), SSS version, Glossy Puddles version
+      placeholder: Atmos 2.69 RC8 Hotfix 4 with IL Atmospherics, SSS 23.5, no Glossy
+    validations:
+      required: true
+  - type: input
+    id: upscaler
+    attributes:
+      label: Upscaler and frame generation
+      placeholder: DLSS Quality, frame gen 2x
+  - type: checkboxes
+    id: packmods
+    attributes:
+      label: Pack mods ticked in MO2
+      options:
+        - label: 1 - Bodycam-GAMMA-Patch
+        - label: 2 - Bodycam-Grass-Optimisation
+        - label: 3 - DLSS-FSR3 Compat Patch remerged
+        - label: 4 - Bodycam 0.3 DLSS Merge (core)
+        - label: 6 - Bodycam Scope Effects Guard
+        - label: 7 - Tex Residency Classes
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you did just before
+      description: Map, save loaded or new game, map change, aiming a scope, NVGs on...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Drag the zipped crash folder or the log files here.
