@@ -807,6 +807,8 @@ $want = [ordered]@{
     'r__svp_adaptive_res'      = '0'     # fixed PiP target size: 1.2 rebuilt it on lens changes (stutter) (v0.7.3)
     'r__clear_models_on_unload'    = 'on'  # free the previous level's models on a map change (v0.7.3)
     'r__clear_resources_on_unload' = 'on'  # ...and its textures: map-transition crashes, VRAM/RAM growth (v0.7.3)
+    'r_upscaler_post_after'        = '1'   # Laser Fix on: post chain + effects after the upscaler (v0.7.3)
+    'r_upscaler_particles_after'   = '1'   # smoke / fire / dust at full resolution (v0.7.3)
 }
 $ltx = "$anomaly\appdata\user.ltx"
 $ltxRel = 'Anomaly\appdata\user.ltx'

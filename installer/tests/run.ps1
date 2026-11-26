@@ -1232,6 +1232,35 @@ $scenarios['S51_old_engine_save_warning'] = {
     Check ($script:lastOut -notmatch 'engine from GAMMA v0\.') "no warning once the engine is current"
     $c = Uninstall $s
 }
+# Laser Fix + full resolution particles on (v0.7.3 "Upscaler effects" row). An upgrade that
+# saved 0 gets 1 once; a later run keeps the player's own value.
+$scenarios['S54_laser_fix_on_once'] = {
+    $s = New-Scenario 'S54_laser_fix_on_once'
+    $r = $s.Root; $keys = @('r_upscaler_post_after', 'r_upscaler_particles_after')
+    $ltxPath = "$r\Anomaly\appdata\user.ltx"
+    function Set-Keys ($v) {
+        $l = @([IO.File]::ReadAllLines($ltxPath) | Where-Object { $_ -notmatch '^r_upscaler_(post|particles)_after\s' })
+        foreach ($k in $keys) { $l += "$k $v" }
+        W $ltxPath (($l -join "`r`n") + "`r`n")
+    }
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    foreach ($k in $keys) { Check ((T $ltxPath) -match "(?m)^$k 1\s*$") "fresh install writes $k 1" }
+    Set-Keys '0'
+    $recPath = "$r\.slopray\record.json"
+    $rec = Rec $s
+    foreach ($p in @($rec.keys.PSObject.Properties | Where-Object { $_.Name -like '*|r_upscaler_*_after' })) { $rec.keys.PSObject.Properties.Remove($p.Name) }
+    [IO.File]::WriteAllText($recPath, ($rec | ConvertTo-Json -Depth 8), $utf8)
+    $c = Install $s
+    Check ($c -eq 0) "upgrade exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    foreach ($k in $keys) { Check ((T $ltxPath) -match "(?m)^$k 1\s*$" -and (T $ltxPath) -notmatch "(?m)^$k 0") "upgrade replaces $k 0 with 1" }
+    Set-Keys '0'
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    foreach ($k in $keys) { Check ((T $ltxPath) -match "(?m)^$k 0\s*$") "re-run keeps the player's $k 0" }
+    $c = Uninstall $s
+}
+
 # A player-edited OptiScaler.ini is never lost: moved to the recovery folder, with a note.
 $scenarios['S53_optiscaler_ini_edit_kept'] = {
     $s = New-Scenario 'S53_optiscaler_ini_edit_kept'
