@@ -27,7 +27,7 @@ int ps_r_upscaler_jitter = 1;
 // (it also fills vectors that are truly zero), so it is opt-in from v0.7.1.
 int ps_r__upscaler_camera_mv = 0;
 int ps_r_upscaler_debug = 0;
-int ps_r_upscaler_post_after = 1; // Laser Fix: on, no menu row (v0.7.3); PiP scope frames keep the render-size post order, so brightness can change when you aim
+int ps_r_upscaler_post_after = 0; // Laser Fix: off and hidden in the menu (post-order flip jumps PiP brightness)
 int ps_r_upscaler_particles_after = 1; // only used with r_upscaler_post_after 1 (no menu row)
 // 1 = stock 3DSS lenses (not the true-PiP composite) are drawn after reconstruction
 int ps_r_upscaler_scope_after = 1;
