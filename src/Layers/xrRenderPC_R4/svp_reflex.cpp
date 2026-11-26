@@ -108,9 +108,15 @@ u32 CRenderTarget::draw_reflex(bool svp, bool reticle_light)
 			radial.mad(axis_delta, objective_axis, -axis_depth);
 			const float axis_offset = radial.magnitude();
 
+			// The reflex ahead of a magnifier can sit fully BEHIND the objective camera: the camera
+			// slides past a clip-on's far face (svp_camera.cpp UseInferredClipOn) and the stock 3DSS
+			// EOTech + G33 counts as one, so settled aims had the reticle 35 cm behind it and drew
+			// nothing (state=no_draw; only the 1x main-view reticle showed, and NVG hid that).
+			// Still ahead of the objective lens = still the hybrid: take it as a straddle and push
+			// it forward below like one.
 			bool visible = bone_visible && related && _valid(view_center) && _valid(world_radius) && world_radius > EPS &&
 				_valid(axis_depth) && _valid(axis_offset) && axis_depth + world_radius > -EPS &&
-				view_center.z + world_radius > near_plane && view_center.z - world_radius < far_plane;
+				view_center.z - world_radius < far_plane;
 			float ndc_x = 0.f;
 			float ndc_y = 0.f;
 			// a sphere straddling the camera plane projects to infinity, the depth test above
