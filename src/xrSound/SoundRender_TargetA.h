@@ -21,6 +21,7 @@ public:
 	Fvector cache_position;
 	Fvector cache_velocity;
 	BOOL cache_relative;
+	BOOL cache_direct_channels;
 	BOOL cache_parameters_valid;
 	ALuint Slot;
 

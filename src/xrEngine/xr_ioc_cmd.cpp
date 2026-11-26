@@ -1471,6 +1471,8 @@ void CCC_Register()
 	// Sound
 	CMD2(CCC_Float, "snd_volume_eff", &psSoundVEffects);
 	CMD2(CCC_Float, "snd_volume_music", &psSoundVMusic);
+	CMD4(CCC_Integer, "snd_direct_stereo", &psSoundDirectStereo, 0, 1);
+	CMD4(CCC_Float, "snd_gain_limit", &psSoundGainLimit, 1.f, 4.f);
 	CMD1(CCC_SND_Restart, "snd_restart");
 	CMD3(CCC_Mask, "snd_acceleration", &psSoundFlags, ss_Hardware);
 	CMD3(CCC_Mask, "snd_efx", &psSoundFlags, ss_EFX);
