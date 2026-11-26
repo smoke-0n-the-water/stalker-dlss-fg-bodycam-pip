@@ -101,6 +101,8 @@ public:
 	//	virtual IParticleCustom*	dcast_ParticleCustom		()				{ return 0;	}
 
 	virtual void SetShaderTexture(LPCSTR shader, LPCSTR texture);
+	// use_swap_cache=false on the Load path: model loading must not pin every model's shaders.
+	void SetShaderTextureImpl(LPCSTR shader, LPCSTR texture, bool use_swap_cache);
 	virtual void ResetShaderTexture();
 
 	virtual vis_data& _BCL getVisData() { return vis; }

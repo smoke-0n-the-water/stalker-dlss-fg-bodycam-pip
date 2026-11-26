@@ -14,6 +14,86 @@
 #include "dxRenderDeviceRender.h"
 
 //////////////////////////////////////////////////////////////////////
+// Process-wide cache of shaders built by runtime SetShaderTexture swaps
+//////////////////////////////////////////////////////////////////////
+// CResourceManager::_cpp_Create compiles all six shader elements before it looks for an equal
+// shader, so every swap the per-visual shader_swaps list misses pays a full blender build. Weapon
+// HUD models are recreated per draw, so scripts that swap materials on weapon change (3DSS marker
+// normalize, magnifiers, canted irons) rebuilt the same shaders on every swap: 35-110 ms hitches.
+// Key = what decides the compiled result here: names, HUD context and the visual's skinning mode
+// (the VS variant). Only runtime swaps use it (not model loading), so it holds at most
+// kMaxEntries shaders; it is cleared on level unload, device reset and device destroy.
+int ps_r__shader_swap_cache = 1;
+
+namespace
+{
+struct SShaderSwapCacheEntry
+{
+	shared_str shader;
+	shared_str texture;
+	bool hud;
+	s32 skinning;
+	ref_shader built;
+	u64 last_use;
+};
+
+struct SShaderSwapCache
+{
+	xrSRWLock lock;
+	xr_vector<SShaderSwapCacheEntry> entries;
+	u64 use_counter = 0;
+	u64 hits = 0;
+	u64 misses = 0;
+	u64 build_ticks = 0;
+	u64 max_build_ticks = 0;
+};
+
+constexpr size_t kMaxShaderSwapCacheEntries = 256;
+
+SShaderSwapCache& shader_swap_cache()
+{
+	// Never destroyed: holds ref_shaders, which must not be released after the resource manager.
+	static SShaderSwapCache* cache = xr_new<SShaderSwapCache>();
+	return *cache;
+}
+}
+
+void ShaderSwapCache_Clear()
+{
+	SShaderSwapCache& cache = shader_swap_cache();
+	xr_vector<SShaderSwapCacheEntry> released;
+	{
+		xrSRWLockGuard guard(cache.lock);
+		released.swap(cache.entries);
+	}
+	// ref_shaders are released here, outside the cache lock.
+}
+
+void ShaderSwapCache_Report()
+{
+	SShaderSwapCache& cache = shader_swap_cache();
+	xrSRWLockGuard guard(cache.lock, true);
+	const double freq = CPU::qpc_freq ? static_cast<double>(CPU::qpc_freq) : 1.0;
+	const u64 lookups = cache.hits + cache.misses;
+	Msg("[shader swap cache] %s, entries %u/%u, hits %llu, misses %llu (%.1f%% hit), built %.1f ms total, "
+		"%.2f ms max, %.2f ms avg per build",
+		ps_r__shader_swap_cache ? "on" : "off",
+		static_cast<u32>(cache.entries.size()), static_cast<u32>(kMaxShaderSwapCacheEntries),
+		static_cast<unsigned long long>(cache.hits), static_cast<unsigned long long>(cache.misses),
+		lookups ? 100.0 * static_cast<double>(cache.hits) / static_cast<double>(lookups) : 0.0,
+		static_cast<double>(cache.build_ticks) * 1000.0 / freq,
+		static_cast<double>(cache.max_build_ticks) * 1000.0 / freq,
+		cache.misses ? static_cast<double>(cache.build_ticks) * 1000.0 / freq / static_cast<double>(cache.misses) : 0.0);
+}
+
+void ShaderSwapCache_ResetStats()
+{
+	SShaderSwapCache& cache = shader_swap_cache();
+	xrSRWLockGuard guard(cache.lock);
+	cache.hits = cache.misses = cache.build_ticks = cache.max_build_ticks = 0;
+}
+
+//////////////////////////////////////////////////////////////////////
 // Construction/Destruction
 //////////////////////////////////////////////////////////////////////
 
@@ -72,7 +152,9 @@ void dxRender_Visual::Load(const char* N, IReader* data, u32)
 		data->r_stringZ(fnS, sizeof(fnS));
 		dbg_shader_def = fnS;
 		dbg_texture_def = fnT;
-		ResetShaderTexture();
+		// Load path: build without the runtime swap cache (see SetShaderTextureImpl).
+		if (!dbg_shader.equal(dbg_shader_def) || !dbg_texture.equal(dbg_texture_def))
+			SetShaderTextureImpl(*dbg_shader_def, *dbg_texture_def, false);
 	}
 
 	// desc
@@ -123,6 +205,11 @@ void dxRender_Visual::MarkAsGlowing(bool is_glowing)
 
 void dxRender_Visual::SetShaderTexture(LPCSTR s_shader, LPCSTR s_texture)
 {
+	SetShaderTextureImpl(s_shader, s_texture, true);
+}
+
+void dxRender_Visual::SetShaderTextureImpl(LPCSTR s_shader, LPCSTR s_texture, bool use_swap_cache)
+{
 	if (s_shader && strlen(s_shader))
 	{
 		char* shader = xr_strdup(s_shader);
@@ -154,16 +241,61 @@ void dxRender_Visual::SetShaderTexture(LPCSTR s_shader, LPCSTR s_texture)
 		}
 	}
 
+	constexpr size_t max_shader_swaps = 4;
+	const bool global_cache = use_swap_cache && ps_r__shader_swap_cache;
+	if (global_cache)
+	{
+		SShaderSwapCache& cache = shader_swap_cache();
+		xrSRWLockGuard guard(cache.lock);
+		for (SShaderSwapCacheEntry& entry : cache.entries)
+		{
+			if (entry.hud == hud && entry.skinning == skinning && entry.shader.equal(dbg_shader) &&
+				entry.texture.equal(dbg_texture) && entry.built)
+			{
+				entry.last_use = ++cache.use_counter;
+				++cache.hits;
+				shader = entry.built;
+				if (shader_swaps.size() >= max_shader_swaps)
+					shader_swaps.erase(shader_swaps.begin());
+				shader_swaps.push_back({ dbg_shader, dbg_texture, hud, shader });
+				return;
+			}
+		}
+	}
+
+	const u64 build_started = global_cache ? CPU::QPC() : 0;
 	Engine.External.SetSkinningMode(skinning);
     	bool prev_hud = ::Render->hud_loading;
     	::Render->hud_loading = hud;
     	shader.create(*dbg_shader, *dbg_texture);
     	::Render->hud_loading = prev_hud;
 
-	constexpr size_t max_shader_swaps = 4;
 	if (shader_swaps.size() >= max_shader_swaps)
 		shader_swaps.erase(shader_swaps.begin());
 	shader_swaps.push_back({ dbg_shader, dbg_texture, hud, shader });
+
+	if (global_cache && shader)
+	{
+		const u64 build_ticks = CPU::QPC() - build_started;
+		SShaderSwapCache& cache = shader_swap_cache();
+		ref_shader evicted;
+		xrSRWLockGuard guard(cache.lock);
+		++cache.misses;
+		cache.build_ticks += build_ticks;
+		cache.max_build_ticks = _max(cache.max_build_ticks, build_ticks);
+		if (cache.entries.size() >= kMaxShaderSwapCacheEntries)
+		{
+			auto oldest = std::min_element(cache.entries.begin(), cache.entries.end(),
+				[](const SShaderSwapCacheEntry& left, const SShaderSwapCacheEntry& right)
+				{
+					return left.last_use < right.last_use;
+				});
+			// keep the evicted ref alive until the guard is gone (release outside the lock)
+			evicted = oldest->built;
+			cache.entries.erase(oldest);
+		}
+		cache.entries.push_back({ dbg_shader, dbg_texture, hud, skinning, shader, ++cache.use_counter });
+	}
 }
 
 void dxRender_Visual::ResetShaderTexture()

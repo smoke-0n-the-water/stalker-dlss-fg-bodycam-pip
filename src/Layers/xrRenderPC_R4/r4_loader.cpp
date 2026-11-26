@@ -433,12 +433,15 @@ void CRender::level_Load(IReader* fs)
 	b_loaded = TRUE;
 }
 
+void ShaderSwapCache_Clear();
+
 void CRender::level_Unload()
 {
 	if (0 == g_pGameLevel) return;
 	if (!b_loaded) return;
 
 	shader_warmup_stop();
+	ShaderSwapCache_Clear(); // runtime material swaps of this level's objects
 	scope_vslr_destroy(); // scope reflections hold this level's sectors and captured scene
 	GMBase.clear();
 	GMRainWet.clear();
