@@ -17,8 +17,9 @@ Runtime layout (beside AnomalyDX12.exe)
 ---------------------------------------
 bin/streamline/*.dll          sdk/Streamline/bin (Streamline 2.14.16, nvngx_dlssg 310.9.16,
                               NVIDIA-signed; 310.9.16 is required for DLSS-FG Preset C)
-bin/amd_fidelityfx_*_dx12.dll sdk/FidelityFX2/bin (FSR SDK 2.3.0: loader 2.3.0,
-                              upscaler 4.1.1, frame generation 4.0.1; AMD-signed)
+bin/amd_fidelityfx_*_dx12.dll sdk/FidelityFX2/bin (FSR SDK 2.4.0: loader 2.4.0,
+                              upscaler 4.1.2, frame generation 4.0.2,
+                              swapchain 4.0.0; AMD-signed)
 bin/D3D12/D3D12Core.dll       sdk/AgilitySDK/bin (Agility SDK 1.619.6). The exe
                               exports D3D12SDKVersion=619 / D3D12SDKPath=.\D3D12\.
                               Gives Shader Model 6.6+ (FSR 4) on Windows 10.
@@ -68,8 +69,8 @@ Upscalers: DX11 DLSS, DX11 FSR 3.1.2 (r_upscaler fsr3), and DX12 AMD FSR
 (r_upscaler fsr4, DX12 exe only). The DX12 FSR path copies render-resolution
 color and converts depth/motion into shared textures, upscales on its own DX12
 queue, and the DX11 queue waits on a shared fence before post-processing reads
-the output. FSR 4.1.1 runs on Radeon RX 7000/9000; elsewhere the same AMD
-runtime selects its FSR 3.1 provider (3.1.5 on RTX 4070). The selected provider
+the output. FSR 4.1.2 runs on Radeon RX 6000/7000/9000 and supported Ryzen AI /
+Z2 APUs; elsewhere the AMD runtime selects FSR 3.1.6. The selected provider
 is logged ("[FSR] DX12 upscaler provider ...").
 
 Frame generation
@@ -83,8 +84,9 @@ Scopes and heat vision: generation continues. 3D-scope (SVP) frames skip Reflex
 and the frame token; the main view's continuity check allows the SVP frame gap.
 The 3D scope lens updates at its own rate and may ghost slightly in the lens.
 FSR FG: synchronous generation on the presentation queue (allowAsyncWorkloads
-false), HUD-less UI detection; FG 4.0.1 on Windows 11 + RX 9000, otherwise the
-runtime's 3.1 provider (3.1.6 on RTX 4070).
+false), HUD-less UI detection; FG 4.0.2 + Swapchain 4.0.0 (Driver-Assisted
+Frame Pacing on RX 9000 + Adrenalin 26.10.1+, PresentMon integration) on
+Windows 11 + RX 9000, otherwise the runtime's 3.1.6 provider.
 r__framelimit: with Streamline, Reflex applies the cap and the engine limiter
 does not wait. While frames are generated the cap counts displayed frames.
 
