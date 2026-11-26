@@ -15,7 +15,6 @@ extern ECORE_API float ps_r__svp_supersample;
 extern ECORE_API int ps_r__svp_diag;
 extern ECORE_API int ps_r__svp_cop_diag;
 extern ECORE_API int ps_r__svp_flip_fix;
-extern ECORE_API int ps_r__svp_flip_log;
 extern ECORE_API float ps_r__svp_reference_ghosts; // scale of the Reference ghost images, 1 keeps the profile value
 extern ECORE_API int ps_r__svp_reference_coating; // 0 turns the Reference glass material off
 extern ECORE_API int ps_r__svp_reference_native_compare; // 1 shows the stock scope image and glass

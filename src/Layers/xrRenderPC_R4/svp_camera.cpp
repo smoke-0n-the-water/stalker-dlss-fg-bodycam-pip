@@ -194,26 +194,6 @@ bool svpCamera()
 		ratio_magnification = svp_track_capture_ratio(params, analytic_ok, ratio_analytic);
 	}
 
-	// local fix diagnostics: per-frame lens fit for 60 frames after the lens visual changes
-	if (ps_r__svp_flip_log)
-	{
-		static const void* s_log_visual = nullptr;
-		static u32 s_log_left = 0;
-		if (params.svp_lens_visual != s_log_visual)
-		{
-			s_log_visual = params.svp_lens_visual;
-			s_log_left = 60;
-		}
-		if (s_log_left)
-		{
-			--s_log_left;
-			Msg("[SVP-FLIPFIX] frame=%u vis=%p fresh=%d depth=%.3fm r=%.2fcm analytic=%.3f ratio=%.3f aim=%.3f ref=%d flat=%d", Device.dwFrame,
-				params.svp_lens_visual, (int)(params.svp_lens_frame == Device.dwFrame && params.svp_lens_root), lens_depth,
-				params.eyepiece.radius * 100.f, ratio_analytic, ratio_magnification,
-				g_pGamePersistent->m_pGShaderConstants->hud_params.x, (int)referenceEffects, (int)flat_window);
-		}
-	}
-
 	// magnification ceiling, the optic's authored config max zoom (hud_fov_params.x, the same source
 	// as g_pip_scope_max_mag), held through section churn so a flip cannot push the mag past the optic
 	scope_magnification = svp_clamp_magnification(scope_magnification, fov_aim);

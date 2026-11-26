@@ -72,7 +72,6 @@ void CRender::renderViewports(BOOL bSUN)
 		{
 			s_prewarmed = true;
 			EnsureTargetSVP();
-			Msg("* [SVP] scope target prewarmed at level start: %s", TargetSVP ? "ok" : "failed (built on the first aim instead)");
 		}
 	}
 	// pip the lens content swaps at the scope edges, both taa histories seed from the current

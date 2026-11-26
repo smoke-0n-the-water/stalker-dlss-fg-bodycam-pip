@@ -14,7 +14,6 @@ float ps_r__svp_supersample = 1.0f; // SVP supersample: render the SVP square la
 int ps_r__svp_diag = 0; // SVP perf diagnostics: throttled log of [SVP-RES] over-render ratio + [SVP-ALLOC] target size while scoped, 0 = off
 int ps_r__svp_cop_diag = 0; // svp optics diagnostics, 1 = throttled [SVPCOP]/[SVP-HUD]/[SVP-BARREL], 2 = adds the per-frame [SVP-AIM] reticle-vs-screen-center delta
 int ps_r__svp_flip_fix = 3; // local fix: frames a new lens must be seen in a row before the eyepiece fit seeds from it, 0 = stock behaviour
-int ps_r__svp_flip_log = 0; // local fix: log [SVP-FLIPFIX] for 60 frames after the lens visual changes
 float ps_r__svp_reference_ghosts = 1.f;
 int ps_r__svp_reference_coating = 1;
 int ps_r__svp_reference_native_compare = 0;
@@ -328,7 +327,6 @@ void svp_console_init()
 	CMD4(CCC_Float, "r__svp_reference_ghosts", &ps_r__svp_reference_ghosts, 0.f, 1.f);
 	CMD4(CCC_Integer, "r__svp_cop_diag", &ps_r__svp_cop_diag, 0, 2); // svp optics log (1 = throttled, 2 = + per-frame [SVP-AIM])
 	CMD4(CCC_Integer, "r__svp_flip_fix", &ps_r__svp_flip_fix, 0, 30); // local fix: lens frames in a row before the fit seeds, 0 = stock
-	CMD4(CCC_Integer, "r__svp_flip_log", &ps_r__svp_flip_log, 0, 1); // local fix: [SVP-FLIPFIX] log after a lens change
 	CMD4(CCC_Integer, "r__svp_report", &ps_r__svp_report, 0, 1); // svp one-shot [SVP-CFG]+[SVP-FILES] re-dump, self-clearing
 	CMD4(CCC_Integer, "r__svp_stats", &ps_r__svp_stats, 0, 3); // per-viewport render stats overlay (1 = compact, 2 = per-section breakdown, 3 = lean main view)
 	CMD4(CCC_Integer, "r__scope_vslr", &ps_scope_vslr, 0, 1); // scope glass reflects the captured scene
