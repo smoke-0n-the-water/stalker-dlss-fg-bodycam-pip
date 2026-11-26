@@ -230,6 +230,33 @@ int script_time_global_async_lua(lua_State* L)
 	lua_pushnumber(L, static_cast<lua_Number>(script_time_global_async()));
 	return 1;
 }
+
+#ifdef XRGAME_EXPORTS
+// device() through luabind builds a new userdata around &Device on every call: an allocation plus GC
+// work, thousands of times per frame in GAMMA (device():time_global(), device().cam_pos, device().frame).
+// Device is a process-lifetime global and the luabind holder does not own it, so one userdata per Lua
+// state is enough. The first call goes through the original luabind function (same errors, same type),
+// later calls return the cached userdata from the registry.
+constexpr const char* kDeviceLuabindKey = "__slopray_device_luabind";
+constexpr const char* kDeviceCachedKey = "__slopray_device_cached";
+
+int script_device_cached_lua(lua_State* L)
+{
+	lua_getfield(L, LUA_REGISTRYINDEX, kDeviceCachedKey);
+	if (!lua_isnil(L, -1))
+		return 1;
+	lua_pop(L, 1);
+
+	lua_getfield(L, LUA_REGISTRYINDEX, kDeviceLuabindKey);
+	lua_call(L, 0, 1);
+	if (lua_isuserdata(L, -1))
+	{
+		lua_pushvalue(L, -1);
+		lua_setfield(L, LUA_REGISTRYINDEX, kDeviceCachedKey);
+	}
+	return 1;
+}
+#endif //-XRGAME_EXPORTS
 }
 
 #ifdef XRGAME_EXPORTS
@@ -288,6 +315,19 @@ void CScriptEngine::script_register(lua_State* L)
 	// after _G has loaded instead of silently losing the fast path.
 	lua_pushcfunction(L, &script_time_global_lua);
 	lua_setglobal(L, "__quark_time_global_fast");
+
+#ifdef XRGAME_EXPORTS
+	// Route device() through the cached userdata (see script_device_cached_lua).
+	lua_getglobal(L, "device");
+	if (lua_isfunction(L, -1))
+	{
+		lua_setfield(L, LUA_REGISTRYINDEX, kDeviceLuabindKey);
+		lua_pushcfunction(L, &script_device_cached_lua);
+		lua_setglobal(L, "device");
+	}
+	else
+		lua_pop(L, 1);
+#endif //-XRGAME_EXPORTS
 
 	//function(L, "print_stack", PrintStack);
 	//function(L, "log", LuaLog1);
