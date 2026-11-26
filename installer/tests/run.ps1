@@ -1196,16 +1196,43 @@ $scenarios['S49_clear_on_unload_on_once'] = {
 }
 
 # --- v0.7.3 T9 ------------------------------------------------------------------------
-# RC8.1 / RC8.2 are named "RC8.x": they take the RC7/RC8 add-on, with no "not recognised" warning.
+# RC8.1 / RC8.2 take their own add-on (brodrigz 0.73: their headers with the upscaler noise
+# held still), not the RC7/RC8 one, and no "not recognised" warning.
+$atmosRc82Addon = 'Add-on - Atmospherics RC8.2 users'
+function Add-AtmosRc82AddonZip ($s) {
+    New-Zip "$($s.Pack)\STEP 3 - Optional\$atmosRc82Addon.zip" @{ 'gamedata\shaders\r3\atmos_hud_mtl.h' = 'rc82 addon' }
+}
+function Add-AtmosRc82Mod ($s, $name) {
+    Add-AtmosMod $s $name
+    W "$($s.Root)\GAMMA\mods\$name\gamedata\shaders\r3\atmos_pbr_code.h" "atmos $name rc8.1+"
+}
 $scenarios['S50_atmos_rc82_recognised'] = {
     $s = New-Scenario 'S50_atmos_rc82_recognised'
     $rc82 = 'Atmospherics 2.69 RC8.2'
-    Add-AtmosAddonZip $s; Add-AtmosMod $s $rc82
+    Add-AtmosAddonZip $s; Add-AtmosRc82AddonZip $s; Add-AtmosRc82Mod $s $rc82
+    $pre = Snap $s.Root
     $c = Install $s
     Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
     Assert-AtmosKept $s @($rc82)
-    Check ((ML $s) -contains "+$atmosAddon") "RC7/RC8 add-on ticked for RC8.2"
+    Check ((ML $s) -contains "+$atmosRc82Addon") "RC8.2 add-on ticked for RC8.2"
+    Check ((ML $s) -notcontains "+$atmosAddon") "RC7/RC8 add-on not ticked for RC8.2"
     Check ($script:lastOut -notmatch 'not recognised as RC7 or RC8') "no unrecognised-Atmos warning"
+    $c = Uninstall $s
+    Assert-BackToOriginal $pre $s.Root "RC8.2 tree back to original after uninstall"
+}
+# found by its file when the folder name says nothing, and an earlier RC7/RC8 add-on is swapped out
+$scenarios['S55_atmos_rc81_by_file'] = {
+    $s = New-Scenario 'S55_atmos_rc81_by_file'
+    $odd = 'Hippo shaders latest'
+    Add-AtmosAddonZip $s; Add-AtmosRc82AddonZip $s; Add-AtmosRc82Mod $s $odd
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((ML $s) -contains "+$atmosRc82Addon" -and (ML $s) -notcontains "+$atmosAddon") "RC8.1+ found by atmos_pbr_code.h: RC8.2 add-on, not the RC7/RC8 one"
+    # RC8 Hotfix 4 again (no atmos_pbr_code.h): back to the RC7/RC8 add-on
+    Remove-Item -LiteralPath "$($s.Root)\GAMMA\mods\$odd\gamedata\shaders\r3\atmos_pbr_code.h"
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((ML $s) -contains "+$atmosAddon" -and (ML $s) -notcontains "+$atmosRc82Addon") "back on HF4: RC7/RC8 add-on ticked, RC8.2 add-on unticked"
     $c = Uninstall $s
 }
 

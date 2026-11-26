@@ -468,6 +468,9 @@ else {
     # its deffer_impl_flat.ps is identical (brodrigz 0.721), and it ships its own ssfx_*.
     $rc7 = (Is-Enabled "*Atmospherics*RC7*") -or (Is-Enabled "*Atmospherics*RC8*") -or
            (Is-EnabledByFile 'gamedata\shaders\r3\pbr_brdf_character.h')
+    # RC8.1 / RC8.2 (a file only they ship, or the name) take their own add-on instead of the
+    # RC7/RC8 one: their own headers with the per-frame noise held still under the upscaler.
+    $rc82 = (Is-Enabled "*Atmospherics*RC8.[12]*") -or (Is-EnabledByFile 'gamedata\shaders\r3\atmos_pbr_code.h')
     # RC7 and RC8 together fight over the same shaders. Only a warning: both stay ticked, which
     # one to keep is the player's call (the same add-on serves either).
     $rc7Names = @($lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } |
@@ -495,6 +498,7 @@ else {
         # and an SSS copy on top of them = shader compile error (X3017)
         "Add-on - stock Atmospherics (no RC7)"   = $null
         "Add-on - Atmospherics RC7 users"        = "*Atmospherics*RC7*"
+        "Add-on - Atmospherics RC8.2 users"      = $null
         "Add-on - Anti-Lag for GAMMA users"      = "Anti_Lag_for_GAMMA*"
         "Add-on - Better Beef's NVGs users"      = "*Better Beef's NVGs*"
         "Add-on - Glossy Puddles Overhaul users" = "*Glossy Puddles Overhaul*"
@@ -511,6 +515,8 @@ else {
         if ($k -eq "Add-on - stock Atmospherics (no RC7)") { $use = -not $rc7 }
         # by content too: players name mod folders anything ("BetterBeefsNVGs_indiesunpraiser.19")
         if (-not $use -and $k -eq "Add-on - Atmospherics RC7 users") { $use = $rc7 }
+        if ($k -eq "Add-on - Atmospherics RC7 users" -and $rc82) { $use = $false }
+        if ($k -eq "Add-on - Atmospherics RC8.2 users") { $use = $rc82 }
         # Better Beef's (not plain Beef's): its nightvision_gen_1.ps needs NVGParams from its
         # night_vision.h; without this add-on mod 3/4 win that header = shader FATAL
         if (-not $use -and $k -eq "Add-on - Better Beef's NVGs users") { $use = Is-EnabledByFileText 'gamedata\shaders\r3\nightvision_gen_1.ps' 'NVGParams' }
