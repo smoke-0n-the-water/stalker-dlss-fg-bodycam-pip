@@ -20,6 +20,7 @@
 #include "Actor_Flags.h"
 #include "customzone.h"
 #include "script_engine.h"
+#include "script_binder_object_wrapper.h"
 #include "script_engine_space.h"
 #include "script_process.h"
 #include "xrServer_Objects.h"
@@ -1799,6 +1800,79 @@ public:
 	}
 };
 
+// lua_record start [threshold_us] | stop
+// Quark's Lua + AI recorder (CScriptEngine::start_lua_record) had no console entry. It writes
+// %APPDATA%\QUARK-ENGINE\...\LUA-RECORD-<time>.log: per-function inclusive/self time, slow callbacks,
+// native AI phases. It installs a Lua debug hook, so frame times while recording are not representative.
+class CCC_LuaRecord : public IConsole_Command
+{
+public:
+	CCC_LuaRecord(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = true; };
+	virtual void Execute(LPCSTR args)
+	{
+		string64 verb = {};
+		u32 threshold_us = 1000;
+		sscanf_s(args ? args : "", "%63s %u", verb, (unsigned)sizeof(verb), &threshold_us);
+		CScriptEngine& engine = ai().script_engine();
+		if (!xr_strcmp(verb, "start"))
+		{
+			if (engine.start_lua_record(threshold_us))
+				Msg("~ lua_record: started, slow threshold %u us, file %s", threshold_us, engine.lua_record_file_name());
+			else
+				Msg("! lua_record: not started (already recording, or the log folder could not be created)");
+		}
+		else if (!xr_strcmp(verb, "stop"))
+		{
+			xr_string file_name = engine.lua_recording() ? engine.lua_record_file_name() : "";
+			if (engine.stop_lua_record())
+				Msg("~ lua_record: written %s", file_name.c_str());
+			else
+				Msg("! lua_record: not recording");
+		}
+		else
+			Msg("~ lua_record: %s. Usage: lua_record start [threshold_us] | stop",
+				engine.lua_recording() ? "recording" : "idle");
+	}
+	virtual void Info(TInfo& I) { xr_strcpy(I, "start [threshold_us] | stop"); }
+};
+
+// lua_binder_profile on | off | dump [rows] | reset
+// Per-section cost of Lua binder update() calls (script_binder_object_wrapper.cpp). Not saved:
+// collection costs a QPC pair per binder update, so it starts off every session.
+class CCC_LuaBinderProfile : public IConsole_Command
+{
+public:
+	CCC_LuaBinderProfile(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = true; };
+	virtual void Execute(LPCSTR args)
+	{
+		string64 verb = {};
+		u32 rows = 40;
+		sscanf_s(args ? args : "", "%63s %u", verb, (unsigned)sizeof(verb), &rows);
+		if (!xr_strcmp(verb, "on"))
+		{
+			lua_profile_reset_callbacks();
+			psLua_Profile = TRUE;
+			Msg("~ lua_binder_profile: on (counters reset)");
+		}
+		else if (!xr_strcmp(verb, "off"))
+		{
+			psLua_Profile = FALSE;
+			Msg("~ lua_binder_profile: off");
+		}
+		else if (!xr_strcmp(verb, "dump"))
+			lua_profile_dump_callbacks(rows ? rows : 40);
+		else if (!xr_strcmp(verb, "reset"))
+		{
+			lua_profile_reset_callbacks();
+			Msg("~ lua_binder_profile: counters reset");
+		}
+		else
+			Msg("~ lua_binder_profile: %s. Usage: lua_binder_profile on | off | dump [rows] | reset",
+				psLua_Profile ? "on" : "off");
+	}
+	virtual void Info(TInfo& I) { xr_strcpy(I, "on | off | dump [rows] | reset"); }
+};
+
 #ifdef DEBUG
 extern void print_help(lua_State *L);
 
@@ -3038,6 +3112,9 @@ void CCC_RegisterCommands()
 	CMD3(CCC_Mask, "g_dynamic_music", &psActorFlags, AF_DYNAMIC_MUSIC);
 	psActorFlags.set(AF_IMPORTANT_SAVE, TRUE);
 	CMD3(CCC_Mask, "g_important_save", &psActorFlags, AF_IMPORTANT_SAVE);
+
+	CMD1(CCC_LuaRecord, "lua_record");
+	CMD1(CCC_LuaBinderProfile, "lua_binder_profile");
 
 #ifdef DEBUG
 	CMD1(CCC_LuaHelp, "lua_help");
