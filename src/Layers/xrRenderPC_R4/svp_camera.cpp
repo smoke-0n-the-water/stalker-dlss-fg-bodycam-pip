@@ -155,7 +155,9 @@ bool svpCamera()
 	eyed.sub(params.eyepiece.m_W.c, eyeW0.c);
 	const float lens_depth = eyed.dotproduct(camfwd);
 	const float ndc_height = (lens_depth > EPS) ? (2.f * params.eyepiece.radius * mm.mProjectHud._22 / lens_depth) : 0.f;
-	const bool analytic_ok = params.eyepiece.radius > EPS && lens_depth > EPS && _valid(ndc_height) && ndc_height > 1e-4f;
+	// local fix: a hud lens is a few cm from the eye; a metre or more means an unposed lens (flip mid-aim)
+	const bool analytic_ok = params.eyepiece.radius > EPS && lens_depth > EPS && _valid(ndc_height) && ndc_height > 1e-4f
+		&& (!ps_r__svp_flip_fix || lens_depth < 1.f);
 	const float ratio_analytic = analytic_ok ? (2.f / ndc_height) : 0.f;
 	float ratio_magnification = 1.f;
 
@@ -190,6 +192,26 @@ bool svpCamera()
 	else
 	{
 		ratio_magnification = svp_track_capture_ratio(params, analytic_ok, ratio_analytic);
+	}
+
+	// local fix diagnostics: per-frame lens fit for 60 frames after the lens visual changes
+	if (ps_r__svp_flip_log)
+	{
+		static const void* s_log_visual = nullptr;
+		static u32 s_log_left = 0;
+		if (params.svp_lens_visual != s_log_visual)
+		{
+			s_log_visual = params.svp_lens_visual;
+			s_log_left = 60;
+		}
+		if (s_log_left)
+		{
+			--s_log_left;
+			Msg("[SVP-FLIPFIX] frame=%u vis=%p fresh=%d depth=%.3fm r=%.2fcm analytic=%.3f ratio=%.3f aim=%.3f ref=%d flat=%d", Device.dwFrame,
+				params.svp_lens_visual, (int)(params.svp_lens_frame == Device.dwFrame && params.svp_lens_root), lens_depth,
+				params.eyepiece.radius * 100.f, ratio_analytic, ratio_magnification,
+				g_pGamePersistent->m_pGShaderConstants->hud_params.x, (int)referenceEffects, (int)flat_window);
+		}
 	}
 
 	// magnification ceiling, the optic's authored config max zoom (hud_fov_params.x, the same source
