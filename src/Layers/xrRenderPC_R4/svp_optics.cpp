@@ -400,7 +400,10 @@ void CRenderTarget::phase_scope_glass_deferred()
 
 bool CRenderTarget::prepare_scope_physical_glass()
 {
-	if (!ps_r__svp_reference_coating || !scope_reference_material_current() || svp_electronic_image_active())
+	// Chromba: an NV/thermal scope's electronic image only replaces the optical one while its PiP view is
+	// active; otherwise the Bodycam scope effect coating still belongs on its glass
+	if (!ps_r__svp_reference_coating || !scope_reference_material_current() ||
+		(svp_electronic_image_active() && Device.m_SecondViewport.IsSVPActive()))
 		return false;
 	const char* aliases[] = { "$user$svp_reference_glass_spots", "$user$svp_reference_glass_surface" };
 	for (unsigned i = 0; i < 2; ++i)
