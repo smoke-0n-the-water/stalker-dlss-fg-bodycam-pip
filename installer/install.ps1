@@ -1,5 +1,5 @@
 # ===========================================================================
-#  1-click installer: GAMMA v0.7.2-dev (DX12 + frame gen + bodycam + PiP
+#  1-click installer: GAMMA v0.7.3-dev (DX12 + frame gen + bodycam + PiP
 #  scopes + DLSS/FSR)
 #
 #  PLAIN TEXT SCRIPT. Read it in Notepad first if you like. It:
@@ -49,7 +49,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $pack = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module "$pack\SlopRay.psm1" -Force -DisableNameChecking
-$PackVersion = 'v0.7.2-dev'
+$PackVersion = 'v0.7.3-dev'
 $OptiDefault = '0.1.35'      # the F5 version in STEP 6 itself; others are "STEP 6\F5 <version>"
 $fail = 0
 $todo = New-Object System.Collections.Generic.List[string]
