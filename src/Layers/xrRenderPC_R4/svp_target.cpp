@@ -82,16 +82,25 @@ void CRender::EnsureTargetSVP()
 		TargetMain->EnsureScopeShaders(); // pip load the lens glue shaders on first aim (idempotent)
 	u32 svp_w, svp_h;
 	svp_target_wh(svp_w, svp_h);
+	// the menu settings the size comes from: a change rebuilds at the exact new size, so lowering
+	// Scope Resolution or supersample applies live even with r__svp_target_grow
+	static float s_built_ss = -1.f, s_built_res = -1.f;
+	const bool settings_same = s_built_ss == ps_r__svp_supersample && s_built_res == svp_scope_res_scale();
 	if (TargetSVP)
 	{
 		// pip recreate if the DLSS gate flipped (gbuffer + rt_secondVP UAV change at gate != 0) or the
-		// supersample / panel-aspect changed the size, so r__svp_supersample applies live (no vid_restart)
+		// supersample / panel-aspect changed the size, so r__svp_supersample applies live (no vid_restart).
+		// r__svp_target_grow keeps a big enough square target across lens sizes (Scope Resolution sizes
+		// per lens: a rebuild was a hitch on most aims, 6 in one session).
 		const bool gate_ok = ((ps_r__svp_dlss != 0) == TargetSVP->m_svp_dlss_built);
-		const bool size_ok = (TargetSVP->Width == svp_w && TargetSVP->Height == svp_h);
+		const bool size_ok = svp::Reusable({TargetSVP->Width, TargetSVP->Height}, {svp_w, svp_h},
+			ps_r__svp_target_grow != 0 && settings_same);
 		if (gate_ok && size_ok)
 			return;
 		drop_svp_target(TargetSVP);
 	}
+	s_built_ss = ps_r__svp_supersample;
+	s_built_res = svp_scope_res_scale();
 	TargetSVP = xr_new<CRenderTarget>("svp", svp_w, svp_h);
 	// CHK_DX is a no-op so a VRAM-exhausted creation fails silently, never keep a half-built target
 	const bool svp_rt_ok = TargetSVP->rt_secondVP && TargetSVP->rt_secondVP->pSurface

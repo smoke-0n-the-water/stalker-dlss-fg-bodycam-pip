@@ -173,6 +173,7 @@ float ps_r__svp_nvg_bleach = 0.0f; // svp NVG highlight bleach roll-off, replace
 float ps_r__svp_nvg_sensitivity = 1.0f; // svp NVG bleach onset sensitivity, higher rolls off dimmer sources
 int ps_r__svp_nvg_objective = 1; // svp lens draws the centered tube class so wearer mask furniture stays off the glass
 int ps_r__svp_prewarm = 1; // build the SVP target on the first level frame (under the loading screen), not on the first aim; 0 = on first aim (purpl.ball)
+int ps_r__svp_target_grow = 1; // keep a big enough square SVP target when the lens asks for a smaller one (no rebuild hitch per scope); 0 = exact size per lens
 int ps_r__svp_weapon_continuity = 1; // svp same frame weapon pose and entrance pupil camera
 int ps_r__svp_clipon = 1; // svp a clip-on ahead of the objective owns the entrance (0 = lens pair front)
 int ps_r__svp_optic_body_suppress = 1; // svp omit the housing that contains the objective plane
@@ -446,6 +447,7 @@ void svp_console_init()
 	CMD4(CCC_SvpInternalFloat, "r__svp_nvg_sensitivity", &ps_r__svp_nvg_sensitivity, 0.1f, 4.0f);
 	CMD4(CCC_Integer, "r__svp_nvg_objective", &ps_r__svp_nvg_objective, 0, 1);
 	CMD4(CCC_Integer, "r__svp_prewarm", &ps_r__svp_prewarm, 0, 1); // build the SVP target at level start, not on the first aim
+	CMD4(CCC_Integer, "r__svp_target_grow", &ps_r__svp_target_grow, 0, 1); // reuse a bigger square SVP target instead of rebuilding per lens
 	CMD4(CCC_Integer, "r__svp_weapon_continuity", &ps_r__svp_weapon_continuity, 0, 1);
 	CMD4(CCC_Integer, "r__svp_clipon", &ps_r__svp_clipon, 0, 1);
 	CMD4(CCC_SvpFixedInteger, "r__svp_optic_body_suppress", &ps_r__svp_optic_body_suppress, 0, 1);

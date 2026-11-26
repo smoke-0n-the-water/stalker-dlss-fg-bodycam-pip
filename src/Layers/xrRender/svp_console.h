@@ -261,6 +261,7 @@ extern ECORE_API float ps_r__svp_nvg_bleach;
 extern ECORE_API float ps_r__svp_nvg_sensitivity;
 extern ECORE_API int ps_r__svp_nvg_objective;
 extern ECORE_API int ps_r__svp_prewarm;
+extern ECORE_API int ps_r__svp_target_grow;
 extern ECORE_API int ps_r__svp_weapon_continuity;
 extern ECORE_API int ps_r__svp_clipon;
 extern ECORE_API int ps_r__svp_optic_body_suppress;
