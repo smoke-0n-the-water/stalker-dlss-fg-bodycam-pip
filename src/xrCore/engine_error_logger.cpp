@@ -585,7 +585,7 @@ namespace
         {
             char header[768] = {}, process[MAX_PATH] = {};
             GetModuleFileNameA(nullptr, process, DWORD(sizeof(process)));
-            _snprintf_s(header, sizeof(header), _TRUNCATE, "QUARK ENGINE error log 2.2 | %s | %s\r\n",
+            _snprintf_s(header, sizeof(header), _TRUNCATE, "SLOP-RAY ENGINE error log 2.3 (Quark-based) | %s | %s\r\n",
                 path_basename(process), safe_text(g_buildIdentity));
             write_handle_text(file, header);
         }

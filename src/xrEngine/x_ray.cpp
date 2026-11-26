@@ -1191,7 +1191,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 	}
 
 	InitSettings();
-	Msg(QUARK_ENGINE_VERSION);
+	Msg(SLOPRAY_ENGINE_VERSION);
 
 	if (IsLoadDiagnosticsEnabled())
 	{

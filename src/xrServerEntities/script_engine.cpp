@@ -1713,7 +1713,7 @@ bool CScriptEngine::start_lua_record(const u32 threshold_us)
 	m_lua_record_state->active.store(true, std::memory_order_release);
 
 	lua_record_write(file,
-		"QUARK ENGINE LUA + AI TAIL RECORD\r\n"
+		"SLOP-RAY ENGINE LUA + AI TAIL RECORD\r\n"
 		"started_local=%04u-%02u-%02u %02u:%02u:%02u.%03u\r\n"
 		"process_id=%lu\r\n"
 		"slow_callback_threshold_us=%u\r\n"
