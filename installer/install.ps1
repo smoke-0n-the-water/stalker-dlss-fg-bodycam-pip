@@ -352,6 +352,13 @@ function Is-EnabledByFile ($rel) {
     foreach ($n in $names) { if (Is-PackMod $n) { continue }; if (Test-Path -LiteralPath "$modsDir\$n\$rel") { return $true } }
     return $false
 }
+# the highest-priority ticked mod (not ours) that ships this file = the copy MO2 uses; $null if none
+function Get-WinningMod ($rel) {
+    $names = if ($modlist) { $lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } }
+             else { Get-ChildItem -LiteralPath $modsDir -Directory -ErrorAction SilentlyContinue | ForEach-Object Name }
+    foreach ($n in $names) { if (Is-PackMod $n) { continue }; if (Test-Path -LiteralPath "$modsDir\$n\$rel") { return $n } }
+    return $null
+}
 # same, but the file must also contain $text
 function Is-EnabledByFileText ($rel, $text) {
     $names = if ($modlist) { $lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } }
@@ -472,6 +479,25 @@ else {
     # RC8.1 / RC8.2 (a file only they ship, or the name) take their own add-on instead of the
     # RC7/RC8 one: their own headers with the per-frame noise held still under the upscaler.
     $rc82 = (Is-Enabled "*Atmospherics*RC8.[12]*") -or (Is-EnabledByFile 'gamedata\shaders\r3\atmos_pbr_code.h')
+    if ($rc82) {
+        # Mods made for RC8.0 that break RC8.1 / RC8.2 shaders (found by Tools\shader_compat, 2026-11-26).
+        # Only warnings: what to install is the player's call.
+        # Glossy Puddles before 2.7 replaces RC8.1+'s pbr_brdf_terrain.h with one that lacks
+        # terrain_puddle / ALBEDO_AMOUNT: about 90 shaders fail. 2.7 ships glossy_puddles_afterglow_mcm.script.
+        $gl = Get-WinningMod 'gamedata\scripts\monkey_gloss.script'
+        if ($gl -and -not (Is-EnabledByFile 'gamedata\scripts\glossy_puddles_afterglow_mcm.script')) {
+            $glMsg = "'$gl' is an older Glossy Puddles than 2.7, and it does not work with Atmospherics RC8.1 / RC8.2 (shader compile errors). Install Glossy Puddles Overhaul 2.7 (PBR Shader Based Weathers) or untick '$gl'."
+            Warn $glMsg
+            $todo.Add($glMsg)
+        }
+        # Silencer Overheat's HUD shaders call RC8.0's one-argument HUD main; RC8.1+ passes SV_Position too
+        $sil = Get-WinningMod 'gamedata\shaders\r3\bc_sh_hud_flat.ps'
+        if ($sil -and (Select-String -LiteralPath "$modsDir\$sil\gamedata\shaders\r3\bc_sh_hud_flat.ps" -Pattern 'bc_sh_native_surface(I)' -SimpleMatch -Quiet)) {
+            $silMsg = "Silencer Overheat ('$sil') needs 8BitCat's '[PATCH] Silencer Overheat - Atmos RC8.1 PBR Compatibility' with Atmospherics RC8.1 / RC8.2 (else 4 HUD shaders fail). Install it above Silencer Overheat in MO2."
+            Warn $silMsg
+            $todo.Add($silMsg)
+        }
+    }
     # RC7 and RC8 together fight over the same shaders. Only a warning: both stay ticked, which
     # one to keep is the player's call (the same add-on serves either).
     $rc7Names = @($lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } |

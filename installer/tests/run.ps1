@@ -1341,6 +1341,71 @@ $scenarios['S45_hags_on_quiet'] = {
     Check ($script:lastOut -match 'GPU scheduling \(HAGS\): on') "says it is on"
 }
 
+# --- v0.7.3 Atmos RC8.1 / RC8.2 mod checks (shader_compat matrix, 2026-11-26) ----------------
+# Glossy Puddles before 2.7 replaces RC8.1+'s pbr_brdf_terrain.h with one that has no terrain_puddle
+# (lmodel.h X3004 in ~90 shaders): warn and name 2.7. 2.7 ships glossy_puddles_afterglow_mcm.script.
+function Add-GlossyMod ($s, $name, [switch]$V27) {
+    $m = "$($s.Root)\GAMMA\mods\$name\gamedata"
+    W "$m\scripts\monkey_gloss.script" 'glossy'
+    W "$m\shaders\r3\deffer_impl_flat.ps" "#include `"common.h`"`r`nf_deffer main(p_flat I)`r`n{`r`n  O = pack_gbuffer(a, b, c);`r`n  return O;`r`n}`r`n"
+    if ($V27) { W "$m\scripts\glossy_puddles_afterglow_mcm.script" 'glossy 2.7' }
+    Add-ModLine $s "+$name"
+}
+$scenarios['S56_glossy_old_on_rc82'] = {
+    $s = New-Scenario 'S56_glossy_old_on_rc82'
+    Add-AtmosAddonZip $s; Add-AtmosRc82AddonZip $s; Add-AtmosRc82Mod $s 'Atmospherics 2.69 RC8.2'
+    Add-GlossyMod $s 'Glossy Puddles v2.5'
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ($script:lastOut -match "(?s)Glossy Puddles v2\.5.*2\.7") "Glossy before 2.7 on RC8.2: warns and names 2.7"
+    Check ($script:lastOut -match "(?s)LEFT TO DO.*Glossy Puddles Overhaul 2\.7") "repeated in LEFT TO DO"
+    Check ((ML $s) -contains '+Glossy Puddles v2.5') "nothing unticked"
+    Check ($script:lastOut -notmatch [string][char]0x2014) "no em dash in the output"
+    $c = Uninstall $s
+}
+$scenarios['S57_glossy_quiet_cases'] = {
+    $s = New-Scenario 'S57_glossy_quiet_cases'
+    Add-AtmosAddonZip $s; Add-AtmosRc82AddonZip $s; Add-AtmosRc82Mod $s 'Atmospherics 2.69 RC8.2'
+    Add-GlossyMod $s 'Glossy Puddles Overhaul' -V27
+    $c = Install $s
+    Check ($c -eq 0 -and $script:lastOut -notmatch 'Glossy Puddles Overhaul 2\.7') "Glossy 2.7 on RC8.2: no warning (got $c)"; Show-OnFail ($c -eq 0)
+    $c = Uninstall $s
+    $s = New-Scenario 'S57b_glossy_old_on_hf4'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s 'xx-290- Atmospherics v2.69 RC8 Hotfix 4'
+    Add-GlossyMod $s 'Glossy Puddles v2.5'
+    $c = Install $s
+    Check ($c -eq 0 -and $script:lastOut -notmatch 'Glossy Puddles Overhaul 2\.7') "Glossy 2.5 on RC8 HF4: no warning (got $c)"; Show-OnFail ($c -eq 0)
+    $c = Uninstall $s
+}
+# Silencer Overheat's HUD shaders call RC8.0's 1-argument HUD main; RC8.1+ takes (I, SV_Position):
+# 4 HUD shaders fail (X3013) unless 8BitCat's RC8.1 patch (or a fixed copy) wins that file.
+$silOld = "f_deffer main(p_flat I,float4 bc_pixel_position:SV_Position)`r`n{`r`n    f_deffer O=bc_sh_native_surface(I);`r`n}`r`n"
+$silNew = "f_deffer main(p_flat I,float4 bc_pixel_position:SV_Position)`r`n{`r`n    f_deffer O=bc_sh_native_surface(I,bc_pixel_position);`r`n}`r`n"
+function Add-SilencerMod ($s, $name, $text) {
+    W "$($s.Root)\GAMMA\mods\$name\gamedata\shaders\r3\bc_sh_hud_flat.ps" $text
+    Add-ModLine $s "+$name"
+}
+$scenarios['S58_silencer_on_rc82'] = {
+    $s = New-Scenario 'S58_silencer_on_rc82'
+    Add-AtmosAddonZip $s; Add-AtmosRc82AddonZip $s; Add-AtmosRc82Mod $s 'Atmospherics 2.69 RC8.2'
+    Add-SilencerMod $s 'xx-Silencer Overheat v1.9.1 - 8BitCat' $silOld
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ($script:lastOut -match "(?s)Silencer Overheat.*RC8\.1 PBR Compatibility") "old Silencer on RC8.2: warns and names 8BitCat's RC8.1 patch"
+    Check ($script:lastOut -match "(?s)LEFT TO DO.*Silencer Overheat") "repeated in LEFT TO DO"
+    # the patch mod installed above it (higher priority = earlier line): quiet
+    Add-SilencerMod $s '[PATCH] Silencer Overheat - Atmos RC8.1 PBR Compatibility v1.0' $silNew
+    $c = Install $s
+    Check ($c -eq 0 -and $script:lastOut -notmatch 'RC8\.1 PBR Compatibility') "patch above it: no warning (got $c)"; Show-OnFail ($c -eq 0)
+    $c = Uninstall $s
+    $s = New-Scenario 'S58b_silencer_on_hf4'
+    Add-AtmosAddonZip $s; Add-AtmosMod $s 'xx-290- Atmospherics v2.69 RC8 Hotfix 4'
+    Add-SilencerMod $s 'xx-Silencer Overheat v1.9.1 - 8BitCat' $silOld
+    $c = Install $s
+    Check ($c -eq 0 -and $script:lastOut -notmatch 'RC8\.1 PBR Compatibility') "old Silencer on RC8 HF4: no warning (got $c)"; Show-OnFail ($c -eq 0)
+    $c = Uninstall $s
+}
+
 # --- run ---------------------------------------------------------------------
 Write-Host "Slop-Ray installer tests in $base"
 foreach ($k in $scenarios.Keys) {
