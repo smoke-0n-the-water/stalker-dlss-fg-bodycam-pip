@@ -489,13 +489,6 @@ else {
             $todo.Add($oddMsg)
         }
     }
-    # GAMMA's "Items Model Drop After Usage": players without it crashed on start (v0.7.2 reports).
-    # A warning only; ticking mods is the player's call.
-    if (-not (Is-Enabled '*Items Model Drop After Usage*')) {
-        $dropMsg = "GAMMA's mod '453- Items Model Drop After Usage - Kute' is not ticked in MO2. Players without it crashed on start with this engine: tick it (it is part of GAMMA)."
-        Warn $dropMsg
-        $todo.Add($dropMsg)
-    }
     $addons = [ordered]@{
         # SSS 23 ssfx_il/ssfx_sss_ext + grass fallback + DLSS history fix. ONLY without RC7:
         # RC7 ships its own for every IL/SSR option ("IL Atmospherics", "SSR - Atmospherics"),

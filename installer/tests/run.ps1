@@ -1232,20 +1232,6 @@ $scenarios['S51_old_engine_save_warning'] = {
     Check ($script:lastOut -notmatch 'engine from GAMMA v0\.') "no warning once the engine is current"
     $c = Uninstall $s
 }
-$scenarios['S52_items_model_drop_warning'] = {
-    $s = New-Scenario 'S52_items_model_drop_warning'
-    $c = Install $s
-    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
-    Check ($script:lastOut -match 'Items Model Drop After Usage' -and $script:lastOut -match '(?s)LEFT TO DO.*Items Model Drop After Usage') "warns when it is not ticked, also in LEFT TO DO"
-    $c = Uninstall $s
-    # ticked: no warning
-    $s = New-Scenario 'S52_items_model_drop_ticked'
-    W "$($s.Root)\GAMMA\mods\453- Items Model Drop After Usage - Kute\gamedata\configs\items\items\items_model_drop_physc.ltx" 'kute'
-    Add-ModLine $s '+453- Items Model Drop After Usage - Kute'
-    $c = Install $s
-    Check ($c -eq 0 -and $script:lastOut -notmatch 'Items Model Drop After Usage') "no warning when it is ticked"
-    $c = Uninstall $s
-}
 # A player-edited OptiScaler.ini is never lost: moved to the recovery folder, with a note.
 $scenarios['S53_optiscaler_ini_edit_kept'] = {
     $s = New-Scenario 'S53_optiscaler_ini_edit_kept'
