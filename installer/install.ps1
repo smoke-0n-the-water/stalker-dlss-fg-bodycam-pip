@@ -435,11 +435,12 @@ function Install-GlossyAddon ($name) {
 # --- 6. unpack mods ------------------------------------------------------
 # modlist edits collected below: tick = force "+", drop = remove line (true) or untick (false)
 $tickNames = @{}; $dropNames = @{}
-# Texture Residency is off by default from v0.7.1. Once per install (the record remembers it) the
-# master switch goes to 0 and pack mod 7 (menu + class rules) is left unticked; after that a
+# Texture Residency is ON by default again from v0.7.3 (off in v0.7.1-v0.7.2). The engine runs it only
+# while pack mod 7 (menu + class rules) is ticked, so unticking mod 7 in MO2 turns it off. Once per
+# install (the record remembers it) mod 7 is ticked and the master switch goes to 80; after that a
 # re-run keeps whatever the player chose.
 $texPattern = '7 - Tex Residency Classes*'
-$texResMigrate = -not ($sr.Record -and $sr.Record.texResOff)
+$texResMigrate = -not ($sr.Record -and $sr.Record.texResOn)
 Head "MO2 mods to unpack"
 $installed = New-Object System.Collections.Generic.List[string]
 $modPlan = New-Object System.Collections.Generic.List[object]
@@ -749,7 +750,7 @@ function Build-Modlist {
     $was = Get-ModlistState $lines
     for ($i = $installed.Count - 1; $i -ge 0; $i--) {
         $n = $installed[$i]; $mark = '+'
-        if ($n -like $texPattern) { $mark = $(if ($texResMigrate -or $was[$n] -ne '+') { '-' } else { '+' }) }
+        if ($n -like $texPattern) { $mark = $(if ($texResMigrate -or $was[$n] -ne '-') { '+' } else { '-' }) }
         $top += "$mark$n"
     }
     return , (@($head) + $top + $rest)
@@ -807,7 +808,6 @@ $want = [ordered]@{
     'rs_v_sync'          = 'off'
     'r_upscaler'         = $(if ($rtx) { 'dlss' } else { 'fsr3' })
     'r_frame_generation' = $(if ($rtxFg) { 'dlss' } else { 'off' })
-    'r__tex_res_budget_target' = '0'     # Texture Residency off by default (v0.7.1)
     'r__upscaler_camera_mv'    = '0'     # camera-MV fill off: it made the still image wobble (v0.7.1)
     'spawn_time_log'           = '0'     # per-spawn timing log off: a diagnostic, not for play (v0.7.1)
     'r__svp_adaptive_res'      = '0'     # fixed PiP target size: 1.2 rebuilt it on lens changes (stutter) (v0.7.3)
@@ -837,6 +837,9 @@ if (Test-Path -LiteralPath $ltx) {
     $todo.Add("In game: Settings > Video: MSAA off, VSync off, upscaler DLSS (RTX) or FSR")
 }
 
+# Texture Residency on once (v0.7.3), even where the v0.7.1 installer already wrote 0 once
+if ($texResMigrate -and $ltxNow) { $ltxSet['r__tex_res_budget_target'] = '80' }
+
 # what the player is told about Texture Residency: shown before the install and again at the end
 $texNote = @()
 $texPackName = $installed | Where-Object { $_ -like $texPattern } | Select-Object -First 1
@@ -844,12 +847,10 @@ $texWas = $null
 if ($ltxSet.Contains('r__tex_res_budget_target') -and $ltxNow) {
     $texWas = ($ltxNow | Where-Object { $_ -match '^r__tex_res_budget_target\s+(\S+)\s*$' } | Select-Object -First 1) -replace '^r__tex_res_budget_target\s+', ''
 }
-if ($texResMigrate -or $ltxSet.Contains('r__tex_res_budget_target')) {
-    $texNote += "Texture Residency is OFF by default: r__tex_res_budget_target $(if ($texWas -and $texWas.Trim() -ne '0') { "was $($texWas.Trim()), now 0" } else { '0' })."
-    if ($texPackName) {
-        $texNote += "'$texPackName' is $(if ($modlist -and (Get-ModlistState $lines)[$texPackName] -eq '+') { 'now unticked' } else { 'left unticked' }) in MO2."
-    }
-    $texNote += "To opt in: tick '$(if ($texPackName) { $texPackName } else { '7 - Tex Residency Classes' })' in MO2, then MCM > Texture Residency (VRAM) > Manage VRAM on (or type r__tex_res_budget_target 80 in the console)."
+if ($texResMigrate) {
+    $texModName = $(if ($texPackName) { $texPackName } else { '7 - Tex Residency Classes' })
+    $texNote += "Texture Residency is ON by default: r__tex_res_budget_target $(if ($texWas -and $texWas.Trim() -ne '80') { "was $($texWas.Trim()), now 80" } else { '80' }), '$texModName' ticked in MO2."
+    $texNote += "To turn it off: untick '$texModName' in MO2 (or MCM > Texture Residency (VRAM) > Manage VRAM off)."
 }
 
 # --- 10. checks: space, shader cache -------------------------------------
@@ -1109,7 +1110,7 @@ try {
     $old = $sr.Record.shaderCache.stale
     if ($sr.Record.shaderCache.stalePending) { $sr.Record.shaderCache.stale = $sr.Record.shaderCache.stalePending; $sr.Record.shaderCache.Remove('stalePending') }
     if ($legacy3dss) { $sr.Record.legacy3dss = @{ backup = 'GAMMA\3DSS_backup'; mod = $(if ($tdss) { $tdss.Name } else { '' }) } }
-    $sr.Record.texResOff = $true
+    $sr.Record.texResOn = $true
     Complete-Run $sr 'installed'
     if ($old -and $old -ne $sr.Record.shaderCache.stale -and $old.StartsWith("$($sr.Dir)\runs\") -and (Test-Path -LiteralPath $old)) {
         # a shader cache we moved inside our own .slopray\runs folder: regenerated data
@@ -1164,6 +1165,6 @@ Say "  $k. NVIDIA App: Smooth Motion OFF for Anomaly (else DX12 crashes)."; $k++
 Say "  $k. MO2 dropdown: pick 'Anomaly (DX12 + Frame Gen)' > Run."
 Say "     First launch rebuilds shaders, looks frozen a few minutes. Wait."
 Say ""
-Say "  Optional: Texture Residency is off by default. If you stutter: tick '7 - Tex Residency Classes' in MO2, then MCM > Texture Residency (VRAM) > Manage VRAM on."
+Say "  Texture Residency is on (mod '7 - Tex Residency Classes'). To turn it off: untick that mod in MO2."
 Say ""
 Pause-End $(if ($fail -gt 0) { 1 } else { 0 })

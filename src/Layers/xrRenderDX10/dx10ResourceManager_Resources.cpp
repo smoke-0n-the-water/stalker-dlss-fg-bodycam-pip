@@ -874,15 +874,29 @@ void CResourceManager::ResidencyFrame()
 		return;
 	s_residency_frame = Device.dwFrame;
 
+	// Residency runs only with pack mod 7 ticked (it ships tex_residency.ltx): unticking the mod in MO2
+	// turns it off without touching the saved r__tex_res_budget_target, so ticking it back restores the
+	// player's own choice. Mods do not change mid-session, so the file is checked once.
+	static int s_residency_mod = -1;
+	if (s_residency_mod < 0)
+	{
+		string_path fname;
+		FS.update_path(fname, "$game_config$", "tex_residency.ltx");
+		s_residency_mod = FS.exist(fname) ? 1 : 0;
+	}
+	const bool residency_on = ps_r__tex_res_budget_target && s_residency_mod;
+
 	// Once, on the first rendered frame (user.ltx is applied by then): say whether residency is on.
 	static bool s_residency_state_logged = false;
 	if (!s_residency_state_logged)
 	{
 		s_residency_state_logged = true;
-		if (ps_r__tex_res_budget_target)
-			Msg("* Texture residency: on (r__tex_res_budget_target %d).", ps_r__tex_res_budget_target);
+		if (residency_on)
+			Msg("* Texture residency: on (r__tex_res_budget_target %d, mod 7 ticked).", ps_r__tex_res_budget_target);
+		else if (!s_residency_mod)
+			Msg("* Texture residency: off (pack mod 7 'Tex Residency Classes' is not ticked).");
 		else
-			Msg("* Texture residency: off (r__tex_res_budget_target 0). Set 80 to opt in.");
+			Msg("* Texture residency: off (r__tex_res_budget_target 0; MCM > Texture Residency to turn it on).");
 	}
 
 	// Phase 1: install any LOD swaps a worker finished, at frame start as the plan requires.
@@ -919,7 +933,7 @@ void CResourceManager::ResidencyFrame()
 #ifdef USE_DX11
 	const u32 now = Device.dwTimeGlobal;
 	const bool log_due = ps_r__tex_vram_log && now >= s_vram_next_ms;
-	const bool check_due = ps_r__tex_res_budget_target && now >= s_pressure_next_ms;
+	const bool check_due = residency_on && now >= s_pressure_next_ms;
 
 	// Phase 2: idle-age demotion every 5 s. Only once usage is within reach of the budget (above
 	// the low watermark): with headroom, demoting buys nothing (WDDM pages idle textures out by
@@ -929,7 +943,7 @@ void CResourceManager::ResidencyFrame()
 	{
 		// Residency off in the menu (r__tex_res_budget_target 0) stops idle demotes too, not just
 		// the pressure trims; near_budget would otherwise stay latched at its last value.
-		if (ps_r__tex_res_budget_target && (near_budget || s_trim_active))
+		if (residency_on && (near_budget || s_trim_active))
 			TexResClassIdleSweep();
 		s_class_sweep_next_ms = now + 5000;
 	}

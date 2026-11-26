@@ -590,7 +590,7 @@ int ps_r__tex_evict_interval   = 600;
 int ps_r__tex_nowait    = 1;  // a still-loading texture binds nothing for the frame instead of stalling it
 int ps_r__tex_wait_log  = 0;  // log frames whose render thread waited at least this many ms on texture loads, 0 = off
 int ps_r__tex_vram_log  = 0;  // seconds between VRAM usage/budget lines, 0 = off
-int ps_r__tex_res_budget_target = 0;  // master switch for VRAM pressure trimming: 0 = off (default), any other value = on (the % itself is no longer used)
+int ps_r__tex_res_budget_target = 80; // master switch for VRAM pressure trimming: 0 = off, any other value = on (default 80; the % itself is no longer used). Only active with pack mod 7 ticked (tex_residency.ltx)
 int ps_r__tex_res_preset        = 0;  // VRAM tier: 0 auto (from the DXGI budget), 1-6 = 4/6/8/12/16/20+ GB, 7 custom (the cvars below)
 int ps_r__tex_res_high_pct      = 96; // start trimming when DXGI usage passes this % of the budget
 int ps_r__tex_res_low_pct       = 90; // keep trimming until usage is back under this %; idle class textures only demote above it
