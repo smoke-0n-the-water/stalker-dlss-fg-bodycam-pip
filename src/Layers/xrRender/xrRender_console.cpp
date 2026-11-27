@@ -217,6 +217,7 @@ Fvector ps_r__Tree_Wave = {.1f, .01f, .11f};
 float ps_r__Tree_SBC = 1.5f; // scale bias correct
 // vertex cache plus overdraw reorder of the tree index ranges, read once at level load
 int ps_r__tree_ib_reorder = 1;
+int ps_r__shader_prewarm = 1; // R4: create cached shaders at level load (r4_loader.cpp shader_prewarm)
 
 float ps_r__WallmarkTTL = 50.f;
 float ps_r__WallmarkSHIFT = 0.0001f;
@@ -1724,6 +1725,7 @@ void xrRender_initconsole()
 	CMD4(CCC_Float, "r__detail_thin_keep", &ps_r__detail_thin_keep, 0.f, 1.f);
 	CMD4(CCC_Float, "r__detail_thin_band", &ps_r__detail_thin_band, 1.f, 250.f);
 	CMD4(CCC_Integer, "r__tree_ib_reorder", &ps_r__tree_ib_reorder, 0, 1);
+	CMD4(CCC_Integer, "r__shader_prewarm", &ps_r__shader_prewarm, 0, 1);
 
 #ifdef DEBUG
 	CMD4(CCC_Float,		"r__detail_l_ambient",	&ps_r__Detail_l_ambient,	.5f,	.95f	);
