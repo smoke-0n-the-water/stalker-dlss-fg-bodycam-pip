@@ -746,6 +746,7 @@ u32 s_trim_backoff = 1;          // 1..8: multiplies the settle time while trimm
 constexpr u32 kSettleMs = 60000;
 constexpr u32 kMaxUnloadsPerPass = 48; // each Unload() runs on the render thread
 constexpr u64 kTrimMinBytes = 1024 * 1024; // pressure trims never demote a class texture smaller than this
+constexpr u32 kNeverDrawnIdleMs = 0x7fffffff; // idle age given to never-drawn textures: oldest first
 
 // VRAM tiers (r__tex_res_preset, set from the MCM menu). Smaller cards start trimming earlier to
 // keep headroom for spikes, install swaps faster and demote idle class textures sooner; big cards
@@ -817,6 +818,7 @@ void update_tex_res_params(u64 budget)
 u32 s_swap_dropped = 0;
 u32 s_swap_log_next_ms = 0;
 bool s_pressure_warned = false;
+u32 s_pressure_warn_next_ms = 0; // while over budget with nothing to trim, remind at most once a minute
 IDXGIAdapter3* s_adapter3 = nullptr;
 bool s_adapter3_tried = false;
 
@@ -1051,7 +1053,12 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 			continue;
 		if (residency_pinned(entry.first))
 			continue;
-		const u32 unused = now - T->dwLastUsedTime;
+		// Never drawn (prefetched, or loaded with the level but not seen yet) counts as idle at once.
+		// The engine clock barely advances during a loading screen, so on the first load of a
+		// session nothing could reach the idle age: the load-time trim found "nothing idle" while
+		// ~9 GB of prefetched textures had never been drawn (2026-11-27). A demoted one promotes
+		// on its first draw (CTexture::Apply), like any other.
+		const u32 unused = T->dwLastUsedTime ? now - T->dwLastUsedTime : kNeverDrawnIdleMs;
 		if (T->ResClass >= 0)
 		{
 			// Class textures follow their class's age and hold, whether or not they were ever promoted.
@@ -1126,14 +1133,24 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 	}
 
 	if (count)
-		Msg("* [TexRes] VRAM %llu of %llu MB: unloaded %u idle texture(s), demoted %u, ~%llu MB, idle %u-%u s",
-			usage / mb, budget / mb, count - demoted, demoted, freed / mb, youngest / 1000,
-			idle.front().first / 1000);
-	else if (!s_pressure_warned)
+	{
+		if (youngest >= kNeverDrawnIdleMs)
+			Msg("* [TexRes] VRAM %llu of %llu MB: unloaded %u texture(s), demoted %u, ~%llu MB, all never drawn yet",
+				usage / mb, budget / mb, count - demoted, demoted, freed / mb);
+		else
+			Msg("* [TexRes] VRAM %llu of %llu MB: unloaded %u idle texture(s), demoted %u, ~%llu MB, idle %u s or more",
+				usage / mb, budget / mb, count - demoted, demoted, freed / mb, youngest / 1000);
+	}
+	else if (!s_pressure_warned || now >= s_pressure_warn_next_ms)
+	{
+		// The first time, then once a minute while it lasts: before, one line and then silence,
+		// so a log could not tell "still over budget" from "back under".
 		Msg(never_unload
-				? "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle left to demote: leaving it to the driver"
-				: "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle long enough to trim",
-			usage / mb, budget / mb, high_pct);
+				? "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle left to demote: leaving it to the driver%s"
+				: "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle long enough to trim%s",
+			usage / mb, budget / mb, high_pct, s_pressure_warned ? " (still)" : "");
+		s_pressure_warn_next_ms = now + 60000;
+	}
 	s_pressure_warned = !count;
 
 	// End the episode once its byte allowance is spent or nothing is left to trim, whatever DXGI
