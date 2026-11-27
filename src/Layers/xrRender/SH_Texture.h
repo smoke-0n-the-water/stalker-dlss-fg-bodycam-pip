@@ -57,6 +57,11 @@ public:
     // Never demoted, unloaded or trimmed by residency. Set by the PiP scope pass on every lens texture
     // it samples through surface_get() (no Apply(), so a demote there would never promote back).
     bool ResPinned = false;
+    // r__tex_holder_diag: where this texture was first created (return addresses captured in
+    // CResourceManager::_CreateTexture) and the level generation then (0 = before the first level).
+    void* DiagFrames[10] = {};
+    u16 DiagFrameCount = 0;
+    u16 DiagLevelGen = 0;
 #endif
     bool IsLoading() const {
 #if defined(USE_DX10) || defined(USE_DX11)

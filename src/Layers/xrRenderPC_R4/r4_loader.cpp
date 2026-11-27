@@ -329,6 +329,7 @@ void CRender::level_Load(IReader* fs)
 
 	// Begin
 	pApp->LoadBegin();
+	{ extern u32 g_tex_level_gen; ++g_tex_level_gen; } // r__tex_holder_diag level stamp
 	shader_warmup_start(); // pip/3DSS scope shaders compile on worker threads while the level loads
 	dxRenderDeviceRender::Instance().Resources->DeferredLoad(TRUE);
 	IReader* chunk;
@@ -693,6 +694,7 @@ void CRender::level_Unload()
 			dxRenderDeviceRender::Instance().Resources->Evict();
 		}
 		dxRenderDeviceRender::Instance().Resources->Dump(false);
+		dxRenderDeviceRender::Instance().Resources->DumpTextureHolders(); // r__tex_holder_diag
 		//static int unload_counter = 0;
 		//Msg("The Level Unloaded.======================== %d", ++unload_counter);
 	}

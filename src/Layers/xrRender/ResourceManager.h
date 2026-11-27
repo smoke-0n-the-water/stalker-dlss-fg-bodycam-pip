@@ -291,6 +291,8 @@ public:
     bool RelieveVramPressure(u64 usage, u64 budget); // true when it unloaded something
     // Phase 0 accounting: dump every tracked texture's true bytes/state to a CSV in $logs$.
     void DumpTextureResidency();
+    // r__tex_holder_diag: at level unload, textures still registered grouped by creation call stack
+    void DumpTextureHolders();
     // Phase 1 LOD swap primitive. QueueTextureSwap submits a worker reload at new_lod into
     // the texture's Pending* fields; ApplyTextureSwaps (render-thread only, called from
     // ResidencyFrame at frame start) installs a capped batch via CTexture::ApplySwap().

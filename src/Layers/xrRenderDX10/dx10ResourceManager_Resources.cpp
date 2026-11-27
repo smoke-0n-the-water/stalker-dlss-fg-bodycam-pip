@@ -12,6 +12,9 @@
 #include <D3DX10Core.h>
 
 #include "../xrRender/ResourceManager.h"
+
+extern int ps_r__tex_holder_diag; // xrRender_console.cpp
+u32 g_tex_level_gen = 0; // ++ at each R4 level_Load, stamped into CTexture::DiagLevelGen
 #include "../xrRender/tss.h"
 #include "../xrRender/blenders/blender.h"
 #include "../xrRender/blenders/blender_recorder.h"
@@ -646,6 +649,11 @@ ref_texture CResourceManager::_CreateTexture(LPCSTR _Name)
 		CTexture* T = xr_new<CTexture>();
 		T->dwFlags |= xr_resource_flagged::RF_REGISTERED;
 		m_textures.insert(mk_pair(T->set_name(Name), T));
+		if (ps_r__tex_holder_diag) // see DumpTextureHolders
+		{
+			T->DiagFrameCount = u16(RtlCaptureStackBackTrace(1, 10, T->DiagFrames, nullptr));
+			T->DiagLevelGen = u16(g_tex_level_gen);
+		}
 		T->Preload();
         const ref_texture result(T); // Own caller result before any worker can complete.
         if (Device.b_is_Ready) QueueTextureLoad(result);
@@ -1616,6 +1624,97 @@ void CResourceManager::DumpTextureResidency()
 	Msg("* [TexRes] dump: %u textures (%u loaded), true %llu MB, legacy %llu MB, wrote [%s]",
 		(u32)rows.size(), loaded_count, total_true / mb, total_legacy / mb, path);
 #endif
+}
+
+// DIAGNOSTIC (r__tex_holder_diag, 2026-11-27). After a fast travel the next level reloaded 5106
+// textures (20 GB) because 4128 were still registered after the old level's unload, 3090 of them
+// with exactly one reference left. A texture's creation call stack usually names its owner
+// (particles, environment, a model cache, script UI...), so survivors are grouped by it.
+// Addresses print as module+offset; resolve them with the build's PDB.
+void CResourceManager::DumpTextureHolders()
+{
+	if (!ps_r__tex_holder_diag)
+		return;
+	struct Group
+	{
+		void* frames[10];
+		u16 frame_count;
+		u32 count = 0;
+		u64 bytes = 0;
+		u32 per_gen[4] = {};
+		xr_vector<shared_str> examples;
+	};
+	xr_map<u64, Group> groups;
+	u32 total = 0, skipped_special = 0;
+	{
+		xrCriticalSectionGuard guard(creationGuard);
+		for (const auto& entry : m_textures)
+		{
+			const CTexture* T = entry.second;
+			LPCSTR name = entry.first;
+			if (T->flags.bUser || strchr(name, '$') || !strncmp(name, "ui\\", 3) || !strncmp(name, "ui/", 3))
+			{
+				++skipped_special;
+				continue;
+			}
+			++total;
+			// group by the first frames only, so call sites that differ deeper still merge
+			const u16 key_frames = T->DiagFrameCount < 6 ? T->DiagFrameCount : 6;
+			u64 key = 1469598103934665603ull;
+			for (u16 i = 0; i < key_frames; ++i)
+				key = (key ^ u64(uintptr_t(T->DiagFrames[i]))) * 1099511628211ull;
+			Group& g = groups[key];
+			if (!g.count)
+			{
+				g.frame_count = T->DiagFrameCount;
+				for (u16 i = 0; i < T->DiagFrameCount; ++i)
+					g.frames[i] = T->DiagFrames[i];
+			}
+			++g.count;
+			g.bytes += T->TrueBytes ? T->TrueBytes : T->flags.MemoryUsage;
+			++g.per_gen[T->DiagLevelGen < 3 ? T->DiagLevelGen : 3];
+			if (g.examples.size() < 4)
+				g.examples.push_back(entry.first);
+		}
+	}
+	xr_vector<const Group*> sorted;
+	for (const auto& it : groups)
+		sorted.push_back(&it.second);
+	std::sort(sorted.begin(), sorted.end(), [](const Group* a, const Group* b) { return a->count > b->count; });
+	Msg("* [TexHolder] %u textures still registered after level unload (%u $/ui/user skipped), %u creation call sites; gen 0 = created before the first level",
+		total, skipped_special, u32(sorted.size()));
+	const u32 shown = sorted.size() < 30 ? u32(sorted.size()) : 30u;
+	for (u32 n = 0; n < shown; ++n)
+	{
+		const Group& g = *sorted[n];
+		string1024 frames = "";
+		for (u16 i = 0; i < g.frame_count; ++i)
+		{
+			HMODULE module = nullptr;
+			char module_name[MAX_PATH] = "?";
+			uintptr_t base = 0;
+			if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+					LPCSTR(g.frames[i]), &module) && module)
+			{
+				GetModuleFileNameA(module, module_name, sizeof(module_name));
+				base = uintptr_t(module);
+			}
+			LPCSTR short_name = strrchr(module_name, '\\');
+			short_name = short_name ? short_name + 1 : module_name;
+			string128 one;
+			xr_sprintf(one, " %s+0x%llx", short_name, u64(uintptr_t(g.frames[i]) - base));
+			xr_strcat(frames, one);
+		}
+		string512 examples = "";
+		for (const shared_str& e : g.examples)
+		{
+			xr_strcat(examples, " ");
+			xr_strcat(examples, e.c_str());
+		}
+		Msg("* [TexHolder] #%u: %u textures ~%llu MB (gen0 %u, gen1 %u, gen2 %u, gen3+ %u) e.g.%s | created at:%s",
+			n + 1, g.count, g.bytes / (1024 * 1024), g.per_gen[0], g.per_gen[1], g.per_gen[2], g.per_gen[3],
+			examples, frames);
+	}
 }
 
 void CResourceManager::_DeleteTexture(const CTexture* T)

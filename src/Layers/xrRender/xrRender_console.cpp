@@ -218,6 +218,9 @@ float ps_r__Tree_SBC = 1.5f; // scale bias correct
 // vertex cache plus overdraw reorder of the tree index ranges, read once at level load
 int ps_r__tree_ib_reorder = 1;
 int ps_r__shader_prewarm = 1; // R4: create cached shaders at level load (r4_loader.cpp shader_prewarm)
+// DIAGNOSTIC 2026-11-27: record texture creation stacks and log level-unload survivors
+// (CResourceManager::DumpTextureHolders). Default on for this test build only.
+int ps_r__tex_holder_diag = 1;
 
 float ps_r__WallmarkTTL = 50.f;
 float ps_r__WallmarkSHIFT = 0.0001f;
@@ -1726,6 +1729,7 @@ void xrRender_initconsole()
 	CMD4(CCC_Float, "r__detail_thin_band", &ps_r__detail_thin_band, 1.f, 250.f);
 	CMD4(CCC_Integer, "r__tree_ib_reorder", &ps_r__tree_ib_reorder, 0, 1);
 	CMD4(CCC_Integer, "r__shader_prewarm", &ps_r__shader_prewarm, 0, 1);
+	CMD4(CCC_Integer, "r__tex_holder_diag", &ps_r__tex_holder_diag, 0, 1);
 
 #ifdef DEBUG
 	CMD4(CCC_Float,		"r__detail_l_ambient",	&ps_r__Detail_l_ambient,	.5f,	.95f	);
