@@ -113,6 +113,33 @@ void forget_instance(dxRender_Visual* V)
 	xrCriticalSectionGuard guard(s_instance_stack_lock);
 	instance_stacks().erase(V);
 }
+// Copies that took a reference on a registered base in Instance_Duplicate but were never put in
+// Registry: their owners free them with xr_delete, which never gives that reference back.
+struct UnregisteredDuplicate
+{
+	shared_str base;
+	ModelInstanceStack stack;
+};
+xr_map<dxRender_Visual*, UnregisteredDuplicate>& unregistered_duplicates()
+{
+	static xr_map<dxRender_Visual*, UnregisteredDuplicate>* map = xr_new<xr_map<dxRender_Visual*, UnregisteredDuplicate>>();
+	return *map;
+}
+void note_unregistered_duplicate(dxRender_Visual* copy, const shared_str& base)
+{
+	if (!ps_r__tex_holder_diag)
+		return;
+	UnregisteredDuplicate d;
+	d.base = base;
+	d.stack.count = u16(RtlCaptureStackBackTrace(1, 28, d.stack.frames, nullptr));
+	xrCriticalSectionGuard guard(s_instance_stack_lock);
+	unregistered_duplicates()[copy] = d;
+}
+void note_registered(dxRender_Visual* copy)
+{
+	xrCriticalSectionGuard guard(s_instance_stack_lock);
+	unregistered_duplicates().erase(copy);
+}
 }
 
 void CModelPool::DumpLiveInstances()
@@ -156,6 +183,62 @@ void CModelPool::DumpLiveInstances()
 				g.examples.push_back(it.second);
 		}
 	}
+	{
+		u32 zero = 0, positive = 0;
+		u64 refs_total = 0;
+		{
+			xrSRWLockGuard g(ModelsLock, true);
+			for (const ModelDef& m : Models)
+			{
+				if (m.refs) { ++positive; refs_total += m.refs; }
+				else ++zero;
+			}
+		}
+		Msg("* [ModelLive] base models after unload: %u with refs > 0 (%llu refs in all), %u with refs 0", positive, refs_total, zero);
+	}
+	{
+		struct DupGroup { ModelInstanceStack stack{}; u32 count = 0; xr_vector<shared_str> examples; };
+		xr_map<u64, DupGroup> dup_groups;
+		{
+			xrCriticalSectionGuard guard(s_instance_stack_lock);
+			for (const auto& it : unregistered_duplicates())
+			{
+				const ModelInstanceStack& st = it.second.stack;
+				const u16 key_frames = st.count < 12 ? st.count : 12;
+				u64 key = 1469598103934665603ull;
+				for (u16 i = 0; i < key_frames; ++i)
+					key = (key ^ u64(uintptr_t(st.frames[i]))) * 1099511628211ull;
+				DupGroup& g = dup_groups[key];
+				if (!g.count) g.stack = st;
+				++g.count;
+				if (g.examples.size() < 4) g.examples.push_back(it.second.base);
+			}
+		}
+		xr_vector<const DupGroup*> dups;
+		for (const auto& it : dup_groups) dups.push_back(&it.second);
+		std::sort(dups.begin(), dups.end(), [](const DupGroup* a, const DupGroup* b) { return a->count > b->count; });
+		Msg("* [ModelLive] %u unregistered copies took a base reference this session (never released), %u call sites",
+			u32(unregistered_duplicates().size()), u32(dups.size()));
+		for (u32 n = 0; n < dups.size() && n < 15; ++n)
+		{
+			string4096 frames = "";
+			for (u16 i = 0; i < dups[n]->stack.count; ++i)
+			{
+				HMODULE module = nullptr;
+				uintptr_t base = 0;
+				if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+						LPCSTR(dups[n]->stack.frames[i]), &module) && module)
+					base = uintptr_t(module);
+				string64 one;
+				xr_sprintf(one, " +0x%llx", u64(uintptr_t(dups[n]->stack.frames[i]) - base));
+				xr_strcat(frames, one);
+			}
+			string512 examples = "";
+			for (const shared_str& e : dups[n]->examples) { xr_strcat(examples, " "); xr_strcat(examples, e.c_str()); }
+			Msg("* [ModelLive] dup #%u: %u copies of e.g.%s | at:%s", n + 1, dups[n]->count, examples, frames);
+		}
+	}
+
 	xr_vector<const Group*> sorted;
 	for (const auto& it : groups)
 		sorted.push_back(&it.second);
@@ -207,6 +290,7 @@ dxRender_Visual* CModelPool::Instance_Duplicate(dxRender_Visual* V)
 		if (it != Models.end() && it->model == V)
 		{
 			it->refs++;
+			note_unregistered_duplicate(N, it->name); // r__tex_holder_diag; Create() clears it on Registry.insert
 		}
 		return N;
 	}
@@ -433,6 +517,7 @@ dxRender_Visual* CModelPool::Create(const char* name, IReader* data, bool assert
 		dxRender_Visual* Model = Instance_Duplicate(Base);
 		Registry.insert(mk_pair(Model, low_name));
 		note_instance(Model); // r__tex_holder_diag
+		note_registered(Model);
 		return Model;
 	}
 }
