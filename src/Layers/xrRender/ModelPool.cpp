@@ -327,17 +327,27 @@ dxRender_Visual* CModelPool::CreateChild(LPCSTR name, IReader* data)
 	strlwr(low_name);
 	if (strext(low_name)) *strext(low_name) = 0;
 
-	// 1. Search for already loaded model
-	dxRender_Visual* Base = Instance_Find(low_name);
-	//.	if (0==Base) Base	 	= Instance_Load(name,data,FALSE);
-	if (0 == Base)
-	{
-		if (data) Base = Instance_Load(low_name, data,FALSE);
-		else Base = Instance_Load(low_name,FALSE);
-	}
+	// Slop-Ray 2026-11-27: the copy-or-not choice no longer depends on bAllowChildrenDuplicate.
+	// That is one flag shared by every thread: Create() clears it while it loads a base model and
+	// sets it again afterwards, so with models loading on several threads at once (spawns on the
+	// main thread, level load and prefetch on workers) a child loaded fresh here was often
+	// duplicated and the fresh instance - never registered, never owned - leaked with its shaders
+	// and textures. Measured: ~10 GB of NPC, item and weapon textures from earlier levels still
+	// registered after every level unload (r__tex_holder_diag), so each level change reloaded them.
 
-	dxRender_Visual* Model = bAllowChildrenDuplicate ? Instance_Duplicate(Base) : Base;
-	return Model;
+	// 1. A registered model used as a child (an external LOD, for instance): always a copy. Returning
+	// the base itself (the old path while the flag was clear) let its owner xr_delete a model the
+	// pool still lists. Not put in Registry: CKinematics frees m_lod with xr_delete, which would
+	// leave a dangling key. The copy keeps a reference on the base, as before.
+	dxRender_Visual* Base = Instance_Find(low_name);
+	if (Base)
+		return Instance_Duplicate(Base);
+
+	// 2. Not registered (inline children "<model>:<n>" never are): a fresh instance the parent owns
+	// and deletes (FHierrarhyVisual / CKinematics destructors).
+	if (data) Base = Instance_Load(low_name, data, FALSE);
+	else Base = Instance_Load(low_name, FALSE);
+	return Base;
 }
 
 extern  xr_atomic_bool ENGINE_API g_bRendering; 
