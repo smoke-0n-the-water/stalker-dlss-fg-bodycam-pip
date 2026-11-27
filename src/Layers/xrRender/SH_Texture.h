@@ -59,7 +59,7 @@ public:
     bool ResPinned = false;
     // r__tex_holder_diag: where this texture was first created (return addresses captured in
     // CResourceManager::_CreateTexture) and the level generation then (0 = before the first level).
-    void* DiagFrames[10] = {};
+    void* DiagFrames[28] = {};
     u16 DiagFrameCount = 0;
     u16 DiagLevelGen = 0;
 #endif

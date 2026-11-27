@@ -651,7 +651,7 @@ ref_texture CResourceManager::_CreateTexture(LPCSTR _Name)
 		m_textures.insert(mk_pair(T->set_name(Name), T));
 		if (ps_r__tex_holder_diag) // see DumpTextureHolders
 		{
-			T->DiagFrameCount = u16(RtlCaptureStackBackTrace(1, 10, T->DiagFrames, nullptr));
+			T->DiagFrameCount = u16(RtlCaptureStackBackTrace(1, 28, T->DiagFrames, nullptr));
 			T->DiagLevelGen = u16(g_tex_level_gen);
 		}
 		T->Preload();
@@ -1637,7 +1637,7 @@ void CResourceManager::DumpTextureHolders()
 		return;
 	struct Group
 	{
-		void* frames[10];
+		void* frames[28];
 		u16 frame_count;
 		u32 count = 0;
 		u64 bytes = 0;
@@ -1658,8 +1658,9 @@ void CResourceManager::DumpTextureHolders()
 				continue;
 			}
 			++total;
-			// group by the first frames only, so call sites that differ deeper still merge
-			const u16 key_frames = T->DiagFrameCount < 6 ? T->DiagFrameCount : 6;
+			// group by 20 frames: model textures share their first ~10 frames (model load ->
+			// blender compile), the owner that created the model sits deeper
+			const u16 key_frames = T->DiagFrameCount < 20 ? T->DiagFrameCount : 20;
 			u64 key = 1469598103934665603ull;
 			for (u16 i = 0; i < key_frames; ++i)
 				key = (key ^ u64(uintptr_t(T->DiagFrames[i]))) * 1099511628211ull;
@@ -1683,11 +1684,11 @@ void CResourceManager::DumpTextureHolders()
 	std::sort(sorted.begin(), sorted.end(), [](const Group* a, const Group* b) { return a->count > b->count; });
 	Msg("* [TexHolder] %u textures still registered after level unload (%u $/ui/user skipped), %u creation call sites; gen 0 = created before the first level",
 		total, skipped_special, u32(sorted.size()));
-	const u32 shown = sorted.size() < 30 ? u32(sorted.size()) : 30u;
+	const u32 shown = sorted.size() < 40 ? u32(sorted.size()) : 40u;
 	for (u32 n = 0; n < shown; ++n)
 	{
 		const Group& g = *sorted[n];
-		string1024 frames = "";
+		string4096 frames = "";
 		for (u16 i = 0; i < g.frame_count; ++i)
 		{
 			HMODULE module = nullptr;
