@@ -88,6 +88,7 @@ public:
 	void ClearPool(BOOL b_complete);
 
 	void dump();
+	void DumpLiveInstances(); // r__tex_holder_diag, at level unload
 
 	void memory_stats(u32& vb_mem_video, u32& vb_mem_system, u32& ib_mem_video, u32& ib_mem_system);
 #ifdef _EDITOR

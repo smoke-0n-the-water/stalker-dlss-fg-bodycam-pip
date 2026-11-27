@@ -695,6 +695,7 @@ void CRender::level_Unload()
 		}
 		dxRenderDeviceRender::Instance().Resources->Dump(false);
 		dxRenderDeviceRender::Instance().Resources->DumpTextureHolders(); // r__tex_holder_diag
+		Models->DumpLiveInstances(); // r__tex_holder_diag
 		//static int unload_counter = 0;
 		//Msg("The Level Unloaded.======================== %d", ++unload_counter);
 	}

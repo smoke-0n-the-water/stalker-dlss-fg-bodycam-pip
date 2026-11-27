@@ -82,6 +82,118 @@ dxRender_Visual* CModelPool::Instance_Create(u32 type)
 	return V;
 }
 
+// DIAGNOSTIC (r__tex_holder_diag, 2026-11-27): which code holds model instances after a level
+// unload. A registered instance that is not back in the Pool at that point is still owned by
+// someone, and keeps its base model (and every texture of it) alive into the next level.
+extern int ps_r__tex_holder_diag; // xrRender_console.cpp
+namespace
+{
+struct ModelInstanceStack
+{
+	void* frames[28];
+	u16 count;
+};
+xrCriticalSection s_instance_stack_lock;
+xr_map<dxRender_Visual*, ModelInstanceStack>& instance_stacks()
+{
+	static xr_map<dxRender_Visual*, ModelInstanceStack>* map = xr_new<xr_map<dxRender_Visual*, ModelInstanceStack>>();
+	return *map;
+}
+void note_instance(dxRender_Visual* V)
+{
+	if (!ps_r__tex_holder_diag || !V)
+		return;
+	ModelInstanceStack s{};
+	s.count = u16(RtlCaptureStackBackTrace(2, 28, s.frames, nullptr));
+	xrCriticalSectionGuard guard(s_instance_stack_lock);
+	instance_stacks()[V] = s;
+}
+void forget_instance(dxRender_Visual* V)
+{
+	xrCriticalSectionGuard guard(s_instance_stack_lock);
+	instance_stacks().erase(V);
+}
+}
+
+void CModelPool::DumpLiveInstances()
+{
+	if (!ps_r__tex_holder_diag)
+		return;
+	xr_set<dxRender_Visual*> pooled;
+	for (const auto& it : Pool)
+		pooled.insert(it.second);
+	struct Group
+	{
+		ModelInstanceStack stack{};
+		u32 count = 0;
+		xr_vector<shared_str> examples;
+	};
+	xr_map<u64, Group> groups;
+	u32 live = 0, unknown = 0;
+	{
+		xrCriticalSectionGuard guard(s_instance_stack_lock);
+		for (const auto& it : Registry)
+		{
+			dxRender_Visual* V = it.first;
+			if (pooled.count(V))
+				continue;
+			++live;
+			const auto found = instance_stacks().find(V);
+			ModelInstanceStack s{};
+			if (found != instance_stacks().end())
+				s = found->second;
+			else
+				++unknown;
+			const u16 key_frames = s.count < 20 ? s.count : 20;
+			u64 key = 1469598103934665603ull;
+			for (u16 i = 0; i < key_frames; ++i)
+				key = (key ^ u64(uintptr_t(s.frames[i]))) * 1099511628211ull;
+			Group& g = groups[key];
+			if (!g.count)
+				g.stack = s;
+			++g.count;
+			if (g.examples.size() < 4)
+				g.examples.push_back(it.second);
+		}
+	}
+	xr_vector<const Group*> sorted;
+	for (const auto& it : groups)
+		sorted.push_back(&it.second);
+	std::sort(sorted.begin(), sorted.end(), [](const Group* a, const Group* b) { return a->count > b->count; });
+	Msg("* [ModelLive] %u model instances still held after level unload (%u pooled, %u without a recorded stack), %u base models, %u creation sites",
+		live, u32(pooled.size()), unknown, u32(Models.size()), u32(sorted.size()));
+	const u32 shown = sorted.size() < 30 ? u32(sorted.size()) : 30u;
+	for (u32 n = 0; n < shown; ++n)
+	{
+		const Group& g = *sorted[n];
+		string4096 frames = "";
+		for (u16 i = 0; i < g.stack.count; ++i)
+		{
+			HMODULE module = nullptr;
+			char module_name[MAX_PATH] = "?";
+			uintptr_t base = 0;
+			if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+					LPCSTR(g.stack.frames[i]), &module) && module)
+			{
+				GetModuleFileNameA(module, module_name, sizeof(module_name));
+				base = uintptr_t(module);
+			}
+			LPCSTR short_name = strrchr(module_name, '\\');
+			short_name = short_name ? short_name + 1 : module_name;
+			string128 one;
+			xr_sprintf(one, " %s+0x%llx", short_name, u64(uintptr_t(g.stack.frames[i]) - base));
+			xr_strcat(frames, one);
+		}
+		string512 examples = "";
+		for (const shared_str& e : g.examples)
+		{
+			xr_strcat(examples, " ");
+			xr_strcat(examples, e.c_str());
+		}
+		Msg("* [ModelLive] #%u: %u instances e.g.%s | created at:%s", n + 1, g.count, examples, frames);
+	}
+}
+
 dxRender_Visual* CModelPool::Instance_Duplicate(dxRender_Visual* V)
 {
 	R_ASSERT(V);
@@ -178,8 +290,12 @@ dxRender_Visual* CModelPool::Instance_Register(LPCSTR N, dxRender_Visual* V)
 	{
 		if (M.name == S)
 		{
-			// Increment the reference count
-			M.refs++;
+			// Slop-Ray 2026-11-27: no refs++ here. refs counts handed-out instances, and the caller
+			// (Create) takes that reference itself through Instance_Duplicate. Counting it here too
+			// gave the base one reference no instance ever releases whenever two threads loaded the
+			// same model at once, so it could never reach 0: the model and all its textures stayed
+			// for the rest of the session and were reloaded on every level change (~10 GB after two
+			// changes, found with r__tex_holder_diag).
 
 			// Destroy the redundant one we just loaded
 			V->Release();
@@ -288,6 +404,7 @@ dxRender_Visual* CModelPool::Create(const char* name, IReader* data, bool assert
 		dxRender_Visual* Model = it->second;
 		Model->Spawn();
 		Pool.erase(it);
+		note_instance(Model); // r__tex_holder_diag
 		return Model;
 	}
 	else
@@ -315,6 +432,7 @@ dxRender_Visual* CModelPool::Create(const char* name, IReader* data, bool assert
 		// 3. If found - return (cloned) reference
 		dxRender_Visual* Model = Instance_Duplicate(Base);
 		Registry.insert(mk_pair(Model, low_name));
+		note_instance(Model); // r__tex_holder_diag
 		return Model;
 	}
 }
@@ -472,6 +590,7 @@ void CModelPool::Discard(dxRender_Visual* & V, BOOL b_complete)
 			}
 		}
 		// Registry
+		forget_instance(V); // r__tex_holder_diag
 		xr_delete(V);
 		Registry.erase(it);
 	}
