@@ -218,9 +218,11 @@ float ps_r__Tree_SBC = 1.5f; // scale bias correct
 // vertex cache plus overdraw reorder of the tree index ranges, read once at level load
 int ps_r__tree_ib_reorder = 1;
 int ps_r__shader_prewarm = 1; // R4: create cached shaders at level load (r4_loader.cpp shader_prewarm)
-// DIAGNOSTIC 2026-11-27: record texture creation stacks and log level-unload survivors
-// (CResourceManager::DumpTextureHolders). Default on for this test build only.
-int ps_r__tex_holder_diag = 1;
+// Diagnostic: record texture and model instance creation stacks and, at level unload, log what
+// still holds textures and models (CResourceManager::DumpTextureHolders,
+// CModelPool::DumpLiveInstances). Found the level-change leak fixed in b75a06499. Off by default:
+// it captures a call stack per new texture and model instance. Turn on before a level change.
+int ps_r__tex_holder_diag = 0;
 
 float ps_r__WallmarkTTL = 50.f;
 float ps_r__WallmarkSHIFT = 0.0001f;
