@@ -762,6 +762,41 @@ void CModelPool::ClearPool(BOOL b_complete)
 		Discard(_I->second, b_complete);
 	}
 	Pool.clear();
+
+	if (!b_complete)
+		return;
+
+	// Slop-Ray 2026-11-27: a complete clear also frees base models nothing references any more.
+	// CLevel disconnect runs models_Clear(FALSE) first (Level_network.cpp): that empties the pool
+	// but keeps every base, as a cache for the next level. The level_Unload clear for
+	// r__clear_resources_on_unload / r__clear_models_on_unload then found an empty pool and freed
+	// nothing, so unused bases and all their textures piled up level after level: 349, 449, 457
+	// bases with refs 0 after three unloads, process memory 19 -> 31 GB (r__tex_holder_diag).
+	// Collected under the lock and deleted after it: deleting a base deletes its children, and a
+	// registered child would take ModelsLock again.
+	xr_vector<dxRender_Visual*> unused;
+	{
+		xrSRWLockGuard g(ModelsLock);
+		for (auto I = Models.begin(); I != Models.end();)
+		{
+			if (I->refs == 0)
+			{
+				unused.push_back(I->model);
+				I = Models.erase(I);
+			}
+			else
+				++I;
+		}
+	}
+	for (dxRender_Visual* base : unused)
+	{
+		bForceDiscard = TRUE;
+		base->Release();
+		xr_delete(base);
+		bForceDiscard = FALSE;
+	}
+	if (!unused.empty())
+		Msg("* [ModelPool] freed %u unused base models", u32(unused.size()));
 }
 
 void CModelPool::dump()
