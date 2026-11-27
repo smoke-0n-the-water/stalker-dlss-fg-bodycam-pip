@@ -420,9 +420,10 @@ function Find-GlossyShader {
 $glossyText = $null; $glossyMeta = $null
 function Install-GlossyAddon ($name) {
     $src = Find-GlossyShader
+    # no ticked Glossy mod ships deffer_impl_flat.ps: Glossy Puddles 1.x replaces only terrain shaders,
+    # so there is nothing to merge (the Atmos / pack copy of that shader stays in use)
     if (-not $src) {
-        Warn "Glossy Puddles is in your list but its shaders\r3\deffer_impl_flat.ps was not found - add-on skipped"
-        $todo.Add("Glossy Puddles: install the matching zip from STEP 3\Glossy (manual only), by hand")
+        Say "  skipped $name (your Glossy Puddles has no deffer_impl_flat.ps: nothing to merge)"
         return
     }
     $patched = Add-GlossyDlss ([IO.File]::ReadAllText($src.Path))
@@ -490,14 +491,11 @@ else {
             Warn $glMsg
             $todo.Add($glMsg)
         }
-        # Silencer Overheat's HUD shaders call RC8.0's one-argument HUD main; RC8.1+ passes SV_Position too
-        $sil = Get-WinningMod 'gamedata\shaders\r3\bc_sh_hud_flat.ps'
-        if ($sil -and (Select-String -LiteralPath "$modsDir\$sil\gamedata\shaders\r3\bc_sh_hud_flat.ps" -Pattern 'bc_sh_native_surface(I)' -SimpleMatch -Quiet)) {
-            $silMsg = "Silencer Overheat ('$sil') needs 8BitCat's '[PATCH] Silencer Overheat - Atmos RC8.1 PBR Compatibility' with Atmospherics RC8.1 / RC8.2 (else 4 HUD shaders fail). Install it above Silencer Overheat in MO2."
-            Warn $silMsg
-            $todo.Add($silMsg)
-        }
     }
+    # Silencer Overheat's HUD shaders call RC8.0's one-argument HUD main; RC8.1+ passes SV_Position too
+    # (4 HUD shaders fail). The pack carries 8BitCat's RC8.1 patch as an add-on, ticked only on RC8.1+:
+    # on older Atmospherics the patched call is the one that fails.
+    $silencer = Is-EnabledByFile 'gamedata\shaders\r3\bc_sh_hud_flat.ps'
     # RC7 and RC8 together fight over the same shaders. Only a warning: both stay ticked, which
     # one to keep is the player's call (the same add-on serves either).
     $rc7Names = @($lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } |
@@ -528,6 +526,7 @@ else {
         "Add-on - Atmospherics RC8.2 users"      = $null
         "Add-on - Anti-Lag for GAMMA users"      = "Anti_Lag_for_GAMMA*"
         "Add-on - Better Beef's NVGs users"      = "*Better Beef's NVGs*"
+        "Add-on - Silencer Overheat RC8.1+ users" = $null
         "Add-on - Glossy Puddles Overhaul users" = "*Glossy Puddles Overhaul*"
         "Add-on - Viper 2 flip crash fix"        = "*Viper2*SuperCustom*"
     }
@@ -544,13 +543,17 @@ else {
         if (-not $use -and $k -eq "Add-on - Atmospherics RC7 users") { $use = $rc7 }
         if ($k -eq "Add-on - Atmospherics RC7 users" -and $rc82) { $use = $false }
         if ($k -eq "Add-on - Atmospherics RC8.2 users") { $use = $rc82 }
+        if ($k -eq "Add-on - Silencer Overheat RC8.1+ users") { $use = $rc82 -and $silencer }
         # Better Beef's (not plain Beef's): its nightvision_gen_1.ps needs NVGParams from its
         # night_vision.h; without this add-on mod 3/4 win that header = shader FATAL
         if (-not $use -and $k -eq "Add-on - Better Beef's NVGs users") { $use = Is-EnabledByFileText 'gamedata\shaders\r3\nightvision_gen_1.ps' 'NVGParams' }
         if (-not $use -and $k -eq "Add-on - Glossy Puddles Overhaul users") { $use = Is-EnabledByFile 'gamedata\scripts\monkey_gloss.script' }
         if ($use) { if ($k -eq $glossyKey) { Install-GlossyAddon $k } else { Install-Mod $zip } }
         else {
-            Say "  skipped $k $(if ($k -like '*stock Atmospherics*') { '(Atmospherics RC7 in use)' } else { "(you don't use that mod)" })"
+            $why = if ($k -like '*stock Atmospherics*') { '(Atmospherics RC7 in use)' }
+                   elseif ($k -like '*Silencer Overheat*' -and $silencer) { '(only for Atmospherics RC8.1 / RC8.2)' }
+                   else { "(you don't use that mod)" }
+            Say "  skipped $k $why"
             # from an earlier run, for a mod no longer used (e.g. back to stock Atmos): untick
             if (Test-Path -LiteralPath "$modsDir\$k") { $dropNames[$k] = $false }
         }

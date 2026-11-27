@@ -1385,24 +1385,53 @@ function Add-SilencerMod ($s, $name, $text) {
     W "$($s.Root)\GAMMA\mods\$name\gamedata\shaders\r3\bc_sh_hud_flat.ps" $text
     Add-ModLine $s "+$name"
 }
+$silAddon = 'Add-on - Silencer Overheat RC8.1+ users'
+function Add-SilencerAddonZip ($s) {
+    New-Zip "$($s.Pack)\STEP 3 - Optional\$silAddon.zip" @{ 'gamedata\shaders\r3\bc_sh_hud_flat.ps' = $silNew }
+}
+# Silencer + RC8.1/8.2: the pack's copy of 8BitCat's patch is ticked; back on HF4 it is unticked
 $scenarios['S58_silencer_on_rc82'] = {
     $s = New-Scenario 'S58_silencer_on_rc82'
-    Add-AtmosAddonZip $s; Add-AtmosRc82AddonZip $s; Add-AtmosRc82Mod $s 'Atmospherics 2.69 RC8.2'
+    $atm = 'Hippo atmos'
+    Add-AtmosAddonZip $s; Add-AtmosRc82AddonZip $s; Add-SilencerAddonZip $s; Add-AtmosRc82Mod $s $atm
     Add-SilencerMod $s 'xx-Silencer Overheat v1.9.1 - 8BitCat' $silOld
     $c = Install $s
     Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
-    Check ($script:lastOut -match "(?s)Silencer Overheat.*RC8\.1 PBR Compatibility") "old Silencer on RC8.2: warns and names 8BitCat's RC8.1 patch"
-    Check ($script:lastOut -match "(?s)LEFT TO DO.*Silencer Overheat") "repeated in LEFT TO DO"
-    # the patch mod installed above it (higher priority = earlier line): quiet
-    Add-SilencerMod $s '[PATCH] Silencer Overheat - Atmos RC8.1 PBR Compatibility v1.0' $silNew
+    Check ((ML $s) -contains "+$silAddon") "Silencer on RC8.2: the Silencer add-on is ticked"
+    Check ((ML $s).IndexOf("+$silAddon") -lt (ML $s).IndexOf('+xx-Silencer Overheat v1.9.1 - 8BitCat')) "and wins over Silencer Overheat (higher priority)"
+    Check ($script:lastOut -notmatch [string][char]0x2014) "no em dash in the output"
+    # back on RC8 Hotfix 4 (no atmos_pbr_code.h): the add-on is unticked, Silencer stays ticked
+    Remove-Item -LiteralPath "$($s.Root)\GAMMA\mods\$atm\gamedata\shaders\r3\atmos_pbr_code.h"
     $c = Install $s
-    Check ($c -eq 0 -and $script:lastOut -notmatch 'RC8\.1 PBR Compatibility') "patch above it: no warning (got $c)"; Show-OnFail ($c -eq 0)
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((ML $s) -notcontains "+$silAddon" -and (ML $s) -contains '+xx-Silencer Overheat v1.9.1 - 8BitCat') "back on HF4: add-on unticked, Silencer still ticked"
+    Check ($script:lastOut -match 'Silencer Overheat RC8\.1\+ users \(only for Atmospherics RC8\.1 / RC8\.2\)') "says why it was skipped"
     $c = Uninstall $s
     $s = New-Scenario 'S58b_silencer_on_hf4'
-    Add-AtmosAddonZip $s; Add-AtmosMod $s 'xx-290- Atmospherics v2.69 RC8 Hotfix 4'
+    Add-AtmosAddonZip $s; Add-SilencerAddonZip $s; Add-AtmosMod $s 'xx-290- Atmospherics v2.69 RC8 Hotfix 4'
     Add-SilencerMod $s 'xx-Silencer Overheat v1.9.1 - 8BitCat' $silOld
     $c = Install $s
-    Check ($c -eq 0 -and $script:lastOut -notmatch 'RC8\.1 PBR Compatibility') "old Silencer on RC8 HF4: no warning (got $c)"; Show-OnFail ($c -eq 0)
+    Check ($c -eq 0 -and (ML $s) -notcontains "+$silAddon") "Silencer on RC8 HF4: add-on not ticked (got $c)"; Show-OnFail ($c -eq 0)
+    $c = Uninstall $s
+    $s = New-Scenario 'S58c_rc82_no_silencer'
+    Add-AtmosAddonZip $s; Add-AtmosRc82AddonZip $s; Add-SilencerAddonZip $s; Add-AtmosRc82Mod $s 'Atmospherics 2.69 RC8.2'
+    $c = Install $s
+    Check ($c -eq 0 -and (ML $s) -notcontains "+$silAddon") "RC8.2 without Silencer: add-on not ticked (got $c)"; Show-OnFail ($c -eq 0)
+    $c = Uninstall $s
+}
+
+# Glossy Puddles 1.x ships no deffer_impl_flat.ps: nothing to merge, so no note and nothing left to do
+$scenarios['S59_glossy_12_no_flat_shader'] = {
+    $s = New-Scenario 'S59_glossy_12_no_flat_shader'
+    $m = "$($s.Root)\GAMMA\mods\Glossy Puddles v1.2\gamedata"
+    W "$m\scripts\monkey_gloss.script" 'glossy 1.2'
+    W "$m\shaders\r3\deffer_terrain_high_flat_d.ps" 'glossy 1.2 terrain'
+    Add-ModLine $s '+Glossy Puddles v1.2'
+    $c = Install $s
+    Check ($c -eq 0) "exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ($script:lastOut -notmatch 'deffer_impl_flat.ps was not found') "no 'not found' note for Glossy 1.x"
+    Check ($script:lastOut -notmatch 'Glossy Puddles: install the matching zip') "no hand-install step for Glossy in LEFT TO DO"
+    Check ($script:lastOut -match 'Glossy Puddles Overhaul users.*nothing to merge') "says the add-on is not needed"
     $c = Uninstall $s
 }
 
