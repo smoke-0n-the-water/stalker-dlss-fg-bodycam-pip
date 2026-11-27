@@ -842,6 +842,21 @@ $want = [ordered]@{
     'r__svp_adaptive_res'      = '0'     # fixed PiP target size: 1.2 rebuilt it on lens changes (stutter) (v0.7.3)
     'r__clear_models_on_unload'    = 'on'  # free the previous level's models on a map change (v0.7.3)
     'r__clear_resources_on_unload' = 'on'  # ...and its textures: map-transition crashes, VRAM/RAM growth (v0.7.3)
+    # PiP scope defaults (v0.7.3): the settings the release was tested and tuned with (F11 > PiP scope)
+    'r__svpscope'             = '2'            # true PiP scopes on, objective lens mode
+    'r__svp_supersample'      = '1.51'         # render the scope image 1.51x, then downsample (sharper)
+    'r__svp_scope_res'        = 'performance'  # scope resolution preset
+    'r__svp_sharpen'          = '0.5'
+    'r__svp_bloom'            = '0'
+    'r__svp_cull_ssa'         = '0.'
+    'r__svp_lens_shooter'     = '0'
+    'r__svp_lod'              = '0.'
+    'r__svp_near_blur'        = '0.'
+    'r__svp_roll_stabilize'   = '1'
+    'r__svp_skip_motionblur'  = '1'
+    'r__svp_skip_ssr'         = '0'
+    'r__svp_skip_volumetric'  = '1'
+    'r__svp_twilight'         = '0.'
 }
 $ltx = "$anomaly\appdata\user.ltx"
 $ltxRel = 'Anomaly\appdata\user.ltx'

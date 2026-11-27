@@ -1435,6 +1435,29 @@ $scenarios['S59_glossy_12_no_flat_shader'] = {
     $c = Uninstall $s
 }
 
+# --- PiP scope defaults (v0.7.3): Walter's tested PiP settings, written once like the other video keys ---
+$pipWant = [ordered]@{
+    'r__svpscope' = '2'; 'r__svp_supersample' = '1.51'; 'r__svp_scope_res' = 'performance'; 'r__svp_sharpen' = '0.5'
+    'r__svp_bloom' = '0'; 'r__svp_cull_ssa' = '0.'; 'r__svp_lens_shooter' = '0'; 'r__svp_lod' = '0.'
+    'r__svp_near_blur' = '0.'; 'r__svp_roll_stabilize' = '1'; 'r__svp_skip_motionblur' = '1'; 'r__svp_skip_ssr' = '0'
+    'r__svp_skip_volumetric' = '1'; 'r__svp_twilight' = '0.'
+}
+$scenarios['S60_pip_defaults_once'] = {
+    $s = New-Scenario 'S60_pip_defaults_once'
+    $ltxPath = "$($s.Root)\Anomaly\appdata\user.ltx"
+    $c = Install $s
+    Check ($c -eq 0) "first install exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    foreach ($k in $pipWant.Keys) { Check ((T $ltxPath) -match ("(?m)^" + [regex]::Escape("$k $($pipWant[$k])") + '\s*$')) "fresh install writes $k $($pipWant[$k])" }
+    # the player changes one: a re-run keeps it
+    $l = @([IO.File]::ReadAllLines($ltxPath) | Where-Object { $_ -notmatch '^r__svp_supersample\s' }) + 'r__svp_supersample 2.'
+    W $ltxPath (($l -join "`r`n") + "`r`n")
+    $c = Install $s
+    Check ($c -eq 0) "re-run exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+    Check ((T $ltxPath) -match '(?m)^r__svp_supersample 2\.\s*$') "re-run keeps the player's r__svp_supersample 2."
+    $c = Uninstall $s
+    Check ($c -eq 0) "uninstall exit 0 (got $c)"; Show-OnFail ($c -eq 0)
+}
+
 # --- run ---------------------------------------------------------------------
 Write-Host "Slop-Ray installer tests in $base"
 foreach ($k in $scenarios.Keys) {
