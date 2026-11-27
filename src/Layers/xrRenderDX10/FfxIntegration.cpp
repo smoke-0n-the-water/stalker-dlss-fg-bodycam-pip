@@ -96,11 +96,15 @@ bool FfxApi::Load(Logger logger, bool debugMessages)
     }
     if (debugMessages)
     {
-        ffxConfigureDescGlobalDebug1 debug{};
-        debug.header.type = FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG1;
-        debug.fpMessage = &FfxApi::Message;
-        debug.debugLevel = FFX_API_CONFIGURE_GLOBALDEBUG_LEVEL_WARNINGS;
-        m_configure(nullptr, &debug.header);
+        for (const uint64_t effectId : {FFX_API_EFFECT_ID_UPSCALE, FFX_API_EFFECT_ID_FRAMEGENERATION, FFX_API_EFFECT_ID_FRAMEGENERATIONSWAPCHAIN})
+        {
+            ffxConfigureDescGlobalDebug debug{};
+            debug.header.type = FFX_API_CONFIGURE_DESC_TYPE_GLOBALDEBUG;
+            debug.effectId = effectId;
+            debug.fpMessage = &FfxApi::Message;
+            debug.debugLevel = FFX_API_CONFIGURE_GLOBALDEBUG_LEVEL_WARNINGS;
+            m_configure(nullptr, &debug.header);
+        }
     }
     return true;
 }

@@ -91,6 +91,18 @@ inline unsigned RenderExtent(const TargetSettings& settings, const TargetFrame& 
 	return e;
 }
 
+// Can the live target serve this size? Building one is a whole second render target set and a
+// hitch, and Scope Resolution asks for a different size per lens. grow = keep any target at least
+// as big (the scope then renders at that size: sharper, costs GPU like the largest lens seen);
+// otherwise only the exact size. Square targets only: the scope camera takes its aspect from the
+// wanted size (svp_camera.cpp), so a flat panel target must keep its exact shape.
+inline bool Reusable(const TargetSize& have, const TargetSize& want, bool grow)
+{
+	const bool square = have.width == have.height && want.width == want.height;
+	if (grow && square)
+		return have.width >= want.width;
+	return have.width == want.width && have.height == want.height;
+}
 inline TargetSize Size(const TargetSettings& settings, const TargetFrame& frame)
 {
 	// Round up to avoid reallocating the chain for small changes in lens size.

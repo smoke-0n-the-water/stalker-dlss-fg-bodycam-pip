@@ -810,7 +810,9 @@ void CEntityAlive::OnChangeVisual()
 void CEntityAlive::fill_hit_bone_surface_areas() const
 {
 	xrSRWLockGuard guard(&m_hit_bone_lock, false);
-	VERIFY(!m_hit_bone_surface_areas_actual);
+	// several vision tasks can see the flag false at once; only the first one fills
+	if (m_hit_bone_surface_areas_actual)
+		return;
 
 	IKinematics* const kinematics = smart_cast<IKinematics*>(Visual());
 	VERIFY(kinematics);
@@ -896,7 +898,11 @@ Fvector CEntityAlive::get_new_local_point_on_mesh(u16& bone_id) const
 	if (!m_hit_bone_surface_areas_actual)
 		fill_hit_bone_surface_areas();
 
-	xrSRWLockGuard guard(&m_hit_bone_lock, true);
+	// Exclusive, not shared: feel_vision_update runs on TBB workers, and two NPCs looking at this entity
+	// in the same frame both rebuild m_visible_hit_bone_cumulative_areas and draw from m_hit_bones_random.
+	// Under a shared lock that was a concurrent push_back = heap corruption (crash after a level change,
+	// 2026-11-26). The lock is per entity, so only lookers of the same entity wait.
+	xrSRWLockGuard guard(&m_hit_bone_lock, false);
 	if (m_hit_bone_surface_areas.empty())
 		return inherited::get_new_local_point_on_mesh(bone_id);
 

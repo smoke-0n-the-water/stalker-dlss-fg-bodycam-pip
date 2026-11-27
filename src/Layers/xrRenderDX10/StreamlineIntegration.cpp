@@ -3,6 +3,9 @@
 #include "../../../sdk/Streamline/include/sl_security.h"
 #include <cstdio>
 #include <atomic>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace
 {
@@ -20,10 +23,43 @@ extern int ps_r_fg_dlss_frames_max;
 
 namespace
 {
+// Streamline repeats some warnings every frame or two (manageVRAM "Allocated ... more than
+// allowed by the VRAM budget": 215 lines in one 7 minute session, 2026-11-27), which floods the
+// console. Each distinct warning (digits ignored, so timestamps and sizes do not count) is
+// forwarded twice, then again at 10, 100, 1000... repeats with the count. sl.log keeps all.
+bool StreamlineLogAllowed(const char* message, unsigned& repeats)
+{
+    std::string key;
+    for (const char* c = message; *c; ++c)
+        if (*c < '0' || *c > '9') key.push_back(*c);
+    static std::mutex lock;
+    static std::unordered_map<std::string, unsigned>* counts = new std::unordered_map<std::string, unsigned>();
+    std::lock_guard<std::mutex> guard(lock);
+    if (counts->size() > 512) counts->clear(); // bound it; a cleared key just logs again
+    repeats = ++(*counts)[key];
+    if (repeats <= 2) return true;
+    for (unsigned milestone = 10; milestone && milestone <= repeats; milestone *= 10)
+        if (repeats == milestone) return true;
+    return false;
+}
+
 void StreamlineLog(sl::LogType type, const char* message)
 {
     if (type == sl::LogType::eInfo) return; // Full details remain in sl.log.
-    if (auto logger = s_logger.load()) logger(message);
+    if (!message) return;
+    unsigned repeats = 0;
+    if (!StreamlineLogAllowed(message, repeats)) return;
+    auto logger = s_logger.load();
+    if (!logger) return;
+    if (repeats <= 2)
+    {
+        logger(message);
+        return;
+    }
+    std::string line = message;
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+    line += " (repeated " + std::to_string(repeats) + " times, further repeats are only in sl.log)";
+    logger(line.c_str());
 }
 }
 

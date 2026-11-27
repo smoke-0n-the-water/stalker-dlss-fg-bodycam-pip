@@ -217,6 +217,12 @@ Fvector ps_r__Tree_Wave = {.1f, .01f, .11f};
 float ps_r__Tree_SBC = 1.5f; // scale bias correct
 // vertex cache plus overdraw reorder of the tree index ranges, read once at level load
 int ps_r__tree_ib_reorder = 1;
+int ps_r__shader_prewarm = 1; // R4: create cached shaders at level load (r4_loader.cpp shader_prewarm)
+// Diagnostic: record texture and model instance creation stacks and, at level unload, log what
+// still holds textures and models (CResourceManager::DumpTextureHolders,
+// CModelPool::DumpLiveInstances). Found the level-change leak fixed in b75a06499. Off by default:
+// it captures a call stack per new texture and model instance. Turn on before a level change.
+int ps_r__tex_holder_diag = 0;
 
 float ps_r__WallmarkTTL = 50.f;
 float ps_r__WallmarkSHIFT = 0.0001f;
@@ -590,7 +596,7 @@ int ps_r__tex_evict_interval   = 600;
 int ps_r__tex_nowait    = 1;  // a still-loading texture binds nothing for the frame instead of stalling it
 int ps_r__tex_wait_log  = 0;  // log frames whose render thread waited at least this many ms on texture loads, 0 = off
 int ps_r__tex_vram_log  = 0;  // seconds between VRAM usage/budget lines, 0 = off
-int ps_r__tex_res_budget_target = 0;  // master switch for VRAM pressure trimming: 0 = off (default), any other value = on (the % itself is no longer used)
+int ps_r__tex_res_budget_target = 80; // master switch for VRAM pressure trimming: 0 = off, any other value = on (default 80; the % itself is no longer used). Only active with pack mod 7 ticked (tex_residency.ltx)
 int ps_r__tex_res_preset        = 0;  // VRAM tier: 0 auto (from the DXGI budget), 1-6 = 4/6/8/12/16/20+ GB, 7 custom (the cvars below)
 int ps_r__tex_res_high_pct      = 96; // start trimming when DXGI usage passes this % of the budget
 int ps_r__tex_res_low_pct       = 90; // keep trimming until usage is back under this %; idle class textures only demote above it
@@ -1724,6 +1730,8 @@ void xrRender_initconsole()
 	CMD4(CCC_Float, "r__detail_thin_keep", &ps_r__detail_thin_keep, 0.f, 1.f);
 	CMD4(CCC_Float, "r__detail_thin_band", &ps_r__detail_thin_band, 1.f, 250.f);
 	CMD4(CCC_Integer, "r__tree_ib_reorder", &ps_r__tree_ib_reorder, 0, 1);
+	CMD4(CCC_Integer, "r__shader_prewarm", &ps_r__shader_prewarm, 0, 1);
+	CMD4(CCC_Integer, "r__tex_holder_diag", &ps_r__tex_holder_diag, 0, 1);
 
 #ifdef DEBUG
 	CMD4(CCC_Float,		"r__detail_l_ambient",	&ps_r__Detail_l_ambient,	.5f,	.95f	);
@@ -2235,6 +2243,10 @@ void xrRender_initconsole()
 
 #ifdef DETAIL_RADIUS
 	CMD4(CCC_detail_radius, "r__detail_radius", &ps_r__detail_radius, 0, 250);
+	// on by default: free the previous level's models and textures on a map change (VRAM/RAM growth
+	// across level changes, map-transition crashes); costs a longer load and some texture pop-in after it
+	psDeviceFlags2.set(rsClearModels, TRUE);
+	psDeviceFlags2.set(rsClearAllResources, TRUE);
 	CMD3(CCC_Mask, "r__clear_models_on_unload", &psDeviceFlags2, rsClearModels); //Alundaio
 	CMD3(CCC_Mask, "r__clear_resources_on_unload", &psDeviceFlags2, rsClearAllResources);
 	CMD4(CCC_Integer, "r__tex_evict_enabled",    &ps_r__tex_evict_enabled,    0,   1    );

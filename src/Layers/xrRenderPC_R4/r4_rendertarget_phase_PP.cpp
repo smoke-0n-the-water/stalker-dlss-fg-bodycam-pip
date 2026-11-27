@@ -537,7 +537,8 @@ void CRenderTarget::dlss_post_effects(float jitterX, float jitterY)
 	if (!reported_post_effects)
 	{
 		Msg("[Upscaler] %s drawn after reconstruction%s: native=%ux%u, scene=%ux%u",
-			withPostChain && ps_r_upscaler_particles_after ? "Particles and laser beams" : "Laser beams",
+			withPostChain && ps_r_upscaler_particles_after ? "Particles, laser beams and reflex reticles" :
+				"Laser beams and reflex reticles",
 			withPostChain ? "" : ", after post-processing", Device.dwWidth, Device.dwHeight,
 			dlss::RenderWidth(), dlss::RenderHeight());
 		reported_post_effects = true;
@@ -575,8 +576,11 @@ void CRenderTarget::dlss_post_effects(float jitterX, float jitterY)
 
 bool CRenderTarget::DlssSunshaftMaskOverTime() const
 {
-	return dlss_post_swapped && s_dlss_sunshaft_mask._get() != nullptr &&
-		ps_r_upscaler_sunshafts == UPSCALER_SUNSHAFTS_SMOOTHED;
+	// After reconstruction (display-size history), or before it with the post chain there
+	// (render-size history, main target only: only it creates the history, so scope
+	// frames and the scope target never take this path).
+	return s_dlss_sunshaft_mask._get() != nullptr && ps_r_upscaler_sunshafts == UPSCALER_SUNSHAFTS_SMOOTHED &&
+		(dlss_post_swapped || (dlss_sunshaft_history_render && dlss::Active() && !Device.m_SecondViewport.IsSVPFrame()));
 }
 
 // This frame's mask is in rt_sunshafts_1; the blurs read the result from rt_sunshafts_0.

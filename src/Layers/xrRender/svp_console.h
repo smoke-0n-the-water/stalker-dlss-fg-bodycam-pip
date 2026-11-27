@@ -14,6 +14,7 @@ extern ECORE_API float ps_r__svp_render_scale;
 extern ECORE_API float ps_r__svp_supersample;
 extern ECORE_API int ps_r__svp_diag;
 extern ECORE_API int ps_r__svp_cop_diag;
+extern ECORE_API int ps_r__svp_flip_fix;
 extern ECORE_API float ps_r__svp_reference_ghosts; // scale of the Reference ghost images, 1 keeps the profile value
 extern ECORE_API int ps_r__svp_reference_coating; // 0 turns the Reference glass material off
 extern ECORE_API int ps_r__svp_reference_native_compare; // 1 shows the stock scope image and glass
@@ -260,6 +261,8 @@ inline float svp_scope_res_scale()
 extern ECORE_API float ps_r__svp_nvg_bleach;
 extern ECORE_API float ps_r__svp_nvg_sensitivity;
 extern ECORE_API int ps_r__svp_nvg_objective;
+extern ECORE_API int ps_r__svp_prewarm;
+extern ECORE_API int ps_r__svp_target_grow;
 extern ECORE_API int ps_r__svp_weapon_continuity;
 extern ECORE_API int ps_r__svp_clipon;
 extern ECORE_API int ps_r__svp_optic_body_suppress;

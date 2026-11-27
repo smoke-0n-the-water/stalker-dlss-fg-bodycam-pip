@@ -528,6 +528,7 @@ public:
 	ref_shader s_dlss_sunshaft_mask;
 	u32 dlss_sunshaft_history = 0; // the target holding the latest mask
 	u32 dlss_sunshaft_frame = 0;
+	bool dlss_sunshaft_history_render = false; // history at render size: the mask pass runs before reconstruction
 	// Volumetric lights over time, with smoothed sunshafts after reconstruction.
 	// Created on first use: two display-size RGBA16F targets.
 	bool dlss_volumetric_history_available = false;

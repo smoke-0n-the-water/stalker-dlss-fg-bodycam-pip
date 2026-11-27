@@ -136,6 +136,9 @@ bool GetFloat(LPCSTR name, float& value);
 bool SetFloat(LPCSTR name, float value);
 bool GetBool(LPCSTR name, bool& value);
 bool SetBool(LPCSTR name, bool value);
+// the live value only: the console (saved to user.ltx) keeps the player's choice. For temporary holds
+// such as the scope effects guard, which must never leave its "off" in the player's config
+bool SetBoolRuntime(LPCSTR name, bool value);
 // The Reticle Editor's inspect zoom (r__reticle_inspect): the HUD drawn this many times closer, 1 = off.
 float ReticleInspectZoom();
 } // namespace Bodycam

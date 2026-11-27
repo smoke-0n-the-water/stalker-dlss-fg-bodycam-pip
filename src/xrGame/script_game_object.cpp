@@ -47,6 +47,7 @@
 #include "InventoryBox.h"
 #include "Pda.h"
 #include "player_hud.h"
+#include "HudMaterialState.h"
 #include "script_attachment_manager.h"
 #include "CustomDevice.h"
 
@@ -1462,6 +1463,20 @@ CGameObject& CScriptGameObject::object() const
 	{
 		CActor* act = smart_cast<CActor*>(&object());
 		CHudItem* itm = smart_cast<CHudItem*>(&object());
+		// No HUD model yet and not the item in hand: answer from the OGF instead of building
+		// the whole HUD model (CHudItem::DeferredHudMaterials).
+		if (const HudMaterialState* state = itm ? itm->DeferredHudMaterials() : nullptr)
+		{
+			::luabind::object table = ::luabind::newtable(ai().script_engine().lua());
+			for (const HudMaterialEntry& entry : state->entries)
+			{
+				::luabind::object material = ::luabind::newtable(ai().script_engine().lua());
+				material["shader"] = entry.shader.c_str();
+				material["texture"] = entry.texture.c_str();
+				table[entry.id] = material;
+			}
+			return table;
+		}
 		if (itm && itm->HudItemData())
 			k = itm->HudItemData()->m_model;
 		else if (act && g_player_hud)
@@ -1489,6 +1504,20 @@ CGameObject& CScriptGameObject::object() const
 	{
 		CActor* act = smart_cast<CActor*>(&object());
 		CHudItem* itm = smart_cast<CHudItem*>(&object());
+		// No HUD model yet and not the item in hand: answer from the OGF instead of building
+		// the whole HUD model (CHudItem::DeferredHudMaterials).
+		if (const HudMaterialState* state = itm ? itm->DeferredHudMaterials() : nullptr)
+		{
+			::luabind::object table = ::luabind::newtable(ai().script_engine().lua());
+			for (const HudMaterialEntry& entry : state->entries)
+			{
+				::luabind::object material = ::luabind::newtable(ai().script_engine().lua());
+				material["shader"] = entry.shader_default.c_str();
+				material["texture"] = entry.texture_default.c_str();
+				table[entry.id] = material;
+			}
+			return table;
+		}
 		if (itm && itm->HudItemData())
 			k = itm->HudItemData()->m_model;
 		else if (act && g_player_hud)
@@ -1622,6 +1651,9 @@ void CScriptGameObject::SetShaderTexture(int id, LPCSTR shader, LPCSTR texture, 
 	{
 		CActor* act = smart_cast<CActor*>(&object());
 		CHudItem* itm = smart_cast<CHudItem*>(&object());
+		// No HUD model yet and not the item in hand: record the change; HudItemData() applies it.
+		if (itm && itm->DeferHudMaterialChange(id, shader, texture, false))
+			return;
 		if (itm && itm->HudItemData())
 			k = itm->HudItemData()->m_model;
 		else if (act && g_player_hud)
@@ -1648,6 +1680,9 @@ void CScriptGameObject::ResetShaderTexture(int id, bool bHud)
 	{
 		CActor* act = smart_cast<CActor*>(&object());
 		CHudItem* itm = smart_cast<CHudItem*>(&object());
+		// No HUD model yet and not the item in hand: record the change; HudItemData() applies it.
+		if (itm && itm->DeferHudMaterialChange(id, nullptr, nullptr, true))
+			return;
 		if (itm && itm->HudItemData())
 			k = itm->HudItemData()->m_model;
 		else if (act && g_player_hud)

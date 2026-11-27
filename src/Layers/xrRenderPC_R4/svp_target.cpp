@@ -50,6 +50,17 @@ svp::TargetFrame target_frame()
 }
 }
 
+// pip ~CRenderTarget sets the SHARED $user$material texture's surface to null (it is created by name,
+// so every target points the same texture at its own surface). Deleting the SVP target alone left the
+// main view without its material lookup; point it back at the main target's surface (purpl.ball)
+static void drop_svp_target(CRenderTarget*& target)
+{
+	xr_delete(target);
+	CRenderTarget* main = RImplementation.TargetMain;
+	if (main && main->t_material && main->t_material_surf)
+		main->t_material->surface_set(main->t_material_surf);
+}
+
 u32 svp_render_extent()
 {
 	return svp::RenderExtent(target_settings(), target_frame());
@@ -71,16 +82,25 @@ void CRender::EnsureTargetSVP()
 		TargetMain->EnsureScopeShaders(); // pip load the lens glue shaders on first aim (idempotent)
 	u32 svp_w, svp_h;
 	svp_target_wh(svp_w, svp_h);
+	// the menu settings the size comes from: a change rebuilds at the exact new size, so lowering
+	// Scope Resolution or supersample applies live even with r__svp_target_grow
+	static float s_built_ss = -1.f, s_built_res = -1.f;
+	const bool settings_same = s_built_ss == ps_r__svp_supersample && s_built_res == svp_scope_res_scale();
 	if (TargetSVP)
 	{
 		// pip recreate if the DLSS gate flipped (gbuffer + rt_secondVP UAV change at gate != 0) or the
-		// supersample / panel-aspect changed the size, so r__svp_supersample applies live (no vid_restart)
+		// supersample / panel-aspect changed the size, so r__svp_supersample applies live (no vid_restart).
+		// r__svp_target_grow keeps a big enough square target across lens sizes (Scope Resolution sizes
+		// per lens: a rebuild was a hitch on most aims, 6 in one session).
 		const bool gate_ok = ((ps_r__svp_dlss != 0) == TargetSVP->m_svp_dlss_built);
-		const bool size_ok = (TargetSVP->Width == svp_w && TargetSVP->Height == svp_h);
+		const bool size_ok = svp::Reusable({TargetSVP->Width, TargetSVP->Height}, {svp_w, svp_h},
+			ps_r__svp_target_grow != 0 && settings_same);
 		if (gate_ok && size_ok)
 			return;
-		xr_delete(TargetSVP);
+		drop_svp_target(TargetSVP);
 	}
+	s_built_ss = ps_r__svp_supersample;
+	s_built_res = svp_scope_res_scale();
 	TargetSVP = xr_new<CRenderTarget>("svp", svp_w, svp_h);
 	// CHK_DX is a no-op so a VRAM-exhausted creation fails silently, never keep a half-built target
 	const bool svp_rt_ok = TargetSVP->rt_secondVP && TargetSVP->rt_secondVP->pSurface
@@ -91,13 +111,15 @@ void CRender::EnsureTargetSVP()
 	if (!svp_rt_ok)
 	{
 		Msg("! [SVP-ALLOC] SVP target creation FAILED (out of VRAM?), scope pass disabled");
-		xr_delete(TargetSVP);
+		drop_svp_target(TargetSVP);
 		return;
 	}
 	Device.m_SecondViewport.dlss_reset_next = true; // pip DLSS history reset, SVP surface (re)created incl. res change
+	// one line per build in pip.log with r__svp_diag (a build is a hitch: match it to a stutter)
 	if (ps_r__svp_diag)
-		PipMsg("[SVP-ALLOC] svp=%ux%u (base=%u composite_h=%u display_h=%u aspect=%.2f supersample=%.2f dlss=%d)",
-			svp_w, svp_h, svp_composite_height() >> 1, svp_composite_height(), Device.dwHeight,
+		PipMsg("[SVP-ALLOC] svp=%ux%u frame=%u %s (base=%u composite_h=%u display_h=%u aspect=%.2f supersample=%.2f dlss=%d)",
+			svp_w, svp_h, Device.dwFrame, Device.m_SecondViewport.IsSVPActive() ? "aimed" : "not-aimed",
+			svp_composite_height() >> 1, svp_composite_height(), Device.dwHeight,
 			Device.m_SecondViewport.svp_panel_aspect, ps_r__svp_supersample, ps_r__svp_dlss);
 }
 

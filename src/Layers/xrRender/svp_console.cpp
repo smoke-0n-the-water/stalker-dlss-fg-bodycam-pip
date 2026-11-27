@@ -13,6 +13,7 @@ float ps_r__svp_render_scale = 1.0f; // SVP render scale, 1.0 keeps the dwHeight
 float ps_r__svp_supersample = 1.0f; // SVP supersample: render the SVP square larger so the eyepiece downsamples it (SSAA), 1.0 = off, 2.0 = 4x SVP pixels
 int ps_r__svp_diag = 0; // SVP perf diagnostics: throttled log of [SVP-RES] over-render ratio + [SVP-ALLOC] target size while scoped, 0 = off
 int ps_r__svp_cop_diag = 0; // svp optics diagnostics, 1 = throttled [SVPCOP]/[SVP-HUD]/[SVP-BARREL], 2 = adds the per-frame [SVP-AIM] reticle-vs-screen-center delta
+int ps_r__svp_flip_fix = 3; // local fix: frames a new lens must be seen in a row before the eyepiece fit seeds from it, 0 = stock behaviour
 float ps_r__svp_reference_ghosts = 1.f;
 int ps_r__svp_reference_coating = 1;
 int ps_r__svp_reference_native_compare = 0;
@@ -77,7 +78,7 @@ u32 svp_ledger_disc_latch = 0;
 u32 svp_ledger_fwd_keep = 0;
 u32 svp_ledger_grass_cull = 0;
 int ps_r__3db_debug = 0; // 3db ballistics overlay, 1 = bone markers + fire axis + crosshair ray + sight line + mrad log, 2 = adds the zeroed ray, 3 = adds fading shot tracers
-float ps_r__svp_adaptive_res = 1.2f; // adaptive SVP resolution: size the SVP render to the on-screen eyepiece disc * this margin. 0 = off (full svp_height), 1.0 = render exactly at the disc (sharpest, mild pan shimmer), 1.2 = keep ~1.2x SSAA. big oculars clamp to no-op
+float ps_r__svp_adaptive_res = 0.f; // adaptive SVP resolution: size the SVP render to the on-screen eyepiece disc * this margin. 0 = off (full svp_height, default: a resize recreates the SVP target = a hitch on lens changes), 1.0 = render exactly at the disc (sharpest, mild pan shimmer), 1.2 = keep ~1.2x SSAA. big oculars clamp to no-op
 float ps_r__svp_lod = 1.0f; // SVP LOD reduction strength [0..1]: scale the scope's LOD selection to its true pixel coverage (coarser at low mag, capped at the main view so zoomed detail is never worse). 0 = off
 float ps_r__svp_cull_ssa = 4.0f; // SVP small-object cull strength: skip scope geometry below this * the LOD-out ssa, scaled by magnification (tiny distant clutter at low mag). 0 = off, higher = more aggressive
 int ps_r__svp_dlss = 0; // SVP DLSS-SR master gate, 0 = stock (render_scale inert), nonzero = scaffolding active
@@ -172,6 +173,8 @@ float ps_r__svp_fg_lens_motion = 1.0f; // DLSS and frame generation: scale of th
 float ps_r__svp_nvg_bleach = 0.0f; // svp NVG highlight bleach roll-off, replaces the hard clamp so bright sources compress not clip (0 = off, stock)
 float ps_r__svp_nvg_sensitivity = 1.0f; // svp NVG bleach onset sensitivity, higher rolls off dimmer sources
 int ps_r__svp_nvg_objective = 1; // svp lens draws the centered tube class so wearer mask furniture stays off the glass
+int ps_r__svp_prewarm = 1; // build the SVP target on the first level frame (under the loading screen), not on the first aim; 0 = on first aim (purpl.ball)
+int ps_r__svp_target_grow = 1; // keep a big enough square SVP target when the lens asks for a smaller one (no rebuild hitch per scope); 0 = exact size per lens
 int ps_r__svp_weapon_continuity = 1; // svp same frame weapon pose and entrance pupil camera
 int ps_r__svp_clipon = 1; // svp a clip-on ahead of the objective owns the entrance (0 = lens pair front)
 int ps_r__svp_optic_body_suppress = 1; // svp omit the housing that contains the objective plane
@@ -323,6 +326,7 @@ void svp_console_init()
 	CMD4(CCC_Integer, "r__svp_reference_coating", &ps_r__svp_reference_coating, 0, 1);
 	CMD4(CCC_Float, "r__svp_reference_ghosts", &ps_r__svp_reference_ghosts, 0.f, 1.f);
 	CMD4(CCC_Integer, "r__svp_cop_diag", &ps_r__svp_cop_diag, 0, 2); // svp optics log (1 = throttled, 2 = + per-frame [SVP-AIM])
+	CMD4(CCC_Integer, "r__svp_flip_fix", &ps_r__svp_flip_fix, 0, 30); // local fix: lens frames in a row before the fit seeds, 0 = stock
 	CMD4(CCC_Integer, "r__svp_report", &ps_r__svp_report, 0, 1); // svp one-shot [SVP-CFG]+[SVP-FILES] re-dump, self-clearing
 	CMD4(CCC_Integer, "r__svp_stats", &ps_r__svp_stats, 0, 3); // per-viewport render stats overlay (1 = compact, 2 = per-section breakdown, 3 = lean main view)
 	CMD4(CCC_Integer, "r__scope_vslr", &ps_scope_vslr, 0, 1); // scope glass reflects the captured scene
@@ -355,7 +359,7 @@ void svp_console_init()
 	CMD4(CCC_Float, "r__svp_lens_shooter_z", &ps_r__svp_lens_shooter_z, -.3f, .3f);
 	CMD4(CCC_Float, "r__svp_lens_head_albedo", &ps_r__svp_lens_head_albedo, 0.f, 1.f);
 	CMD4(CCC_Integer, "r__3db_debug", &ps_r__3db_debug, 0, 3); // 3db overlay (1 = markers + axes, 2 = + zeroed ray, 3 = + tracers)
-	CMD4(CCC_Float, "r__svp_adaptive_res", &ps_r__svp_adaptive_res, 0.0f, 2.0f); // size SVP render to the eyepiece disc * margin (0 = off, 1.2 recommended)
+	CMD4(CCC_Float, "r__svp_adaptive_res", &ps_r__svp_adaptive_res, 0.0f, 2.0f); // size SVP render to the eyepiece disc * margin (0 = off, default; 1.2 = sharper fit, rebuilds the target on lens changes)
 	CMD4(CCC_Float, "r__svp_lod", &ps_r__svp_lod, 0.0f, 1.0f); // SVP LOD reduction strength (0 = off)
 	CMD4(CCC_Float, "r__svp_cull_ssa", &ps_r__svp_cull_ssa, 0.0f, 8.0f); // SVP small-object cull strength (0 = off)
 	CMD4(CCC_SvpInternalInteger, "r__svp_dlss", &ps_r__svp_dlss, 0, 1);
@@ -444,6 +448,8 @@ void svp_console_init()
 	CMD4(CCC_SvpInternalFloat, "r__svp_nvg_bleach", &ps_r__svp_nvg_bleach, 0.0f, 1.0f);
 	CMD4(CCC_SvpInternalFloat, "r__svp_nvg_sensitivity", &ps_r__svp_nvg_sensitivity, 0.1f, 4.0f);
 	CMD4(CCC_Integer, "r__svp_nvg_objective", &ps_r__svp_nvg_objective, 0, 1);
+	CMD4(CCC_Integer, "r__svp_prewarm", &ps_r__svp_prewarm, 0, 1); // build the SVP target at level start, not on the first aim
+	CMD4(CCC_Integer, "r__svp_target_grow", &ps_r__svp_target_grow, 0, 1); // reuse a bigger square SVP target instead of rebuilding per lens
 	CMD4(CCC_Integer, "r__svp_weapon_continuity", &ps_r__svp_weapon_continuity, 0, 1);
 	CMD4(CCC_Integer, "r__svp_clipon", &ps_r__svp_clipon, 0, 1);
 	CMD4(CCC_SvpFixedInteger, "r__svp_optic_body_suppress", &ps_r__svp_optic_body_suppress, 0, 1);

@@ -11,7 +11,7 @@
 namespace
 {
 #ifdef XR_DX12_BRIDGE
-// AMD FSR through the DX12 bridge: FSR 4 on Radeon RX 7000/9000, the runtime's 3.1
+// AMD FSR through the DX12 bridge: FSR 4.1.2 on Radeon RX 6000/7000/9000 & supported Ryzen AI APUs, the runtime's 3.1
 // fallback elsewhere. Owned by the bridge; this only tracks history and failure.
 class FsrD3D12Backend
 {
@@ -411,6 +411,7 @@ bool Configured() { return configured; }
 void InvalidateHistory() { ResetHistory(); }
 bool HdrInput() { return configured && hdrInput; }
 bool Active() { return configured && inScene && mainView && BackendReady(); }
+unsigned UpscalerKind() { return Active() ? (UsesFsr() ? 1u : 2u) : 0u; }
 // The scope (SVP) pass is drawn unjittered: its projection carries no jitter, so its
 // shaders (raster offset, position decode, texgen) must not apply the main view's.
 Offset RasterJitter() { return SvpPassBound() ? Offset{} : rasterJitter; }

@@ -1,1 +1,14 @@
-FSR SDK v2.3.0 (GPUOpen-LibrariesAndSDKs/FidelityFX-SDK tag v2.3.0). Upscaler 4.1.1, frame generation 4.0.1, loader 2.3.0. Signed AMD binaries, unmodified.
+FSR SDK v2.4.0 (GPUOpen-LibrariesAndSDKs/FidelityFX-SDK tag v2.4.0, commit 7539ae8b6568ad29ed78a753404351daf3b5cca7, released 2026-10-28).
+Components:
+- AMD FSR Upscaling 4.1.2 (analytical fallback FSR 3.1.6)
+- AMD FSR Frame Generation 4.0.2 (fallback 3.1.6)
+- AMD FSR Frame Generation Swapchain DX12 4.0.0 (Driver-Assisted Frame Pacing on RX 9000 + Adrenalin 26.10.1+, PresentMon integration)
+- Loader 2.4.0
+
+Hardware support:
+- FSR 4.1.2: Radeon RX 6000 (RDNA 2), RX 7000 (RDNA 3), RX 9000 (RDNA 4), Ryzen AI Max 300/400, and Ryzen AI 9 300/400 / Ryzen Z2 APUs (lightweight ML model); analytical fallback is FSR 3.1.6 elsewhere.
+
+Verified AMD-signed DX12 DLL SHA-256 hashes (stored in sdk/FidelityFX2/bin/):
+- amd_fidelityfx_loader_dx12.dll (39,184 B): E2191D3C0828BE45EB8AFFD4E3EC0378F2293ADC345B772A7170EDCF3B021ECB
+- amd_fidelityfx_upscaler_dx12.dll (57,664,272 B): AAD4FCCCCB29084A655F9A4F9F613BD22C8C03FB4A0F8840148CC6543B4CCACE
+- amd_fidelityfx_framegeneration_dx12.dll (29,679,376 B): E6843252F58B0341A0D80F6A20BC0D840643EE95BC48C22CAC08745344577BB6

@@ -82,18 +82,15 @@ smem_value* smem_container::dock(u32 dwCRC, u32 dwLength, void* ptr)
 void smem_container::clean()
 {
 	cs.Enter();
-	for (cdb::iterator it = container.begin(); it != container.end();)
-	{
-		if ((*it)->dwReference.load(std::memory_order_acquire) == 0)
-		{
-			xr_free(*it);
-			it = container.erase(it);
-		}
-		else
-		{
-			++it;
-		}
-	}
+	// One pass, order kept: erasing freed entries one at a time moved the whole tail each time, which took
+	// seconds on the main thread for a long session's container (level unload, game exit, device reset).
+	// Ported from Quark 1.5.2.
+	container.erase(std::remove_if(container.begin(), container.end(), [](smem_value* value) {
+		if (value->dwReference.load(std::memory_order_acquire) != 0)
+			return false;
+		xr_free(value);
+		return true;
+	}), container.end());
 
 	// clean() is an explicit compaction boundary. If a loading spike left a
 	// much larger pointer array behind, return that high-water capacity too.

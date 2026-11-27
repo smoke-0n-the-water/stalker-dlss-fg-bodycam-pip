@@ -1787,6 +1787,19 @@ CRenderTarget::CRenderTarget(LPCSTR name, u32 width, u32 height)
 		if (isMain && !ps_r_upscaler_post_after)
 		{
 			Msg("[Upscaler] r_upscaler_post_after is off: post-processing, volumetric lights and particles stay before reconstruction");
+			// Screen-space sunshafts are drawn here before reconstruction from jittered depth: thin
+			// grass changes the mask every frame and the radial blur spreads it along the whole
+			// shaft, which reached the screen as grass flickering in the sun rays (98torino,
+			// Cacaodemon). The same mask-over-time pass as after reconstruction, at render size.
+			string_path sunshaftMaskShader;
+			if (FS.exist(sunshaftMaskShader, "$game_shaders$", "r3\\dlss_sunshaft_mask", ".ps"))
+			{
+				rt_dlss_sunshaft_history[0].create("$user$dlss_sunshaft_history_0", dlss::RenderWidth(), dlss::RenderHeight(), D3DFMT_R16F);
+				rt_dlss_sunshaft_history[1].create("$user$dlss_sunshaft_history_1", dlss::RenderWidth(), dlss::RenderHeight(), D3DFMT_R16F);
+				CBlender_dlss_sunshaft_mask sunshaftMask;
+				s_dlss_sunshaft_mask.create(&sunshaftMask, "dlss_sunshaft_mask");
+				dlss_sunshaft_history_render = true;
+			}
 		}
 		else if (isMain && s_dlss_display_copy && !RImplementation.o.dx10_msaa)
 		{

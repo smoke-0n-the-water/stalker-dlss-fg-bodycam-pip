@@ -48,7 +48,7 @@ IC bool p_sort_constants(const ref_constant& C1, const ref_constant& C2) noexcep
 
 R_constant* R_constant_table::get(LPCSTR S)
 {
-	PROF_EVENT("R_constant_table::get LPCSTR");
+	// PROF_EVENT("R_constant_table::get LPCSTR"); // millions of calls per capture made the Optick build ~60% slower (2026-10-20 capture); no-op in normal builds
 
     // demonized: make shared_str and use override, str most likely already exists, faster
     shared_str s(S);

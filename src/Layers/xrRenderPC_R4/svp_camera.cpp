@@ -155,7 +155,9 @@ bool svpCamera()
 	eyed.sub(params.eyepiece.m_W.c, eyeW0.c);
 	const float lens_depth = eyed.dotproduct(camfwd);
 	const float ndc_height = (lens_depth > EPS) ? (2.f * params.eyepiece.radius * mm.mProjectHud._22 / lens_depth) : 0.f;
-	const bool analytic_ok = params.eyepiece.radius > EPS && lens_depth > EPS && _valid(ndc_height) && ndc_height > 1e-4f;
+	// local fix: a hud lens is a few cm from the eye; a metre or more means an unposed lens (flip mid-aim)
+	const bool analytic_ok = params.eyepiece.radius > EPS && lens_depth > EPS && _valid(ndc_height) && ndc_height > 1e-4f
+		&& (!ps_r__svp_flip_fix || lens_depth < 1.f);
 	const float ratio_analytic = analytic_ok ? (2.f / ndc_height) : 0.f;
 	float ratio_magnification = 1.f;
 

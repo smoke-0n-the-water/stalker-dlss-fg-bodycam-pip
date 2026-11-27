@@ -1278,6 +1278,17 @@ static class dlss_params : public R_constant_setup
         RCache.set_c(C, dlss::Active() ? 1.0f : 0.0f, float(dlss::RenderWidth()), float(dlss::RenderHeight()), 0.0f);
     }
 } binder_dlss_params;
+// SSS 24's constant, read by Atmospherics RC8.1 / RC8.2 to pick temporal dither
+// (brodrigz 2c21bc69f): upscaler (0 none, 1 FSR, 2 DLSS), render scale.
+static class ssfx_upscaling_setup : public R_constant_setup
+{
+    void setup(R_constant* C) override
+    {
+        const unsigned kind = dlss::UpscalerKind();
+        const float scale = kind ? float(dlss::RenderWidth()) / float(Device.dwWidth) : 1.0f;
+        RCache.set_c(C, float(kind), scale, 0.0f, 0.0f);
+    }
+} binder_ssfx_upscaling_setup;
 static class dlss_temporal_jitter : public R_constant_setup
 {
     void setup(R_constant* C) override
@@ -1670,6 +1681,7 @@ void CBlender_Compile::SetMapping()
 #if defined(USE_DX11)
 	r_Constant("dlss_params", &binder_dlss_params);
 	r_Constant("dlss_temporal_jitter", &binder_dlss_temporal_jitter);
+	r_Constant("ssfx_upscaling_setup", &binder_ssfx_upscaling_setup);
 	r_Constant("m_upscaler_reproject", &binder_upscaler_reproject);
 #endif
 	r_Constant("ssfx_pom", &ssfx_pom);

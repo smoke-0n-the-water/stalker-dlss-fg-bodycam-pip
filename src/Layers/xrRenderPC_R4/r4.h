@@ -363,6 +363,8 @@ public:
 		char samples[2];
 	};
 	void shader_compile_options(ShaderCompileOptions& options, int skinning) const;
+	void shader_prewarm(); // r4_loader.cpp, end of level_Load
+	void shader_prewarm_release();
 	LPCSTR shader_compile_target(LPCSTR entry, LPCSTR target) const;
 	virtual HRESULT shader_compile(
 		LPCSTR name,

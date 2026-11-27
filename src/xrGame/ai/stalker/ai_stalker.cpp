@@ -1206,7 +1206,8 @@ void CAI_Stalker::shedule_Update(u32 DT)
 				// square root, Lua object lookup and global namespace traversal for them.
 				// Resolve the callback only after the distance rejection, preserving the
 				// original dynamic lookup semantics used by GAMMA/addon scripts.
-				const float look_distance_sqr = Actor()->Position().distance_to_sqr(Position());
+				// a stalker can update before the actor is spawned
+				const float look_distance_sqr = Actor() ? Actor()->Position().distance_to_sqr(Position()) : flt_max;
 				const float look_limit_sqr = NPCsLookAtActorMinDistance * NPCsLookAtActorMinDistance;
 				if (look_distance_sqr < look_limit_sqr)
 				{
@@ -1222,7 +1223,9 @@ void CAI_Stalker::shedule_Update(u32 DT)
 
 #ifndef USE_SCHEDULER_IN_AGENT_MANAGER
 				lua_profile.begin("agent_manager");
-				agent_manager().update();
+				// group may have no agent manager if this stalker is not registered in it (e.g. revived corpse)
+				if (CAgentManager* manager = Level().seniority_holder().team(g_Team()).squad(g_Squad()).group(g_Group()).get_agent_manager())
+					manager->update();
 				lua_profile.end();
 #endif // USE_SCHEDULER_IN_AGENT_MANAGER
 

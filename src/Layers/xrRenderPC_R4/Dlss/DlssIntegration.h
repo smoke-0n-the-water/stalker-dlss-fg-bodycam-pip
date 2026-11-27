@@ -13,6 +13,8 @@ void BeginScene();
 void EndScene(bool invalidateHistory = false);
 bool Active();
 bool Configured();
+// SSS 24's ssfx_upscaling_setup.x: 0 none, 1 FSR, 2 DLSS (while Active()).
+unsigned UpscalerKind();
 void InvalidateHistory();
 // DLSS takes linear HDR input (r_dlss_hdr_input)
 bool HdrInput();
@@ -29,6 +31,6 @@ bool Evaluate(ID3D11Texture2D* color, ID3D11Texture2D* motion);
 // The first DLSS query probes NGX once per device; call on the render thread.
 bool UpscalerSupported(unsigned id);
 bool FrameGenerationSupported(unsigned id);
-// "dlss=1 fsr3=1 fsr_dx12=3.1.5 fg_dlss=1 fg_fsr=3.1.6" (fg_dlss: 0/1/restart).
+// "dlss=1 fsr3=1 fsr_dx12=3.1.6 fg_dlss=1 fg_fsr=3.1.6" (fg_dlss: 0/1/restart).
 void SupportSummary(char* text, unsigned size);
 }

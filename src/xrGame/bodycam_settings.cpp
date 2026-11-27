@@ -498,6 +498,14 @@ bool SetBool(LPCSTR name, bool value)
 	return !!binding;
 }
 
+bool SetBoolRuntime(LPCSTR name, bool value)
+{
+	BoolBinding* binding = FindBool(name);
+	if (binding)
+		*binding->value = value;
+	return !!binding;
+}
+
 void ApplyPreset(int preset)
 {
 	if (preset < kPresetOff || preset > kDefaultPreset)

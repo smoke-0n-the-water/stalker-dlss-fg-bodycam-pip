@@ -10,6 +10,7 @@
 
 #include "../xrRender/dxRenderDeviceRender.h"
 #include "r4_shader_warmup.h"
+#include <climits>
 #include "scope_vslr_renderer.h"
 
 #include "../xrRenderDX10/dx10BufferUtils.h"
@@ -328,6 +329,7 @@ void CRender::level_Load(IReader* fs)
 
 	// Begin
 	pApp->LoadBegin();
+	{ extern u32 g_tex_level_gen; ++g_tex_level_gen; } // r__tex_holder_diag level stamp
 	shader_warmup_start(); // pip/3DSS scope shaders compile on worker threads while the level loads
 	dxRenderDeviceRender::Instance().Resources->DeferredLoad(TRUE);
 	IReader* chunk;
@@ -426,11 +428,189 @@ void CRender::level_Load(IReader* fs)
 	// pApp->LoadTitle			("Loading lights...");
 	LoadLights(fs);
 
+	// shaders used in earlier sessions, from the cache, before the first frame (see shader_prewarm)
+	shader_prewarm();
+
 	// End
 	pApp->LoadEnd();
 
 	// signal loaded
 	b_loaded = TRUE;
+}
+
+
+// Shader prewarm (r__shader_prewarm 1, default on).
+// A shader's first creation in a session costs several file operations on the render thread:
+// the HLSL source (_CreatePS/_CreateVS), a folder listing through the VFS (match_shader_id) and
+// the cached DXBC in appdata\shaders_cache. Mid-game that is a hitch whenever something new
+// appears (weapon, mutant, effect): one October 2026 capture had 530 such opens = 24 ms in a
+// frame. Here, at the end of level load, every shader that already has a cached variant for
+// the CURRENT settings is created once and held until level unload, so later creations are a
+// map lookup. Nothing new is compiled: a shader without a matching cached file is skipped, so
+// the load only grows by what was used in earlier sessions.
+extern int ps_r__shader_prewarm; // xrRender_console.cpp
+
+namespace
+{
+xr_vector<ref_ps> s_prewarm_ps;
+xr_vector<ref_vs> s_prewarm_vs;
+xr_vector<ref_gs> s_prewarm_gs;
+
+bool cached_variant_exists(const xr_set<xr_string>& variants, const CRender& render, int skinning)
+{
+	CRender::ShaderCompileOptions options;
+	render.shader_compile_options(options, skinning);
+	return variants.find(options.sh_name) != variants.end();
+}
+
+// -1 and 0 both compile without a name suffix; 1..4 append "_N" to vertex shader names.
+const int kSkinningModes[] = { 0, -1, 1, 2, 3, 4 };
+}
+
+void CRender::shader_prewarm()
+{
+	if (!ps_r__shader_prewarm || g_dedicated_server)
+		return;
+
+	string_path root;
+	FS.update_path(root, "$app_data_root$", "shaders_cache\\r4\\");
+	string_path mask;
+	xr_strconcat(mask, root, "*");
+
+	const u64 started = CPU::QPC();
+	u32 made_ps = 0, made_vs = 0, made_gs = 0, skipped = 0;
+	const int previous_skinning = Engine.External.GetSkinningMode();
+	CResourceManager* resources = dxRenderDeviceRender::Instance().Resources;
+
+	WIN32_FIND_DATAA folder{};
+	HANDLE folders = FindFirstFileA(mask, &folder);
+	if (folders == INVALID_HANDLE_VALUE)
+		return;
+	do
+	{
+		if (!(folder.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || folder.cFileName[0] == '.')
+			continue;
+		// "<shader>.<ps|vs|gs>"; names with defines in parentheses are built by code, skip them
+		string_path dir_name;
+		xr_strcpy(dir_name, folder.cFileName);
+		char* dot = strrchr(dir_name, '.');
+		if (!dot || strchr(dir_name, '('))
+			continue;
+		*dot = 0;
+		const char* ext = dot + 1;
+		const bool is_ps = !xr_strcmp(ext, "ps"), is_vs = !xr_strcmp(ext, "vs"), is_gs = !xr_strcmp(ext, "gs");
+		if (!is_ps && !is_vs && !is_gs)
+			continue;
+
+		xr_set<xr_string> variants;
+		{
+			string_path files_mask;
+			xr_strconcat(files_mask, root, folder.cFileName, "\\*");
+			WIN32_FIND_DATAA file{};
+			HANDLE files = FindFirstFileA(files_mask, &file);
+			if (files == INVALID_HANDLE_VALUE)
+				continue;
+			do
+			{
+				if (!(file.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+					variants.insert(file.cFileName);
+			} while (FindNextFileA(files, &file));
+			FindClose(files);
+		}
+
+		// The resource name to create and the skinning mode it was cached under.
+		string_path create_name;
+		xr_strcpy(create_name, dir_name);
+		int skinning_choices[6];
+		u32 choice_count = 0;
+		if (is_vs)
+		{
+			// "<base>_N" is skinning mode N when <base>.vs exists; otherwise the name itself ends in _N.
+			const size_t len = xr_strlen(dir_name);
+			const bool suffixed = len > 2 && dir_name[len - 2] == '_' && dir_name[len - 1] >= '1' && dir_name[len - 1] <= '4';
+			bool base_exists = false;
+			if (suffixed)
+			{
+				string_path base, source;
+				xr_strcpy(base, dir_name);
+				base[len - 2] = 0;
+				xr_strconcat(source, getShaderPath(), base, ".vs");
+				base_exists = !!FS.exist("$game_shaders$", source);
+				if (base_exists)
+				{
+					xr_strcpy(create_name, base);
+					skinning_choices[choice_count++] = dir_name[len - 1] - '0';
+				}
+			}
+			if (!base_exists)
+			{
+				skinning_choices[choice_count++] = 0;
+				skinning_choices[choice_count++] = -1;
+			}
+		}
+		else
+		{
+			for (int mode : kSkinningModes)
+				skinning_choices[choice_count++] = mode;
+		}
+
+		// Only names whose HLSL source exists: a cache folder made under other conditions (an MSAA
+		// sample suffix, a renamed or removed shader) would otherwise be created from stub_default.
+		{
+			string_path source;
+			xr_strconcat(source, getShaderPath(), create_name, ".", ext);
+			if (!FS.exist("$game_shaders$", source))
+			{
+				++skipped;
+				continue;
+			}
+		}
+
+		int skinning = INT_MIN;
+		for (u32 i = 0; i < choice_count; ++i)
+			if (cached_variant_exists(variants, *this, skinning_choices[i]))
+			{
+				skinning = skinning_choices[i];
+				break;
+			}
+		if (skinning == INT_MIN)
+		{
+			++skipped; // no cached variant for the current settings: do not compile here
+			continue;
+		}
+
+		// _Create* returns the existing resource when the level already created it; holding one
+		// more reference to it is harmless and keeps it alive until level unload either way.
+		Engine.External.SetSkinningMode(skinning);
+		if (is_ps)
+		{
+			s_prewarm_ps.push_back(ref_ps(resources->_CreatePS(create_name)));
+			++made_ps;
+		}
+		else if (is_vs)
+		{
+			s_prewarm_vs.push_back(ref_vs(resources->_CreateVS(create_name)));
+			++made_vs;
+		}
+		else
+		{
+			s_prewarm_gs.push_back(ref_gs(resources->_CreateGS(create_name)));
+			++made_gs;
+		}
+	} while (FindNextFileA(folders, &folder));
+	FindClose(folders);
+	Engine.External.SetSkinningMode(previous_skinning);
+
+	const double ms = CPU::qpc_freq ? double(CPU::QPC() - started) * 1000.0 / double(CPU::qpc_freq) : 0.0;
+	Msg("* [ShaderPrewarm] %u PS, %u VS, %u GS ready from the shader cache in %.0f ms (%u skipped: no cached variant for these settings)",
+		made_ps, made_vs, made_gs, ms, skipped);
+}
+
+void CRender::shader_prewarm_release()
+{
+	s_prewarm_ps.clear();
+	s_prewarm_vs.clear();
+	s_prewarm_gs.clear();
 }
 
 void CRender::level_Unload()
@@ -439,6 +619,7 @@ void CRender::level_Unload()
 	if (!b_loaded) return;
 
 	shader_warmup_stop();
+	shader_prewarm_release();
 	scope_vslr_destroy(); // scope reflections hold this level's sectors and captured scene
 	GMBase.clear();
 	GMRainWet.clear();
@@ -513,6 +694,8 @@ void CRender::level_Unload()
 			dxRenderDeviceRender::Instance().Resources->Evict();
 		}
 		dxRenderDeviceRender::Instance().Resources->Dump(false);
+		dxRenderDeviceRender::Instance().Resources->DumpTextureHolders(); // r__tex_holder_diag
+		Models->DumpLiveInstances(); // r__tex_holder_diag
 		//static int unload_counter = 0;
 		//Msg("The Level Unloaded.======================== %d", ++unload_counter);
 	}

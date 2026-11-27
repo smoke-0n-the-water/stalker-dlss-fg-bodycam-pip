@@ -2,6 +2,7 @@
 #pragma hdrstop
 
 #include "soundrender_TargetA.h"
+#include <AL/alext.h> // AL_DIRECT_CHANNELS_SOFT
 #include "soundrender_emitter.h"
 #include "soundrender_source.h"
 
@@ -45,7 +46,7 @@ BOOL CSoundRender_TargetA::_initialize()
 	{
 		A_CHK(alSourcei (pSource, AL_LOOPING, AL_FALSE));
 		A_CHK(alSourcef (pSource, AL_MIN_GAIN, 0.f));
-		A_CHK(alSourcef (pSource, AL_MAX_GAIN, 1.f));
+		A_CHK(alSourcef (pSource, AL_MAX_GAIN, 4.f)); // the real cap is snd_gain_limit (1..4) in fill_parameters
 		A_CHK(alSourcef (pSource, AL_GAIN, cache_gain));
 		A_CHK(alSourcef (pSource, AL_PITCH, cache_pitch));
 		return TRUE;
@@ -218,6 +219,14 @@ void CSoundRender_TargetA::fill_parameters()
 		A_CHK(alSourcei(pSource, AL_SOURCE_RELATIVE, relative));
 	}
 
+	// 2D stereo files straight to L/R; mono and 3D sources are not affected by this flag
+	const BOOL direct_channels = relative && psSoundDirectStereo ? AL_TRUE : AL_FALSE;
+	if (!cache_parameters_valid || cache_direct_channels != direct_channels)
+	{
+		cache_direct_channels = direct_channels;
+		A_CHK(alSourcei(pSource, AL_DIRECT_CHANNELS_SOFT, direct_channels));
+	}
+
 	if (!cache_parameters_valid || cache_rolloff != psSoundRolloff)
 	{
 		cache_rolloff = psSoundRolloff;
@@ -227,7 +236,7 @@ void CSoundRender_TargetA::fill_parameters()
 
 	VERIFY2(m_pEmitter, SE->source()->file_name());
 	float _gain = m_pEmitter->smooth_volume;
-	clamp(_gain, EPS_S, 1.f);
+	clamp(_gain, EPS_S, psSoundGainLimit);
 	if (!fsimilar(_gain, cache_gain, 0.01f))
 	{
 		cache_gain = _gain;

@@ -37,6 +37,8 @@ XRSOUND_API extern float psSoundVFactor;
 XRSOUND_API extern float psSoundVMusic;
 XRSOUND_API extern float psSoundVMusicFactor;
 XRSOUND_API extern float psSoundRolloff;
+XRSOUND_API extern int psSoundDirectStereo; // snd_direct_stereo: 2D stereo sources play straight to L/R (no virtual speakers)
+XRSOUND_API extern float psSoundGainLimit; // snd_gain_limit: max source gain (1 = vanilla)
 XRSOUND_API extern float psSoundMaxDistanceMultiplier;
 XRSOUND_API extern float psSoundMaxAIDistanceMultiplier;
 XRSOUND_API extern float psSoundOcclusionScale;
@@ -512,8 +514,7 @@ IC void ref_sound::play_no_feedback(CObject* O, u32 flags, float d, Fvector* pos
 IC void ref_sound::set_position(const Fvector& pos)
 {
 	VERIFY(!::Sound->i_locked());
-	VERIFY(_feedback());
-	_feedback()->set_position(pos);
+	if (_feedback()) _feedback()->set_position(pos);
 }
 
 IC void ref_sound::set_frequency(float freq)

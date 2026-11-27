@@ -161,12 +161,23 @@ float svp_track_capture_ratio(const CSecondVPParams& params, bool analytic_ok, f
 	// epoch is consumed above and the next valid frame inherits the previous optic.
 	if (gap || epoch || !_valid(s_ratio) || s_ratio <= 0.f)
 		s_ratio = 0.f;
+	// local fix: a scope attached mid-aim can report an unposed lens on its first frames; seeding from
+	// it made the image zoom in and ease back out. Seed only from a lens seen r__svp_flip_fix frames in a row.
+	static const void* s_seed_visual = nullptr;
+	static u32 s_seed_streak = 0;
+	const bool fresh_lens = params.svp_lens_frame == Device.dwFrame && params.svp_lens_root && params.svp_lens_visual;
+	if (analytic_ok && fresh_lens && !gap && !epoch && params.svp_lens_visual == s_seed_visual)
+		++s_seed_streak;
+	else
+		s_seed_streak = (analytic_ok && fresh_lens) ? 1 : 0;
+	s_seed_visual = fresh_lens ? params.svp_lens_visual : nullptr;
+	const bool seed_ok = s_seed_streak >= (u32)ps_r__svp_flip_fix;
 	if (analytic_ok)
 	{
 		// a session gap or an optic swap drops the latch, the raise value is meaningless so the
 		// seed waits for the first settled frame, then the one pole eases residual pose noise
 		if (s_ratio <= 0.f)
-			s_ratio = can_track ? ratio_analytic : 0.f;
+			s_ratio = (can_track && seed_ok) ? ratio_analytic : 0.f;
 		else if (can_track)
 			s_ratio += (ratio_analytic - s_ratio) * (1.f - expf(-Device.fTimeDelta / 0.15f));
 	}

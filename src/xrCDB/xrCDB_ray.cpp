@@ -187,7 +187,7 @@ public:
 
 void _stab(const AABBNoLeafNode* node)
 {
-    PROF_EVENT("xrCDB_ray::_stab")
+    // PROF_EVENT("xrCDB_ray::_stab") // millions of calls per capture made the Optick build ~60% slower (2026-10-20 capture); no-op in normal builds
 	// Intersection filter stoping 
 	//if (!continue_work)
 	//	return;

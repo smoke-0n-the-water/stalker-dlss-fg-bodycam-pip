@@ -62,6 +62,18 @@ void CRender::renderViewports(BOOL bSUN)
 	if (Device.true_pip_on && (svp || (g_pGamePersistent &&
 		g_pGamePersistent->m_pGShaderConstants->hud_params.y > 0.005f)))
 		EnsureTargetSVP();
+	else if (Device.true_pip_on && ps_r__svp_prewarm && !TargetSVP)
+	{
+		// pip build the whole SVP target set on the first level frame (under the loading screen) instead
+		// of mid-aim, where it was a hitch (purpl.ball). Once per process: a failed build never retries
+		// every frame, and the lazy path above still builds it on the first aim then.
+		static bool s_prewarmed = false;
+		if (!s_prewarmed)
+		{
+			s_prewarmed = true;
+			EnsureTargetSVP();
+		}
+	}
 	// pip the lens content swaps at the scope edges, both taa histories seed from the current
 	// frame so the stale scene never ghosts through the resolve
 	if (svp_edge || disc_swap)

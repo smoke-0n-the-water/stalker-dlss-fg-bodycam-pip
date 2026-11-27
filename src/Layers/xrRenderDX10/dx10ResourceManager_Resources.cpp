@@ -12,6 +12,9 @@
 #include <D3DX10Core.h>
 
 #include "../xrRender/ResourceManager.h"
+
+extern int ps_r__tex_holder_diag; // xrRender_console.cpp
+u32 g_tex_level_gen = 0; // ++ at each R4 level_Load, stamped into CTexture::DiagLevelGen
 #include "../xrRender/tss.h"
 #include "../xrRender/blenders/blender.h"
 #include "../xrRender/blenders/blender_recorder.h"
@@ -646,6 +649,11 @@ ref_texture CResourceManager::_CreateTexture(LPCSTR _Name)
 		CTexture* T = xr_new<CTexture>();
 		T->dwFlags |= xr_resource_flagged::RF_REGISTERED;
 		m_textures.insert(mk_pair(T->set_name(Name), T));
+		if (ps_r__tex_holder_diag) // see DumpTextureHolders
+		{
+			T->DiagFrameCount = u16(RtlCaptureStackBackTrace(1, 28, T->DiagFrames, nullptr));
+			T->DiagLevelGen = u16(g_tex_level_gen);
+		}
 		T->Preload();
         const ref_texture result(T); // Own caller result before any worker can complete.
         if (Device.b_is_Ready) QueueTextureLoad(result);
@@ -746,6 +754,7 @@ u32 s_trim_backoff = 1;          // 1..8: multiplies the settle time while trimm
 constexpr u32 kSettleMs = 60000;
 constexpr u32 kMaxUnloadsPerPass = 48; // each Unload() runs on the render thread
 constexpr u64 kTrimMinBytes = 1024 * 1024; // pressure trims never demote a class texture smaller than this
+constexpr u32 kNeverDrawnIdleMs = 0x7fffffff; // idle age given to never-drawn textures: oldest first
 
 // VRAM tiers (r__tex_res_preset, set from the MCM menu). Smaller cards start trimming earlier to
 // keep headroom for spikes, install swaps faster and demote idle class textures sooner; big cards
@@ -817,6 +826,7 @@ void update_tex_res_params(u64 budget)
 u32 s_swap_dropped = 0;
 u32 s_swap_log_next_ms = 0;
 bool s_pressure_warned = false;
+u32 s_pressure_warn_next_ms = 0; // while over budget with nothing to trim, remind at most once a minute
 IDXGIAdapter3* s_adapter3 = nullptr;
 bool s_adapter3_tried = false;
 
@@ -874,15 +884,29 @@ void CResourceManager::ResidencyFrame()
 		return;
 	s_residency_frame = Device.dwFrame;
 
+	// Residency runs only with pack mod 7 ticked (it ships tex_residency.ltx): unticking the mod in MO2
+	// turns it off without touching the saved r__tex_res_budget_target, so ticking it back restores the
+	// player's own choice. Mods do not change mid-session, so the file is checked once.
+	static int s_residency_mod = -1;
+	if (s_residency_mod < 0)
+	{
+		string_path fname;
+		FS.update_path(fname, "$game_config$", "tex_residency.ltx");
+		s_residency_mod = FS.exist(fname) ? 1 : 0;
+	}
+	const bool residency_on = ps_r__tex_res_budget_target && s_residency_mod;
+
 	// Once, on the first rendered frame (user.ltx is applied by then): say whether residency is on.
 	static bool s_residency_state_logged = false;
 	if (!s_residency_state_logged)
 	{
 		s_residency_state_logged = true;
-		if (ps_r__tex_res_budget_target)
-			Msg("* Texture residency: on (r__tex_res_budget_target %d).", ps_r__tex_res_budget_target);
+		if (residency_on)
+			Msg("* Texture residency: on (r__tex_res_budget_target %d, mod 7 ticked).", ps_r__tex_res_budget_target);
+		else if (!s_residency_mod)
+			Msg("* Texture residency: off (pack mod 7 'Tex Residency Classes' is not ticked).");
 		else
-			Msg("* Texture residency: off (r__tex_res_budget_target 0). Set 80 to opt in.");
+			Msg("* Texture residency: off (r__tex_res_budget_target 0; MCM > Texture Residency to turn it on).");
 	}
 
 	// Phase 1: install any LOD swaps a worker finished, at frame start as the plan requires.
@@ -919,7 +943,7 @@ void CResourceManager::ResidencyFrame()
 #ifdef USE_DX11
 	const u32 now = Device.dwTimeGlobal;
 	const bool log_due = ps_r__tex_vram_log && now >= s_vram_next_ms;
-	const bool check_due = ps_r__tex_res_budget_target && now >= s_pressure_next_ms;
+	const bool check_due = residency_on && now >= s_pressure_next_ms;
 
 	// Phase 2: idle-age demotion every 5 s. Only once usage is within reach of the budget (above
 	// the low watermark): with headroom, demoting buys nothing (WDDM pages idle textures out by
@@ -929,7 +953,7 @@ void CResourceManager::ResidencyFrame()
 	{
 		// Residency off in the menu (r__tex_res_budget_target 0) stops idle demotes too, not just
 		// the pressure trims; near_budget would otherwise stay latched at its last value.
-		if (ps_r__tex_res_budget_target && (near_budget || s_trim_active))
+		if (residency_on && (near_budget || s_trim_active))
 			TexResClassIdleSweep();
 		s_class_sweep_next_ms = now + 5000;
 	}
@@ -1037,7 +1061,12 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 			continue;
 		if (residency_pinned(entry.first))
 			continue;
-		const u32 unused = now - T->dwLastUsedTime;
+		// Never drawn (prefetched, or loaded with the level but not seen yet) counts as idle at once.
+		// The engine clock barely advances during a loading screen, so on the first load of a
+		// session nothing could reach the idle age: the load-time trim found "nothing idle" while
+		// ~9 GB of prefetched textures had never been drawn (2026-11-27). A demoted one promotes
+		// on its first draw (CTexture::Apply), like any other.
+		const u32 unused = T->dwLastUsedTime ? now - T->dwLastUsedTime : kNeverDrawnIdleMs;
 		if (T->ResClass >= 0)
 		{
 			// Class textures follow their class's age and hold, whether or not they were ever promoted.
@@ -1112,14 +1141,24 @@ bool CResourceManager::RelieveVramPressure(u64 usage, u64 budget)
 	}
 
 	if (count)
-		Msg("* [TexRes] VRAM %llu of %llu MB: unloaded %u idle texture(s), demoted %u, ~%llu MB, idle %u-%u s",
-			usage / mb, budget / mb, count - demoted, demoted, freed / mb, youngest / 1000,
-			idle.front().first / 1000);
-	else if (!s_pressure_warned)
+	{
+		if (youngest >= kNeverDrawnIdleMs)
+			Msg("* [TexRes] VRAM %llu of %llu MB: unloaded %u texture(s), demoted %u, ~%llu MB, all never drawn yet",
+				usage / mb, budget / mb, count - demoted, demoted, freed / mb);
+		else
+			Msg("* [TexRes] VRAM %llu of %llu MB: unloaded %u idle texture(s), demoted %u, ~%llu MB, idle %u s or more",
+				usage / mb, budget / mb, count - demoted, demoted, freed / mb, youngest / 1000);
+	}
+	else if (!s_pressure_warned || now >= s_pressure_warn_next_ms)
+	{
+		// The first time, then once a minute while it lasts: before, one line and then silence,
+		// so a log could not tell "still over budget" from "back under".
 		Msg(never_unload
-				? "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle left to demote: leaving it to the driver"
-				: "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle long enough to trim",
-			usage / mb, budget / mb, high_pct);
+				? "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle left to demote: leaving it to the driver%s"
+				: "! [TexRes] VRAM %llu of %llu MB, over %u%%, but nothing idle long enough to trim%s",
+			usage / mb, budget / mb, high_pct, s_pressure_warned ? " (still)" : "");
+		s_pressure_warn_next_ms = now + 60000;
+	}
 	s_pressure_warned = !count;
 
 	// End the episode once its byte allowance is spent or nothing is left to trim, whatever DXGI
@@ -1585,6 +1624,98 @@ void CResourceManager::DumpTextureResidency()
 	Msg("* [TexRes] dump: %u textures (%u loaded), true %llu MB, legacy %llu MB, wrote [%s]",
 		(u32)rows.size(), loaded_count, total_true / mb, total_legacy / mb, path);
 #endif
+}
+
+// DIAGNOSTIC (r__tex_holder_diag, 2026-11-27). After a fast travel the next level reloaded 5106
+// textures (20 GB) because 4128 were still registered after the old level's unload, 3090 of them
+// with exactly one reference left. A texture's creation call stack usually names its owner
+// (particles, environment, a model cache, script UI...), so survivors are grouped by it.
+// Addresses print as module+offset; resolve them with the build's PDB.
+void CResourceManager::DumpTextureHolders()
+{
+	if (!ps_r__tex_holder_diag)
+		return;
+	struct Group
+	{
+		void* frames[28];
+		u16 frame_count;
+		u32 count = 0;
+		u64 bytes = 0;
+		u32 per_gen[4] = {};
+		xr_vector<shared_str> examples;
+	};
+	xr_map<u64, Group> groups;
+	u32 total = 0, skipped_special = 0;
+	{
+		xrCriticalSectionGuard guard(creationGuard);
+		for (const auto& entry : m_textures)
+		{
+			const CTexture* T = entry.second;
+			LPCSTR name = entry.first;
+			if (T->flags.bUser || strchr(name, '$') || !strncmp(name, "ui\\", 3) || !strncmp(name, "ui/", 3))
+			{
+				++skipped_special;
+				continue;
+			}
+			++total;
+			// group by 20 frames: model textures share their first ~10 frames (model load ->
+			// blender compile), the owner that created the model sits deeper
+			const u16 key_frames = T->DiagFrameCount < 20 ? T->DiagFrameCount : 20;
+			u64 key = 1469598103934665603ull;
+			for (u16 i = 0; i < key_frames; ++i)
+				key = (key ^ u64(uintptr_t(T->DiagFrames[i]))) * 1099511628211ull;
+			Group& g = groups[key];
+			if (!g.count)
+			{
+				g.frame_count = T->DiagFrameCount;
+				for (u16 i = 0; i < T->DiagFrameCount; ++i)
+					g.frames[i] = T->DiagFrames[i];
+			}
+			++g.count;
+			g.bytes += T->TrueBytes ? T->TrueBytes : T->flags.MemoryUsage;
+			++g.per_gen[T->DiagLevelGen < 3 ? T->DiagLevelGen : 3];
+			if (g.examples.size() < 4)
+				g.examples.push_back(entry.first);
+		}
+	}
+	xr_vector<const Group*> sorted;
+	for (const auto& it : groups)
+		sorted.push_back(&it.second);
+	std::sort(sorted.begin(), sorted.end(), [](const Group* a, const Group* b) { return a->count > b->count; });
+	Msg("* [TexHolder] %u textures still registered after level unload (%u $/ui/user skipped), %u creation call sites; gen 0 = created before the first level",
+		total, skipped_special, u32(sorted.size()));
+	const u32 shown = sorted.size() < 40 ? u32(sorted.size()) : 40u;
+	for (u32 n = 0; n < shown; ++n)
+	{
+		const Group& g = *sorted[n];
+		string4096 frames = "";
+		for (u16 i = 0; i < g.frame_count; ++i)
+		{
+			HMODULE module = nullptr;
+			char module_name[MAX_PATH] = "?";
+			uintptr_t base = 0;
+			if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+					LPCSTR(g.frames[i]), &module) && module)
+			{
+				GetModuleFileNameA(module, module_name, sizeof(module_name));
+				base = uintptr_t(module);
+			}
+			LPCSTR short_name = strrchr(module_name, '\\');
+			short_name = short_name ? short_name + 1 : module_name;
+			string128 one;
+			xr_sprintf(one, " %s+0x%llx", short_name, u64(uintptr_t(g.frames[i]) - base));
+			xr_strcat(frames, one);
+		}
+		string512 examples = "";
+		for (const shared_str& e : g.examples)
+		{
+			xr_strcat(examples, " ");
+			xr_strcat(examples, e.c_str());
+		}
+		Msg("* [TexHolder] #%u: %u textures ~%llu MB (gen0 %u, gen1 %u, gen2 %u, gen3+ %u) e.g.%s | created at:%s",
+			n + 1, g.count, g.bytes / (1024 * 1024), g.per_gen[0], g.per_gen[1], g.per_gen[2], g.per_gen[3],
+			examples, frames);
+	}
 }
 
 void CResourceManager::_DeleteTexture(const CTexture* T)

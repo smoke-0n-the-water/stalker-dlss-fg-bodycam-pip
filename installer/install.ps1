@@ -1,5 +1,5 @@
 # ===========================================================================
-#  1-click installer: GAMMA v0.7.2-dev (DX12 + frame gen + bodycam + PiP
+#  1-click installer: GAMMA v0.7.3-dev (DX12 + frame gen + bodycam + PiP
 #  scopes + DLSS/FSR)
 #
 #  PLAIN TEXT SCRIPT. Read it in Notepad first if you like. It:
@@ -49,7 +49,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $pack = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module "$pack\SlopRay.psm1" -Force -DisableNameChecking
-$PackVersion = 'v0.7.2-dev'
+$PackVersion = 'v0.7.3-dev'
 $OptiDefault = '0.1.35'      # the F5 version in STEP 6 itself; others are "STEP 6\F5 <version>"
 $fail = 0
 $todo = New-Object System.Collections.Generic.List[string]
@@ -219,6 +219,26 @@ foreach ($p in $place) {
 }
 Good "$($place.Count) engine files to copy$(if ($engineChange) { '' } else { ' (engine already this version)' })"
 
+# An engine from a pack before v0.7 means saves made on it: v0.7 changed offline A-Life, and a
+# player who updated mid-save from v0.5 crashed after 10-15 min. The catalogue names the pack.
+$oldEngine = $null
+$catPath = "$pack\catalogue.json"
+if (Test-Path -LiteralPath $catPath) {
+    $catNames = (Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json).hashes
+    foreach ($exe in 'AnomalyDX12.exe', 'AnomalyDX11AVX.exe') {
+        $live = "$anomaly\bin\$exe"
+        if (-not (Test-Path -LiteralPath $live)) { continue }
+        $prop = $catNames.PSObject.Properties[(Get-Sha $live)]
+        $from = $(if ($prop) { [string]$prop.Value } else { '' })
+        if ($from -match '^(GAMMA (v0\.[0-6](?:\.\d+)?(?:-dev)?|Bodycam [\d.]+))\b') { $oldEngine = $Matches[1]; break }
+    }
+}
+if ($oldEngine) {
+    $saveMsg = "Your current engine is the engine from $oldEngine (before v0.7). Saves made on it can crash on ${PackVersion}: start a new game, or back up your saves before you load one."
+    Warn $saveMsg
+    $todo.Add($saveMsg)
+}
+
 # GPU decides the OptiScaler step and the default video settings below.
 $gpu = $GpuName
 if (-not $gpu) {
@@ -332,6 +352,13 @@ function Is-EnabledByFile ($rel) {
     foreach ($n in $names) { if (Is-PackMod $n) { continue }; if (Test-Path -LiteralPath "$modsDir\$n\$rel") { return $true } }
     return $false
 }
+# the highest-priority ticked mod (not ours) that ships this file = the copy MO2 uses; $null if none
+function Get-WinningMod ($rel) {
+    $names = if ($modlist) { $lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } }
+             else { Get-ChildItem -LiteralPath $modsDir -Directory -ErrorAction SilentlyContinue | ForEach-Object Name }
+    foreach ($n in $names) { if (Is-PackMod $n) { continue }; if (Test-Path -LiteralPath "$modsDir\$n\$rel") { return $n } }
+    return $null
+}
 # same, but the file must also contain $text
 function Is-EnabledByFileText ($rel, $text) {
     $names = if ($modlist) { $lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } }
@@ -393,9 +420,10 @@ function Find-GlossyShader {
 $glossyText = $null; $glossyMeta = $null
 function Install-GlossyAddon ($name) {
     $src = Find-GlossyShader
+    # no ticked Glossy mod ships deffer_impl_flat.ps: Glossy Puddles 1.x replaces only terrain shaders,
+    # so there is nothing to merge (the Atmos / pack copy of that shader stays in use)
     if (-not $src) {
-        Warn "Glossy Puddles is in your list but its shaders\r3\deffer_impl_flat.ps was not found - add-on skipped"
-        $todo.Add("Glossy Puddles: install the matching zip from STEP 3\Glossy (manual only), by hand")
+        Say "  skipped $name (your Glossy Puddles has no deffer_impl_flat.ps: nothing to merge)"
         return
     }
     $patched = Add-GlossyDlss ([IO.File]::ReadAllText($src.Path))
@@ -415,11 +443,12 @@ function Install-GlossyAddon ($name) {
 # --- 6. unpack mods ------------------------------------------------------
 # modlist edits collected below: tick = force "+", drop = remove line (true) or untick (false)
 $tickNames = @{}; $dropNames = @{}
-# Texture Residency is off by default from v0.7.1. Once per install (the record remembers it) the
-# master switch goes to 0 and pack mod 7 (menu + class rules) is left unticked; after that a
+# Texture Residency is ON by default again from v0.7.3 (off in v0.7.1-v0.7.2). The engine runs it only
+# while pack mod 7 (menu + class rules) is ticked, so unticking mod 7 in MO2 turns it off. Once per
+# install (the record remembers it) mod 7 is ticked and the master switch goes to 80; after that a
 # re-run keeps whatever the player chose.
 $texPattern = '7 - Tex Residency Classes*'
-$texResMigrate = -not ($sr.Record -and $sr.Record.texResOff)
+$texResMigrate = -not ($sr.Record -and $sr.Record.texResOn)
 Head "MO2 mods to unpack"
 $installed = New-Object System.Collections.Generic.List[string]
 $modPlan = New-Object System.Collections.Generic.List[object]
@@ -448,6 +477,25 @@ else {
     # its deffer_impl_flat.ps is identical (brodrigz 0.721), and it ships its own ssfx_*.
     $rc7 = (Is-Enabled "*Atmospherics*RC7*") -or (Is-Enabled "*Atmospherics*RC8*") -or
            (Is-EnabledByFile 'gamedata\shaders\r3\pbr_brdf_character.h')
+    # RC8.1 / RC8.2 (a file only they ship, or the name) take their own add-on instead of the
+    # RC7/RC8 one: their own headers with the per-frame noise held still under the upscaler.
+    $rc82 = (Is-Enabled "*Atmospherics*RC8.[12]*") -or (Is-EnabledByFile 'gamedata\shaders\r3\atmos_pbr_code.h')
+    if ($rc82) {
+        # Mods made for RC8.0 that break RC8.1 / RC8.2 shaders (found by Tools\shader_compat, 2026-11-26).
+        # Only warnings: what to install is the player's call.
+        # Glossy Puddles before 2.7 replaces RC8.1+'s pbr_brdf_terrain.h with one that lacks
+        # terrain_puddle / ALBEDO_AMOUNT: about 90 shaders fail. 2.7 ships glossy_puddles_afterglow_mcm.script.
+        $gl = Get-WinningMod 'gamedata\scripts\monkey_gloss.script'
+        if ($gl -and -not (Is-EnabledByFile 'gamedata\scripts\glossy_puddles_afterglow_mcm.script')) {
+            $glMsg = "'$gl' is an older Glossy Puddles than 2.7, and it does not work with Atmospherics RC8.1 / RC8.2 (shader compile errors). Install Glossy Puddles Overhaul 2.7 (PBR Shader Based Weathers) or untick '$gl'."
+            Warn $glMsg
+            $todo.Add($glMsg)
+        }
+    }
+    # Silencer Overheat's HUD shaders call RC8.0's one-argument HUD main; RC8.1+ passes SV_Position too
+    # (4 HUD shaders fail). The pack carries 8BitCat's RC8.1 patch as an add-on, ticked only on RC8.1+:
+    # on older Atmospherics the patched call is the one that fails.
+    $silencer = Is-EnabledByFile 'gamedata\shaders\r3\bc_sh_hud_flat.ps'
     # RC7 and RC8 together fight over the same shaders. Only a warning: both stay ticked, which
     # one to keep is the player's call (the same add-on serves either).
     $rc7Names = @($lines | Where-Object { $_.StartsWith('+') } | ForEach-Object { $_.Substring(1) } |
@@ -475,8 +523,10 @@ else {
         # and an SSS copy on top of them = shader compile error (X3017)
         "Add-on - stock Atmospherics (no RC7)"   = $null
         "Add-on - Atmospherics RC7 users"        = "*Atmospherics*RC7*"
+        "Add-on - Atmospherics RC8.2 users"      = $null
         "Add-on - Anti-Lag for GAMMA users"      = "Anti_Lag_for_GAMMA*"
         "Add-on - Better Beef's NVGs users"      = "*Better Beef's NVGs*"
+        "Add-on - Silencer Overheat RC8.1+ users" = $null
         "Add-on - Glossy Puddles Overhaul users" = "*Glossy Puddles Overhaul*"
         "Add-on - Viper 2 flip crash fix"        = "*Viper2*SuperCustom*"
     }
@@ -491,13 +541,19 @@ else {
         if ($k -eq "Add-on - stock Atmospherics (no RC7)") { $use = -not $rc7 }
         # by content too: players name mod folders anything ("BetterBeefsNVGs_indiesunpraiser.19")
         if (-not $use -and $k -eq "Add-on - Atmospherics RC7 users") { $use = $rc7 }
+        if ($k -eq "Add-on - Atmospherics RC7 users" -and $rc82) { $use = $false }
+        if ($k -eq "Add-on - Atmospherics RC8.2 users") { $use = $rc82 }
+        if ($k -eq "Add-on - Silencer Overheat RC8.1+ users") { $use = $rc82 -and $silencer }
         # Better Beef's (not plain Beef's): its nightvision_gen_1.ps needs NVGParams from its
         # night_vision.h; without this add-on mod 3/4 win that header = shader FATAL
         if (-not $use -and $k -eq "Add-on - Better Beef's NVGs users") { $use = Is-EnabledByFileText 'gamedata\shaders\r3\nightvision_gen_1.ps' 'NVGParams' }
         if (-not $use -and $k -eq "Add-on - Glossy Puddles Overhaul users") { $use = Is-EnabledByFile 'gamedata\scripts\monkey_gloss.script' }
         if ($use) { if ($k -eq $glossyKey) { Install-GlossyAddon $k } else { Install-Mod $zip } }
         else {
-            Say "  skipped $k $(if ($k -like '*stock Atmospherics*') { '(Atmospherics RC7 in use)' } else { "(you don't use that mod)" })"
+            $why = if ($k -like '*stock Atmospherics*') { '(Atmospherics RC7 in use)' }
+                   elseif ($k -like '*Silencer Overheat*' -and $silencer) { '(only for Atmospherics RC8.1 / RC8.2)' }
+                   else { "(you don't use that mod)" }
+            Say "  skipped $k $why"
             # from an earlier run, for a mod no longer used (e.g. back to stock Atmos): untick
             if (Test-Path -LiteralPath "$modsDir\$k") { $dropNames[$k] = $false }
         }
@@ -723,7 +779,7 @@ function Build-Modlist {
     $was = Get-ModlistState $lines
     for ($i = $installed.Count - 1; $i -ge 0; $i--) {
         $n = $installed[$i]; $mark = '+'
-        if ($n -like $texPattern) { $mark = $(if ($texResMigrate -or $was[$n] -ne '+') { '-' } else { '+' }) }
+        if ($n -like $texPattern) { $mark = $(if ($texResMigrate -or $was[$n] -ne '-') { '+' } else { '-' }) }
         $top += "$mark$n"
     }
     return , (@($head) + $top + $rest)
@@ -781,9 +837,26 @@ $want = [ordered]@{
     'rs_v_sync'          = 'off'
     'r_upscaler'         = $(if ($rtx) { 'dlss' } else { 'fsr3' })
     'r_frame_generation' = $(if ($rtxFg) { 'dlss' } else { 'off' })
-    'r__tex_res_budget_target' = '0'     # Texture Residency off by default (v0.7.1)
     'r__upscaler_camera_mv'    = '0'     # camera-MV fill off: it made the still image wobble (v0.7.1)
     'spawn_time_log'           = '0'     # per-spawn timing log off: a diagnostic, not for play (v0.7.1)
+    'r__svp_adaptive_res'      = '0'     # fixed PiP target size: 1.2 rebuilt it on lens changes (stutter) (v0.7.3)
+    'r__clear_models_on_unload'    = 'on'  # free the previous level's models on a map change (v0.7.3)
+    'r__clear_resources_on_unload' = 'on'  # ...and its textures: map-transition crashes, VRAM/RAM growth (v0.7.3)
+    # PiP scope defaults (v0.7.3): the settings the release was tested and tuned with (F11 > PiP scope)
+    'r__svpscope'             = '2'            # true PiP scopes on, objective lens mode
+    'r__svp_supersample'      = '1.51'         # render the scope image 1.51x, then downsample (sharper)
+    'r__svp_scope_res'        = 'performance'  # scope resolution preset
+    'r__svp_sharpen'          = '0.5'
+    'r__svp_bloom'            = '0'
+    'r__svp_cull_ssa'         = '0.'
+    'r__svp_lens_shooter'     = '0'
+    'r__svp_lod'              = '0.'
+    'r__svp_near_blur'        = '0.'
+    'r__svp_roll_stabilize'   = '1'
+    'r__svp_skip_motionblur'  = '1'
+    'r__svp_skip_ssr'         = '0'
+    'r__svp_skip_volumetric'  = '1'
+    'r__svp_twilight'         = '0.'
 }
 $ltx = "$anomaly\appdata\user.ltx"
 $ltxRel = 'Anomaly\appdata\user.ltx'
@@ -808,6 +881,9 @@ if (Test-Path -LiteralPath $ltx) {
     $todo.Add("In game: Settings > Video: MSAA off, VSync off, upscaler DLSS (RTX) or FSR")
 }
 
+# Texture Residency on once (v0.7.3), even where the v0.7.1 installer already wrote 0 once
+if ($texResMigrate -and $ltxNow) { $ltxSet['r__tex_res_budget_target'] = '80' }
+
 # what the player is told about Texture Residency: shown before the install and again at the end
 $texNote = @()
 $texPackName = $installed | Where-Object { $_ -like $texPattern } | Select-Object -First 1
@@ -815,12 +891,10 @@ $texWas = $null
 if ($ltxSet.Contains('r__tex_res_budget_target') -and $ltxNow) {
     $texWas = ($ltxNow | Where-Object { $_ -match '^r__tex_res_budget_target\s+(\S+)\s*$' } | Select-Object -First 1) -replace '^r__tex_res_budget_target\s+', ''
 }
-if ($texResMigrate -or $ltxSet.Contains('r__tex_res_budget_target')) {
-    $texNote += "Texture Residency is OFF by default: r__tex_res_budget_target $(if ($texWas -and $texWas.Trim() -ne '0') { "was $($texWas.Trim()), now 0" } else { '0' })."
-    if ($texPackName) {
-        $texNote += "'$texPackName' is $(if ($modlist -and (Get-ModlistState $lines)[$texPackName] -eq '+') { 'now unticked' } else { 'left unticked' }) in MO2."
-    }
-    $texNote += "To opt in: tick '$(if ($texPackName) { $texPackName } else { '7 - Tex Residency Classes' })' in MO2, then MCM > Texture Residency (VRAM) > Manage VRAM on (or type r__tex_res_budget_target 80 in the console)."
+if ($texResMigrate) {
+    $texModName = $(if ($texPackName) { $texPackName } else { '7 - Tex Residency Classes' })
+    $texNote += "Texture Residency is ON by default: r__tex_res_budget_target $(if ($texWas -and $texWas.Trim() -ne '80') { "was $($texWas.Trim()), now 80" } else { '80' }), '$texModName' ticked in MO2."
+    $texNote += "To turn it off: untick '$texModName' in MO2 (or MCM > Texture Residency (VRAM) > Manage VRAM off)."
 }
 
 # --- 10. checks: space, shader cache -------------------------------------
@@ -1080,7 +1154,7 @@ try {
     $old = $sr.Record.shaderCache.stale
     if ($sr.Record.shaderCache.stalePending) { $sr.Record.shaderCache.stale = $sr.Record.shaderCache.stalePending; $sr.Record.shaderCache.Remove('stalePending') }
     if ($legacy3dss) { $sr.Record.legacy3dss = @{ backup = 'GAMMA\3DSS_backup'; mod = $(if ($tdss) { $tdss.Name } else { '' }) } }
-    $sr.Record.texResOff = $true
+    $sr.Record.texResOn = $true
     Complete-Run $sr 'installed'
     if ($old -and $old -ne $sr.Record.shaderCache.stale -and $old.StartsWith("$($sr.Dir)\runs\") -and (Test-Path -LiteralPath $old)) {
         # a shader cache we moved inside our own .slopray\runs folder: regenerated data
@@ -1135,6 +1209,6 @@ Say "  $k. NVIDIA App: Smooth Motion OFF for Anomaly (else DX12 crashes)."; $k++
 Say "  $k. MO2 dropdown: pick 'Anomaly (DX12 + Frame Gen)' > Run."
 Say "     First launch rebuilds shaders, looks frozen a few minutes. Wait."
 Say ""
-Say "  Optional: Texture Residency is off by default. If you stutter: tick '7 - Tex Residency Classes' in MO2, then MCM > Texture Residency (VRAM) > Manage VRAM on."
+Say "  Texture Residency is on (mod '7 - Tex Residency Classes'). To turn it off: untick that mod in MO2."
 Say ""
 Pause-End $(if ($fail -gt 0) { 1 } else { 0 })
